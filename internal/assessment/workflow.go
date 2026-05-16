@@ -28,9 +28,8 @@ const (
 	TimeoutPlanNextActions = 60 * time.Second
 	TimeoutReviewDeadline  = 24 * time.Hour
 	TimeoutWaitForCage     = 10 * time.Minute
-	DefaultMaxBatchSize   = int32(3)
-	DefaultMaxChainDepth   = int32(3)
-	DefaultMaxIterations   = int32(20)
+	DefaultMaxBatchSize  = int32(3)
+	DefaultMaxIterations = int32(20)
 
 	// Even a 5-second proof needs cage boot + teardown overhead.
 	MinValidatorWait = 60 * time.Second
@@ -85,10 +84,6 @@ func AssessmentWorkflow(ctx workflow.Context, input AssessmentWorkflowInput) (As
 		maxIterations = DefaultMaxIterations
 	}
 
-	maxChainDepth := cfg.MaxChainDepth
-	if maxChainDepth <= 0 {
-		maxChainDepth = DefaultMaxChainDepth
-	}
 
 	// Hard deadline on the entire assessment. When the timer fires
 	// the child context cancels, failing any in-flight activity.
@@ -305,19 +300,6 @@ func AssessmentWorkflow(ctx workflow.Context, input AssessmentWorkflowInput) (As
 	result.TotalCages += validatorCages
 
 	validated, err := getValidatedFindings(ctx, input.AssessmentID)
-	if err != nil {
-		return failResult(result, "fetching validated findings for escalation: %v", err), nil
-	}
-
-	chainDepths := make(map[string]int32, len(validated))
-	for i := range validated {
-		chainDepths[validated[i].ID] = validated[i].ChainDepth
-	}
-
-	escalationCages := spawnEscalationCages(ctx, input.AssessmentID, cfg, validated, chainDepths, maxChainDepth)
-	result.TotalCages += escalationCages
-
-	validated, err = getValidatedFindings(ctx, input.AssessmentID)
 	if err != nil {
 		return failResult(result, "fetching validated findings for report: %v", err), nil
 	}
@@ -607,12 +589,12 @@ func spawnCoordinatorActions(
 		for _, action := range batch {
 			actCtx := withActivityTimeout(ctx, TimeoutCreateCage)
 
-			cageType := cage.TypeDiscovery
+			cageType := cage.TypeExploitation
 			switch action.Type {
 			case "validator":
 				cageType = cage.TypeValidator
-			case "escalation":
-				cageType = cage.TypeExploitation
+			case "discovery":
+				cageType = cage.TypeDiscovery
 			}
 
 			cageCfg := cage.Config{
@@ -633,8 +615,6 @@ func spawnCoordinatorActions(
 				activityName = "CreateDiscoveryCage"
 			case "validator":
 				activityName = "CreateValidatorCage"
-			case "escalation":
-				activityName = "CreateEscalationCage"
 			default:
 				activityName = "CreateDiscoveryCage"
 			}
@@ -928,49 +908,6 @@ func waitForBudgetIncrease(ctx workflow.Context, currentBudget int64) int64 {
 		}
 	}
 	return currentBudget
-}
-
-func spawnEscalationCages(
-	ctx workflow.Context,
-	assessmentID string,
-	cfg Config,
-	validated []findings.Finding,
-	chainDepths map[string]int32,
-	maxChainDepth int32,
-) int32 {
-	var spawned int32
-
-	for _, f := range validated {
-		if f.Severity != findings.SeverityHigh && f.Severity != findings.SeverityCritical {
-			continue
-		}
-
-		depth := chainDepths[f.ID]
-		if depth >= maxChainDepth {
-			continue
-		}
-
-		actCtx := withActivityTimeout(ctx, TimeoutCreateCage)
-		escalationCfg := cage.Config{
-			AssessmentID:    assessmentID,
-			Type:            cage.TypeExploitation,
-			BundleRef:       cfg.BundleRef,
-			Scope:           cfg.Target,
-			SkipPaths:       cfg.SkipPaths,
-			ParentFindingID: f.ID,
-		}
-		applyCageDefaults(&escalationCfg, cfg)
-
-		var cageID string
-		err := workflow.ExecuteActivity(actCtx, "CreateEscalationCage", assessmentID, f, escalationCfg).Get(ctx, &cageID)
-		if err != nil {
-			continue
-		}
-		spawned++
-		chainDepths[f.ID] = depth + 1
-	}
-
-	return spawned
 }
 
 func waitForReportReview(ctx workflow.Context) (*intervention.ReportReviewSignal, error) {
