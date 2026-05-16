@@ -44,7 +44,7 @@ func BasePlanFromConfig(cfg *config.Config) *Plan {
 			ctPlan := CageType{
 				VCPUs:         vcpus,
 				MemoryMB:      mem,
-				MaxConcurrent: ct.MaxConcurrent,
+				MaxBatchSize: ct.MaxBatchSize,
 			}
 			if ct.MaxDuration > 0 {
 				ctPlan.MaxDuration = ct.MaxDuration.String()
@@ -87,8 +87,8 @@ func EnforceConfigCeilings(p *Plan, cfg *config.Config) error {
 		return fmt.Errorf("max_iterations %d exceeds operator limit %d", p.Limits.MaxIterations, cfg.Assessment.MaxIterations)
 	}
 
-	if cfg.Assessment.MaxConcurrent > 0 && p.Limits.MaxConcurrentCages > cfg.Assessment.MaxConcurrent {
-		return fmt.Errorf("max_concurrent_cages %d exceeds operator limit %d", p.Limits.MaxConcurrentCages, cfg.Assessment.MaxConcurrent)
+	if cfg.Assessment.MaxTotalCages > 0 && p.Limits.MaxTotalCages > cfg.Assessment.MaxTotalCages {
+		return fmt.Errorf("max_total_cages %d exceeds operator limit %d", p.Limits.MaxTotalCages, cfg.Assessment.MaxTotalCages)
 	}
 
 	if cfg.Posture == config.PostureStrict && p.Notifications.Webhook != "" && strings.HasPrefix(p.Notifications.Webhook, "http://") {
@@ -106,8 +106,8 @@ func EnforceConfigCeilings(p *Plan, cfg *config.Config) error {
 		if ct.MemoryMB > cfgCt.MaxMemoryMB && cfgCt.MaxMemoryMB > 0 {
 			return fmt.Errorf("cage_types.%s.memory_mb %d exceeds operator limit %d", name, ct.MemoryMB, cfgCt.MaxMemoryMB)
 		}
-		if ct.MaxConcurrent > cfgCt.MaxConcurrent && cfgCt.MaxConcurrent > 0 {
-			return fmt.Errorf("cage_types.%s.max_concurrent %d exceeds operator limit %d", name, ct.MaxConcurrent, cfgCt.MaxConcurrent)
+		if ct.MaxBatchSize > cfgCt.MaxBatchSize && cfgCt.MaxBatchSize > 0 {
+			return fmt.Errorf("cage_types.%s.max_concurrent %d exceeds operator limit %d", name, ct.MaxBatchSize, cfgCt.MaxBatchSize)
 		}
 		if ct.MaxDuration != "" && cfgCt.MaxDuration > 0 {
 			d, err := time.ParseDuration(ct.MaxDuration)
@@ -121,13 +121,13 @@ func EnforceConfigCeilings(p *Plan, cfg *config.Config) error {
 	}
 
 	// A per-cage-type max_concurrent higher than the assessment-level
-	// max_concurrent_cages is not dangerous, but it will confuse
+	// max_total_cages is not dangerous, but it will confuse
 	// operators who expect the per-type value to be reachable.
-	if p.Limits.MaxConcurrentCages > 0 {
+	if p.Limits.MaxTotalCages > 0 {
 		for name, ct := range p.CageTypes {
-			if ct.MaxConcurrent > p.Limits.MaxConcurrentCages {
-				return fmt.Errorf("cage_types.%s.max_concurrent %d exceeds assessment max_concurrent_cages %d",
-					name, ct.MaxConcurrent, p.Limits.MaxConcurrentCages)
+			if ct.MaxBatchSize > p.Limits.MaxTotalCages {
+				return fmt.Errorf("cage_types.%s.max_concurrent %d exceeds assessment max_total_cages %d",
+					name, ct.MaxBatchSize, p.Limits.MaxTotalCages)
 			}
 		}
 	}

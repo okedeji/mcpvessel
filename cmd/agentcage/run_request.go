@@ -16,7 +16,7 @@ func buildCreateAssessmentRequest(p *plan.Plan, bundleRef string) (*pb.CreateAss
 		CustomerId:         p.CustomerID,
 		TotalTokenBudget:   p.Budget.Tokens,
 		MaxChainDepth:      p.Limits.MaxChainDepth,
-		MaxConcurrentCages: p.Limits.MaxConcurrentCages,
+		MaxConcurrentCages: p.Limits.MaxTotalCages,
 		SkipPaths:          p.Target.SkipPaths,
 		Tags:               p.Tags,
 		Environment:         p.Environment,
@@ -54,7 +54,7 @@ func buildCreateAssessmentRequest(p *plan.Plan, bundleRef string) (*pb.CreateAss
 		}
 		ctPb := &pb.CageTypeConfig{
 			Type:          protoType,
-			MaxConcurrent: ct.MaxConcurrent,
+			MaxConcurrent: ct.MaxBatchSize,
 			Defaults:      &pb.ResourceLimits{Vcpus: ct.VCPUs, MemoryMb: ct.MemoryMB},
 		}
 		if ct.MaxDuration != "" {

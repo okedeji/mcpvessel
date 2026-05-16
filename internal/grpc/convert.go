@@ -133,7 +133,7 @@ func assessmentConfigFromProto(p *pb.AssessmentConfig) assessment.Config {
 		Name:          p.GetName(),
 		TokenBudget:   p.GetTotalTokenBudget(),
 		MaxChainDepth: p.GetMaxChainDepth(),
-		MaxConcurrent: p.GetMaxConcurrentCages(),
+		MaxTotalCages: p.GetMaxConcurrentCages(),
 		MaxIterations: p.GetMaxIterations(),
 		Tags:          p.GetTags(),
 	}
@@ -164,7 +164,7 @@ func assessmentConfigFromProto(p *pb.AssessmentConfig) assessment.Config {
 		t := cageTypeFromProto(ct.GetType())
 		ctc := assessment.CageTypeConfig{
 			Type:          t,
-			MaxConcurrent: ct.GetMaxConcurrent(),
+			MaxBatchSize: ct.GetMaxConcurrent(),
 		}
 		if d := ct.GetDefaults(); d != nil {
 			ctc.Resources = cage.ResourceLimits{VCPUs: d.GetVcpus(), MemoryMB: d.GetMemoryMb()}
@@ -274,7 +274,7 @@ func assessmentConfigToProto(cfg assessment.Config) *pb.AssessmentConfig {
 		CustomerId:         cfg.CustomerID,
 		TotalTokenBudget:   cfg.TokenBudget,
 		MaxChainDepth:      cfg.MaxChainDepth,
-		MaxConcurrentCages: cfg.MaxConcurrent,
+		MaxConcurrentCages: cfg.MaxTotalCages,
 		MaxIterations:      cfg.MaxIterations,
 		SkipPaths:          cfg.SkipPaths,
 		Tags:               cfg.Tags,
@@ -303,7 +303,7 @@ func assessmentConfigToProto(cfg assessment.Config) *pb.AssessmentConfig {
 	for t, ct := range cfg.CageDefaults {
 		ctPb := &pb.CageTypeConfig{
 			Type:          cageTypeToProto(t),
-			MaxConcurrent: ct.MaxConcurrent,
+			MaxConcurrent: ct.MaxBatchSize,
 			Defaults:      &pb.ResourceLimits{Vcpus: ct.Resources.VCPUs, MemoryMb: ct.Resources.MemoryMB},
 		}
 		if ct.MaxDuration > 0 {

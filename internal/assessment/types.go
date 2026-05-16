@@ -74,7 +74,7 @@ type Config struct {
 	TokenBudget      int64
 	MaxDuration      time.Duration
 	MaxChainDepth    int32
-	MaxConcurrent    int32
+	MaxTotalCages    int32
 	MaxIterations    int32
 	// TrustAgentProof skips spawning a validator cage when the agent
 	// provides a confirmed ValidationProof on the finding. The finding
@@ -128,10 +128,10 @@ type ValidationGuidance struct {
 }
 
 type CageTypeConfig struct {
-	Type          cage.Type
-	Resources     cage.ResourceLimits
-	MaxConcurrent int32
-	MaxDuration   time.Duration
+	Type        cage.Type
+	Resources   cage.ResourceLimits
+	MaxBatchSize int32
+	MaxDuration time.Duration
 }
 
 type Info struct {

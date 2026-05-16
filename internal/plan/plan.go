@@ -171,14 +171,14 @@ type Budget struct {
 
 type Limits struct {
 	MaxChainDepth      int32 `yaml:"max_chain_depth"`
-	MaxConcurrentCages int32 `yaml:"max_concurrent_cages"`
+	MaxTotalCages int32 `yaml:"max_total_cages"`
 	MaxIterations      int32 `yaml:"max_iterations"`
 }
 
 type CageType struct {
 	VCPUs         int32  `yaml:"vcpus"`
 	MemoryMB      int32  `yaml:"memory_mb"`
-	MaxConcurrent int32  `yaml:"max_concurrent"`
+	MaxBatchSize int32  `yaml:"max_batch_size"`
 	MaxDuration   string `yaml:"max_duration"`
 }
 
@@ -303,8 +303,8 @@ func Merge(base, override *Plan) *Plan {
 	if override.Limits.MaxChainDepth > 0 {
 		out.Limits.MaxChainDepth = override.Limits.MaxChainDepth
 	}
-	if override.Limits.MaxConcurrentCages > 0 {
-		out.Limits.MaxConcurrentCages = override.Limits.MaxConcurrentCages
+	if override.Limits.MaxTotalCages > 0 {
+		out.Limits.MaxTotalCages = override.Limits.MaxTotalCages
 	}
 	if override.Limits.MaxIterations > 0 {
 		out.Limits.MaxIterations = override.Limits.MaxIterations
@@ -325,8 +325,8 @@ func Merge(base, override *Plan) *Plan {
 			if v.MemoryMB > 0 {
 				existing.MemoryMB = v.MemoryMB
 			}
-			if v.MaxConcurrent > 0 {
-				existing.MaxConcurrent = v.MaxConcurrent
+			if v.MaxBatchSize > 0 {
+				existing.MaxBatchSize = v.MaxBatchSize
 			}
 			if v.MaxDuration != "" {
 				existing.MaxDuration = v.MaxDuration
@@ -475,8 +475,8 @@ func Validate(p *Plan) error {
 	if p.Limits.MaxChainDepth < 0 {
 		return fmt.Errorf("max_chain_depth must not be negative")
 	}
-	if p.Limits.MaxConcurrentCages < 0 {
-		return fmt.Errorf("max_concurrent_cages must not be negative")
+	if p.Limits.MaxTotalCages < 0 {
+		return fmt.Errorf("max_total_cages must not be negative")
 	}
 	if p.Limits.MaxIterations < 0 {
 		return fmt.Errorf("max_iterations must not be negative")
@@ -501,7 +501,7 @@ func Validate(p *Plan) error {
 		if ct.MemoryMB < 0 {
 			return fmt.Errorf("cage_types.%s.memory_mb must not be negative", name)
 		}
-		if ct.MaxConcurrent < 0 {
+		if ct.MaxBatchSize < 0 {
 			return fmt.Errorf("cage_types.%s.max_concurrent must not be negative", name)
 		}
 		if ct.MaxDuration != "" {
@@ -681,7 +681,7 @@ type RawFlags struct {
 	TokenBudget      int64
 	MaxDuration      string
 	MaxChainDepth    int
-	MaxConcurrent    int
+	MaxTotalCages    int
 	MaxIterations    int
 	Context          string
 	Focus            []string
@@ -733,11 +733,11 @@ func FlagsToOverride(explicit map[string]bool, f RawFlags) (*Plan, error) {
 		p.Limits.MaxChainDepth = v
 	}
 	if explicit["max-concurrent"] {
-		v, err := safeInt32("max-concurrent", f.MaxConcurrent)
+		v, err := safeInt32("max-concurrent", f.MaxTotalCages)
 		if err != nil {
 			return nil, err
 		}
-		p.Limits.MaxConcurrentCages = v
+		p.Limits.MaxTotalCages = v
 	}
 	if explicit["max-iterations"] {
 		v, err := safeInt32("max-iterations", f.MaxIterations)

@@ -69,7 +69,7 @@ func cmdRun(args []string) {
 		TokenBudget:      rf.tokenBudget,
 		MaxDuration:      rf.maxDuration,
 		MaxChainDepth:    rf.maxChainDepth,
-		MaxConcurrent:    rf.maxConcurrent,
+		MaxTotalCages:    rf.maxConcurrent,
 		MaxIterations:    rf.maxIterations,
 		Context:          rf.context,
 		Focus:            []string(rf.focus),
@@ -173,8 +173,8 @@ func printAssessmentSummary(info *pb.AssessmentInfo, p *plan.Plan, bundleRef str
 		}
 		fmt.Printf("  Budget:     %s\n", strings.Join(parts, " / "))
 	}
-	if p.Limits.MaxConcurrentCages > 0 {
-		fmt.Printf("  Cages:      up to %d concurrent\n", p.Limits.MaxConcurrentCages)
+	if p.Limits.MaxTotalCages > 0 {
+		fmt.Printf("  Cages:      up to %d concurrent\n", p.Limits.MaxTotalCages)
 	}
 	if !plan.BoolVal(p.Output.Follow) {
 		fmt.Printf("\nUse 'agentcage assessments --id %s' to monitor.\n", info.GetAssessmentId())

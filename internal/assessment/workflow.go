@@ -28,7 +28,7 @@ const (
 	TimeoutPlanNextActions = 60 * time.Second
 	TimeoutReviewDeadline  = 24 * time.Hour
 	TimeoutWaitForCage     = 10 * time.Minute
-	DefaultMaxConcurrent   = int32(3)
+	DefaultMaxBatchSize   = int32(3)
 	DefaultMaxChainDepth   = int32(3)
 	DefaultMaxIterations   = int32(20)
 
@@ -244,14 +244,14 @@ func AssessmentWorkflow(ctx workflow.Context, input AssessmentWorkflowInput) (As
 			break
 		}
 
-		if cfg.MaxConcurrent > 0 && result.TotalCages >= cfg.MaxConcurrent {
+		if cfg.MaxTotalCages > 0 && result.TotalCages >= cfg.MaxTotalCages {
 			workflow.GetLogger(ctx).Info("global cage cap reached, ending exploitation",
-				"assessment_id", input.AssessmentID, "total_cages", result.TotalCages, "cap", cfg.MaxConcurrent)
+				"assessment_id", input.AssessmentID, "total_cages", result.TotalCages, "cap", cfg.MaxTotalCages)
 			break
 		}
 
-		maxConcurrent := maxConcurrentForType(cfg, cage.TypeDiscovery)
-		spawned, completedSummaries, err := spawnCoordinatorActions(ctx, input.AssessmentID, cfg, decision.Actions, maxConcurrent)
+		batchSize := batchSizeForType(cfg, cage.TypeDiscovery)
+		spawned, completedSummaries, err := spawnCoordinatorActions(ctx, input.AssessmentID, cfg, decision.Actions, batchSize)
 		if err != nil {
 			return failResult(result, "spawning cages (iteration %d): %v", iteration, err), nil
 		}
@@ -577,11 +577,11 @@ func generateReport(ctx workflow.Context, assessmentID, customerID, target strin
 	return workflow.ExecuteActivity(storeCtx, "StoreReport", assessmentID, reportData).Get(ctx, nil)
 }
 
-func maxConcurrentForType(cfg Config, cageType cage.Type) int32 {
-	if tc, ok := cfg.CageDefaults[cageType]; ok && tc.MaxConcurrent > 0 {
-		return tc.MaxConcurrent
+func batchSizeForType(cfg Config, cageType cage.Type) int32 {
+	if tc, ok := cfg.CageDefaults[cageType]; ok && tc.MaxBatchSize > 0 {
+		return tc.MaxBatchSize
 	}
-	return DefaultMaxConcurrent
+	return DefaultMaxBatchSize
 }
 
 func spawnCoordinatorActions(

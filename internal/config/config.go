@@ -462,7 +462,7 @@ type CageTypeConfig struct {
 	MaxMemoryMB          int32         `yaml:"max_memory_mb"`
 	DefaultVCPUs         int32         `yaml:"default_vcpus"`
 	DefaultMemoryMB      int32         `yaml:"default_memory_mb"`
-	MaxConcurrent        int32         `yaml:"max_concurrent"`
+	MaxBatchSize        int32         `yaml:"max_batch_size"`
 	RequiresLLM          bool          `yaml:"requires_llm"`
 	RequiresParentFinding bool         `yaml:"requires_parent_finding"`
 	RateLimit            int32         `yaml:"rate_limit"`
@@ -518,7 +518,7 @@ type AssessmentConfig struct {
 	MaxDuration       time.Duration `yaml:"max_duration"`
 	TokenBudget       int64         `yaml:"token_budget"`
 	MaxIterations     int32         `yaml:"max_iterations"`
-	MaxConcurrent     int32         `yaml:"max_concurrent"`
+	MaxTotalCages     int32         `yaml:"max_batch_size"`
 	ReviewTimeout     time.Duration `yaml:"review_timeout"`
 	// TrustAgentProof skips independent validation when the agent
 	// provides a confirmed proof on the finding. Faster and cheaper
@@ -757,7 +757,7 @@ func Defaults() *Config {
 				MaxMemoryMB:     8192,
 				DefaultVCPUs:    2,
 				DefaultMemoryMB: 4096,
-				MaxConcurrent:   10,
+				MaxBatchSize:   10,
 				RequiresLLM:     true,
 				RateLimit:       1000,
 			},
@@ -767,7 +767,7 @@ func Defaults() *Config {
 				MaxMemoryMB:           1024,
 				DefaultVCPUs:          1,
 				DefaultMemoryMB:       512,
-				MaxConcurrent:         20,
+				MaxBatchSize:         20,
 				RequiresLLM:           false,
 				RequiresParentFinding: true,
 				RateLimit:             100,
@@ -778,7 +778,7 @@ func Defaults() *Config {
 				MaxMemoryMB:           4096,
 				DefaultVCPUs:          1,
 				DefaultMemoryMB:       2048,
-				MaxConcurrent:         5,
+				MaxBatchSize:         5,
 				RequiresLLM:           true,
 				RequiresParentFinding: true,
 				RateLimit:             500,
@@ -789,7 +789,7 @@ func Defaults() *Config {
 			MaxDuration:       4 * time.Hour,
 			TokenBudget:       500000,
 			MaxIterations:     20,
-			MaxConcurrent:     10,
+			MaxTotalCages:     10,
 			ReviewTimeout:     24 * time.Hour,
 			MaxScreenshotSize: 5 << 20, // 5MB
 		},
@@ -1107,8 +1107,8 @@ func Merge(base, override *Config) *Config {
 				if v.DefaultMemoryMB > 0 {
 					existing.DefaultMemoryMB = v.DefaultMemoryMB
 				}
-				if v.MaxConcurrent > 0 {
-					existing.MaxConcurrent = v.MaxConcurrent
+				if v.MaxBatchSize > 0 {
+					existing.MaxBatchSize = v.MaxBatchSize
 				}
 				if v.RateLimit > 0 {
 					existing.RateLimit = v.RateLimit
@@ -1138,8 +1138,8 @@ func Merge(base, override *Config) *Config {
 	if override.Assessment.MaxIterations > 0 {
 		result.Assessment.MaxIterations = override.Assessment.MaxIterations
 	}
-	if override.Assessment.MaxConcurrent > 0 {
-		result.Assessment.MaxConcurrent = override.Assessment.MaxConcurrent
+	if override.Assessment.MaxTotalCages > 0 {
+		result.Assessment.MaxTotalCages = override.Assessment.MaxTotalCages
 	}
 	if override.Assessment.ReviewTimeout > 0 {
 		result.Assessment.ReviewTimeout = override.Assessment.ReviewTimeout
