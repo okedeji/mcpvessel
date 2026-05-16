@@ -666,7 +666,7 @@ func Resolve(explicit string) string {
 var validCageTypes = map[string]bool{
 	"discovery":  true,
 	"validator":  true,
-	"escalation": true,
+	"exploitation": true,
 }
 
 func Marshal(cfg *Config) ([]byte, error) {
@@ -772,7 +772,7 @@ func Defaults() *Config {
 				RequiresParentFinding: true,
 				RateLimit:             100,
 			},
-			"escalation": {
+			"exploitation": {
 				MaxDuration:           15 * time.Minute,
 				MaxVCPUs:              2,
 				MaxMemoryMB:           4096,
@@ -856,7 +856,7 @@ func Defaults() *Config {
 				AllowedProcesses: []string{"agent", "payload-proxy", "findings-sidecar"},
 				DefaultAction:    "human_review",
 			},
-			"escalation": {
+			"exploitation": {
 				Rules: map[string]string{
 					"privileged_shell":     "human_review",
 					"sensitive_file_write": "human_review",

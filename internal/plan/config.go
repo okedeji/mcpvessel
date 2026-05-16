@@ -54,7 +54,7 @@ func BasePlanFromConfig(cfg *config.Config) *Plan {
 	}
 
 	// Escalation cage type defines the org default chain depth.
-	if esc, ok := cfg.Cages["escalation"]; ok && esc.MaxChainDepth > 0 {
+	if esc, ok := cfg.Cages["exploitation"]; ok && esc.MaxChainDepth > 0 {
 		p.Limits.MaxChainDepth = esc.MaxChainDepth
 	}
 
@@ -79,7 +79,7 @@ func EnforceConfigCeilings(p *Plan, cfg *config.Config) error {
 		}
 	}
 
-	if esc, ok := cfg.Cages["escalation"]; ok && esc.MaxChainDepth > 0 && p.Limits.MaxChainDepth > esc.MaxChainDepth {
+	if esc, ok := cfg.Cages["exploitation"]; ok && esc.MaxChainDepth > 0 && p.Limits.MaxChainDepth > esc.MaxChainDepth {
 		return fmt.Errorf("max_chain_depth %d exceeds operator limit %d", p.Limits.MaxChainDepth, esc.MaxChainDepth)
 	}
 

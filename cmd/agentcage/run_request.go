@@ -139,7 +139,7 @@ func cageTypeNameToProto(name string) (pb.CageType, error) {
 		return pb.CageType_CAGE_TYPE_DISCOVERY, nil
 	case "validator":
 		return pb.CageType_CAGE_TYPE_VALIDATOR, nil
-	case "escalation":
+	case "exploitation":
 		return pb.CageType_CAGE_TYPE_ESCALATION, nil
 	default:
 		return pb.CageType_CAGE_TYPE_UNSPECIFIED, fmt.Errorf("unknown cage type %q in proto conversion", name)

@@ -228,7 +228,7 @@ func TestOPACageConfig(t *testing.T) {
 		{
 			name: "escalation without parent finding",
 			config: cage.Config{
-				Type:            cage.TypeEscalation,
+				Type:            cage.TypeExploitation,
 				TimeLimits:      cage.TimeLimits{MaxDuration: 5 * time.Minute},
 				Resources:       cage.ResourceLimits{VCPUs: 1, MemoryMB: 2048},
 				LLM:             &cage.LLMGatewayConfig{TokenBudget: 5000},

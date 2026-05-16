@@ -612,7 +612,7 @@ func spawnCoordinatorActions(
 			case "validator":
 				cageType = cage.TypeValidator
 			case "escalation":
-				cageType = cage.TypeEscalation
+				cageType = cage.TypeExploitation
 			}
 
 			cageCfg := cage.Config{
@@ -953,7 +953,7 @@ func spawnEscalationCages(
 		actCtx := withActivityTimeout(ctx, TimeoutCreateCage)
 		escalationCfg := cage.Config{
 			AssessmentID:    assessmentID,
-			Type:            cage.TypeEscalation,
+			Type:            cage.TypeExploitation,
 			BundleRef:       cfg.BundleRef,
 			Scope:           cfg.Target,
 			SkipPaths:       cfg.SkipPaths,

@@ -8,7 +8,7 @@ const (
 	TypeUnspecified Type = iota
 	TypeDiscovery
 	TypeValidator
-	TypeEscalation
+	TypeExploitation
 )
 
 func (t Type) String() string {
@@ -17,8 +17,8 @@ func (t Type) String() string {
 		return "discovery"
 	case TypeValidator:
 		return "validator"
-	case TypeEscalation:
-		return "escalation"
+	case TypeExploitation:
+		return "exploitation"
 	default:
 		return "unspecified"
 	}
@@ -30,8 +30,8 @@ func TypeFromString(s string) Type {
 		return TypeDiscovery
 	case "validator":
 		return TypeValidator
-	case "escalation":
-		return TypeEscalation
+	case "exploitation":
+		return TypeExploitation
 	default:
 		return TypeUnspecified
 	}

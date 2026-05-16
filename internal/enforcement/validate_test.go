@@ -49,7 +49,7 @@ func validValidatorConfig() cage.Config {
 func validEscalationConfig() cage.Config {
 	return cage.Config{
 		AssessmentID:    "assess-1",
-		Type:            cage.TypeEscalation,
+		Type:            cage.TypeExploitation,
 		BundleRef:       "abc123",
 		Scope:           cage.Scope{Hosts: []string{"target.example.com"}, Ports: []string{"443"}},
 		Resources:       cage.ResourceLimits{VCPUs: 2, MemoryMB: 2048},

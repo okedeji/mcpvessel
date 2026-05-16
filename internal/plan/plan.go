@@ -491,7 +491,7 @@ func Validate(p *Plan) error {
 
 	for name, ct := range p.CageTypes {
 		switch name {
-		case "discovery", "validator", "escalation":
+		case "discovery", "validator", "exploitation":
 		default:
 			return fmt.Errorf("unknown cage type %q in cage_types (supported: discovery, validator, escalation)", name)
 		}

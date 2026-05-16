@@ -39,7 +39,7 @@ func TestDefaults_HasThreeCageTypes(t *testing.T) {
 	assert.Equal(t, int32(512), val.DefaultMemoryMB)
 	assert.True(t, val.RequiresParentFinding)
 
-	esc := cfg.Cages["escalation"]
+	esc := cfg.Cages["exploitation"]
 	assert.Equal(t, 15*time.Minute, esc.MaxDuration)
 	assert.Equal(t, int32(2), esc.MaxVCPUs)
 	assert.Equal(t, int32(4096), esc.MaxMemoryMB)
@@ -98,7 +98,7 @@ func TestDefaults_HasThreeMonitoringSets(t *testing.T) {
 	require.Len(t, cfg.Monitoring, 3)
 	assert.Contains(t, cfg.Monitoring, "discovery")
 	assert.Contains(t, cfg.Monitoring, "validator")
-	assert.Contains(t, cfg.Monitoring, "escalation")
+	assert.Contains(t, cfg.Monitoring, "exploitation")
 }
 
 func TestDefaults_HasPayloadSets(t *testing.T) {
@@ -325,7 +325,7 @@ func TestRateLimit(t *testing.T) {
 	cfg := Defaults()
 	assert.Equal(t, int32(1000), cfg.RateLimit("discovery"))
 	assert.Equal(t, int32(100), cfg.RateLimit("validator"))
-	assert.Equal(t, int32(500), cfg.RateLimit("escalation"))
+	assert.Equal(t, int32(500), cfg.RateLimit("exploitation"))
 	assert.Equal(t, int32(0), cfg.RateLimit("nonexistent"))
 }
 

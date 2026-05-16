@@ -185,7 +185,7 @@ func validateRequiredFields(config cage.Config) []error {
 		if config.LLM == nil {
 			errs = append(errs, fmt.Errorf("discovery cage requires LLM configuration"))
 		}
-	case cage.TypeEscalation:
+	case cage.TypeExploitation:
 		if config.ParentFindingID == "" {
 			errs = append(errs, fmt.Errorf("escalation cage requires ParentFindingID"))
 		}

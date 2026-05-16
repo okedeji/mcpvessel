@@ -139,10 +139,10 @@ func TestJudge_RequestPayloadCorrect(t *testing.T) {
 	})
 	defer srv.Close()
 
-	_, _, err := client.Evaluate("escalation", "rce", "assess-42", "POST", "/exec", []byte("whoami"))
+	_, _, err := client.Evaluate("exploitation", "rce", "assess-42", "POST", "/exec", []byte("whoami"))
 	require.NoError(t, err)
 	require.Len(t, gotReq.Payloads, 1)
-	assert.Equal(t, "escalation", gotReq.Payloads[0].CageType)
+	assert.Equal(t, "exploitation", gotReq.Payloads[0].CageType)
 	assert.Equal(t, "rce", gotReq.Payloads[0].VulnClass)
 	assert.Equal(t, "assess-42", gotReq.Payloads[0].AssessmentID)
 	assert.Equal(t, "POST", gotReq.Payloads[0].Method)

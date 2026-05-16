@@ -46,7 +46,7 @@ func TestGenerateCageTypesRego_ContainsAllTypes(t *testing.T) {
 	assert.Contains(t, rego, "package agentcage.cage_types")
 	assert.Contains(t, rego, `"discovery"`)
 	assert.Contains(t, rego, `"validator"`)
-	assert.Contains(t, rego, `"escalation"`)
+	assert.Contains(t, rego, `"exploitation"`)
 	assert.Contains(t, rego, "rate limit must be positive")
 }
 

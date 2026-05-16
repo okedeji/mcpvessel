@@ -72,7 +72,7 @@ func cageTypeFromProto(t pb.CageType) cage.Type {
 	case pb.CageType_CAGE_TYPE_VALIDATOR:
 		return cage.TypeValidator
 	case pb.CageType_CAGE_TYPE_ESCALATION:
-		return cage.TypeEscalation
+		return cage.TypeExploitation
 	default:
 		return cage.TypeUnspecified
 	}
@@ -84,7 +84,7 @@ func cageTypeToProto(t cage.Type) pb.CageType {
 		return pb.CageType_CAGE_TYPE_DISCOVERY
 	case cage.TypeValidator:
 		return pb.CageType_CAGE_TYPE_VALIDATOR
-	case cage.TypeEscalation:
+	case cage.TypeExploitation:
 		return pb.CageType_CAGE_TYPE_ESCALATION
 	default:
 		return pb.CageType_CAGE_TYPE_UNSPECIFIED

@@ -15,11 +15,11 @@ func TestGenerateFalcoRules_AllCageTypes(t *testing.T) {
 
 	require.Contains(t, rules, "discovery")
 	require.Contains(t, rules, "validator")
-	require.Contains(t, rules, "escalation")
+	require.Contains(t, rules, "exploitation")
 
 	require.Contains(t, tripwires, "discovery")
 	require.Contains(t, tripwires, "validator")
-	require.Contains(t, tripwires, "escalation")
+	require.Contains(t, tripwires, "exploitation")
 }
 
 func TestGenerateFalcoRules_DiscoveryRules(t *testing.T) {
@@ -83,10 +83,10 @@ func TestGenerateFalcoRules_EscalationLateralMovement(t *testing.T) {
 	cfg := config.Defaults()
 	rules, tripwires := GenerateFalcoRules(cfg.Monitoring)
 
-	escalation := rules["escalation"]
+	escalation := rules["exploitation"]
 	var hasLateral bool
 	for _, r := range escalation {
-		if r.Rule == "lateral movement in escalation cage" {
+		if r.Rule == "lateral movement in exploitation cage" {
 			hasLateral = true
 			assert.Contains(t, r.Condition, "22")
 			assert.Contains(t, r.Condition, "3389")
@@ -95,7 +95,7 @@ func TestGenerateFalcoRules_EscalationLateralMovement(t *testing.T) {
 	}
 	assert.True(t, hasLateral)
 
-	tw := tripwires["escalation"]
+	tw := tripwires["exploitation"]
 	assert.Equal(t, TripwireHumanReview, tw.DefaultAction)
 }
 
