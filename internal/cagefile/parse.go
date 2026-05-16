@@ -24,16 +24,25 @@ var SupportedTools = func() map[string]bool {
 	return m
 }()
 
+// AgentCapabilities declares what the agent can do. The coordinator
+// uses this to only plan actions the agent supports.
+type AgentCapabilities struct {
+	Discovery    bool     `json:"discovery,omitempty"`
+	Exploitation []string `json:"exploitation,omitempty"`
+	Validation   bool     `json:"validation,omitempty"`
+}
+
 type Manifest struct {
-	Runtime    string            `json:"runtime"`
-	Entrypoint string            `json:"entrypoint"`
-	Build      string            `json:"build,omitempty"`
-	SystemDeps []string          `json:"system_deps,omitempty"`
-	Packages   []string          `json:"packages,omitempty"`
-	PipDeps    []string          `json:"pip_deps,omitempty"`
-	NpmDeps    []string          `json:"npm_deps,omitempty"`
-	GoDeps     []string          `json:"go_deps,omitempty"`
-	EnvVars    map[string]string `json:"env,omitempty"`
+	Runtime      string            `json:"runtime"`
+	Entrypoint   string            `json:"entrypoint"`
+	Build        string            `json:"build,omitempty"`
+	SystemDeps   []string          `json:"system_deps,omitempty"`
+	Packages     []string          `json:"packages,omitempty"`
+	PipDeps      []string          `json:"pip_deps,omitempty"`
+	NpmDeps      []string          `json:"npm_deps,omitempty"`
+	GoDeps       []string          `json:"go_deps,omitempty"`
+	EnvVars      map[string]string `json:"env,omitempty"`
+	Capabilities AgentCapabilities `json:"capabilities"`
 }
 
 func Parse(r io.Reader) (*Manifest, error) {
@@ -120,6 +129,25 @@ func Parse(r io.Reader) (*Manifest, error) {
 			}
 			m.EnvVars[key] = val
 
+		case "capability":
+			parts := strings.Fields(value)
+			if len(parts) == 0 {
+				return nil, fmt.Errorf("line %d: capability directive requires a type", lineNum)
+			}
+			switch parts[0] {
+			case "discovery":
+				m.Capabilities.Discovery = true
+			case "exploitation":
+				if len(parts) < 2 {
+					return nil, fmt.Errorf("line %d: capability exploitation requires at least one vuln class", lineNum)
+				}
+				m.Capabilities.Exploitation = append(m.Capabilities.Exploitation, parts[1:]...)
+			case "validation":
+				m.Capabilities.Validation = true
+			default:
+				return nil, fmt.Errorf("line %d: unknown capability %q (supported: discovery, exploitation, validation)", lineNum, parts[0])
+			}
+
 		default:
 			return nil, fmt.Errorf("line %d: unknown directive %q", lineNum, directive)
 		}
@@ -142,6 +170,9 @@ func (m *Manifest) validate() error {
 	}
 	if m.Entrypoint == "" {
 		return fmt.Errorf("cagefile: entrypoint is required")
+	}
+	if !m.Capabilities.Discovery && len(m.Capabilities.Exploitation) == 0 && !m.Capabilities.Validation {
+		return fmt.Errorf("cagefile: at least one capability directive is required (discovery, exploitation, validation)")
 	}
 
 	switch m.Runtime {

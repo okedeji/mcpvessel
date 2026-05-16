@@ -45,8 +45,9 @@ type Env struct {
 	JudgeConfidence  float64         `json:"judge_confidence,omitempty"`
 	JudgeTimeoutSec  int             `json:"judge_timeout_sec,omitempty"`
 	ProofThreshold   float64         `json:"proof_threshold,omitempty"`
-	Guidance  json.RawMessage  `json:"guidance,omitempty"`
-	CustomEnv map[string]string `json:"custom_env,omitempty"`
+	Guidance     json.RawMessage        `json:"guidance,omitempty"`
+	CustomEnv    map[string]string      `json:"custom_env,omitempty"`
+	Capabilities cagefile.AgentCapabilities `json:"capabilities"`
 }
 
 func (e Env) String() string   { return fmt.Sprintf("Env{cage=%s}", e.CageID) }

@@ -276,6 +276,7 @@ func (a *ActivityImpl) AssembleRootfs(ctx context.Context, cageID string, bundle
 	}
 
 	env.Entrypoint = manifest.Entrypoint
+	env.Capabilities = manifest.Capabilities
 	if len(manifest.EnvVars) > 0 {
 		if env.CustomEnv == nil {
 			env.CustomEnv = make(map[string]string)

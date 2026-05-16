@@ -28,8 +28,9 @@ type BundleManifest struct {
 	PipDeps    []string          `json:"pip_deps,omitempty"`
 	NpmDeps    []string          `json:"npm_deps,omitempty"`
 	GoDeps     []string          `json:"go_deps,omitempty"`
-	EnvVars    map[string]string `json:"env,omitempty"`
-	FilesHash  string            `json:"files_hash"`
+	EnvVars      map[string]string `json:"env,omitempty"`
+	Capabilities AgentCapabilities `json:"capabilities"`
+	FilesHash    string            `json:"files_hash"`
 }
 
 // SHA256 of the raw manifest.json bytes so a tampered manifest
@@ -83,8 +84,9 @@ func Pack(dir string, version string, agentcageVersion string, w io.Writer, opts
 		PipDeps:    manifest.PipDeps,
 		NpmDeps:    manifest.NpmDeps,
 		GoDeps:     manifest.GoDeps,
-		EnvVars:    manifest.EnvVars,
-		FilesHash:  "sha256:" + hash,
+		EnvVars:      manifest.EnvVars,
+		Capabilities: manifest.Capabilities,
+		FilesHash:    "sha256:" + hash,
 	}
 
 	gw := gzip.NewWriter(w)

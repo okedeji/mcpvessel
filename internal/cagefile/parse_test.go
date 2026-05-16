@@ -14,6 +14,7 @@ runtime python3
 deps chromium nmap sqlmap interactsh
 pip requests==2.31.0 playwright==1.40.0 httpx==0.27.0 beautifulsoup4==4.12.2
 entrypoint python3 solver.py
+capability discovery
 `
 	m, err := ParseString(input)
 	require.NoError(t, err)
@@ -28,6 +29,7 @@ func TestParse_MinimalCagefile(t *testing.T) {
 	input := `
 runtime static
 entrypoint ./my-scanner
+capability discovery
 `
 	m, err := ParseString(input)
 	require.NoError(t, err)
@@ -44,6 +46,7 @@ runtime node
 npm puppeteer@21.0.0 axios@1.6.0
 deps chromium
 entrypoint node index.js
+capability discovery
 `
 	m, err := ParseString(input)
 	require.NoError(t, err)
@@ -59,6 +62,7 @@ runtime go
 go-deps github.com/projectdiscovery/nuclei/v3@v3.1.0
 deps nmap
 entrypoint ./scanner
+capability discovery
 `
 	m, err := ParseString(input)
 	require.NoError(t, err)
@@ -75,6 +79,7 @@ runtime python3
 
 # Another comment
 entrypoint python3 solver.py
+capability discovery
 
 `
 	m, err := ParseString(input)
@@ -100,6 +105,7 @@ func TestParse_UnsupportedRuntime(t *testing.T) {
 	input := `
 runtime ruby
 entrypoint ruby scan.rb
+capability discovery
 `
 	_, err := ParseString(input)
 	require.Error(t, err)
@@ -111,6 +117,7 @@ func TestParse_UnsupportedDep(t *testing.T) {
 runtime python3
 deps metasploit
 entrypoint python3 solver.py
+capability discovery
 `
 	_, err := ParseString(input)
 	require.Error(t, err)
@@ -122,6 +129,7 @@ func TestParse_DuplicateRuntime(t *testing.T) {
 runtime python3
 runtime node
 entrypoint python3 solver.py
+capability discovery
 `
 	_, err := ParseString(input)
 	require.Error(t, err)
@@ -132,6 +140,7 @@ func TestParse_DuplicateEntrypoint(t *testing.T) {
 	input := `
 runtime python3
 entrypoint python3 a.py
+capability discovery
 entrypoint python3 b.py
 `
 	_, err := ParseString(input)
@@ -144,6 +153,7 @@ func TestParse_UnknownDirective(t *testing.T) {
 runtime python3
 foobar baz
 entrypoint python3 solver.py
+capability discovery
 `
 	_, err := ParseString(input)
 	require.Error(t, err)
@@ -162,6 +172,7 @@ func TestParse_PipWithNodeRuntime(t *testing.T) {
 runtime node
 pip requests==2.31.0
 entrypoint node index.js
+capability discovery
 `
 	_, err := ParseString(input)
 	require.Error(t, err)
@@ -173,6 +184,7 @@ func TestParse_NpmWithPythonRuntime(t *testing.T) {
 runtime python3
 npm puppeteer@21.0.0
 entrypoint python3 solver.py
+capability discovery
 `
 	_, err := ParseString(input)
 	require.Error(t, err)
@@ -184,6 +196,7 @@ func TestParse_LanguageDepsWithStaticRuntime(t *testing.T) {
 runtime static
 pip requests==2.31.0
 entrypoint ./scanner
+capability discovery
 `
 	_, err := ParseString(input)
 	require.Error(t, err)
@@ -198,6 +211,7 @@ deps sqlmap curl
 pip requests==2.31.0
 pip httpx==0.27.0 playwright==1.40.0
 entrypoint python3 solver.py
+capability discovery
 `
 	m, err := ParseString(input)
 	require.NoError(t, err)

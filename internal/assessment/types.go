@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/okedeji/agentcage/internal/cage"
+	"github.com/okedeji/agentcage/internal/cagefile"
 )
 
 type Status int
@@ -88,6 +89,7 @@ type Config struct {
 	ExtraFlag        []cage.ProxyPatternEntry
 	Credentials      string
 	Environment      map[string]string
+	Capabilities     cagefile.AgentCapabilities
 }
 
 

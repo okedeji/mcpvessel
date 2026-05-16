@@ -221,17 +221,18 @@ func AssessmentWorkflow(ctx workflow.Context, input AssessmentWorkflowInput) (As
 		elapsed := workflow.Now(ctx).Sub(startTime)
 
 		state := CoordinatorState{
-			AssessmentID:   input.AssessmentID,
-			Target:         cfg.Target,
-			Iteration:      int(iteration),
-			MaxIterations:  int(maxIterations),
-			Findings:       SummarizeFindings(allFindings),
-			CagesCompleted: cagesCompleted,
-			Coverage:       coverage,
-			TokensUsed:     tokensUsed,
-			TokenBudget:    cfg.TokenBudget,
-			TimeElapsed:    elapsed,
-			TimeLimit:      cfg.MaxDuration,
+			AssessmentID:      input.AssessmentID,
+			Target:            cfg.Target,
+			Iteration:         int(iteration),
+			MaxIterations:     int(maxIterations),
+			Findings:          SummarizeFindings(allFindings),
+			CagesCompleted:    cagesCompleted,
+			Coverage:          coverage,
+			TokensUsed:        tokensUsed,
+			TokenBudget:       cfg.TokenBudget,
+			TimeElapsed:       elapsed,
+			TimeLimit:         cfg.MaxDuration,
+			AgentCapabilities: cfg.Capabilities,
 		}
 
 		decision, err := planNextActions(ctx, state)

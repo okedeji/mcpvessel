@@ -1,3 +1,4 @@
 runtime node
 build npm run build
 entrypoint node dist/agent.js
+capability discovery

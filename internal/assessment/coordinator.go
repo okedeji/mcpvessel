@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/okedeji/agentcage/internal/cage"
+	"github.com/okedeji/agentcage/internal/cagefile"
 	"github.com/okedeji/agentcage/internal/findings"
 )
 
@@ -18,10 +19,11 @@ type CoordinatorState struct {
 	Findings       []FindingSummary             `json:"findings"`
 	CagesCompleted []CageSummary                `json:"cages_completed"`
 	Coverage       map[string][]string          `json:"coverage"`
-	TokensUsed     int64                        `json:"tokens_used"`
-	TokenBudget    int64                        `json:"token_budget"`
-	TimeElapsed    time.Duration                `json:"time_elapsed"`
-	TimeLimit      time.Duration                `json:"time_limit"`
+	TokensUsed         int64                        `json:"tokens_used"`
+	TokenBudget        int64                        `json:"token_budget"`
+	TimeElapsed        time.Duration                `json:"time_elapsed"`
+	TimeLimit          time.Duration                `json:"time_limit"`
+	AgentCapabilities  cagefile.AgentCapabilities   `json:"agent_capabilities"`
 }
 
 // FindingSummary is a compact representation of a finding for the
