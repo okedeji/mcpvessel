@@ -378,12 +378,17 @@ func syncStats(ctx workflow.Context, assessmentID string, result AssessmentWorkf
 	countCtx := withActivityTimeout(ctx, TimeoutGetFindings)
 	_ = workflow.ExecuteActivity(countCtx, "CountFindings", assessmentID).Get(ctx, &counts)
 
+	var tokensConsumed int64
+	tokenCtx := withActivityTimeout(ctx, TimeoutGetFindings)
+	_ = workflow.ExecuteActivity(tokenCtx, "GetAssessmentTokensConsumed", assessmentID).Get(ctx, &tokensConsumed)
+
 	stats := Stats{
 		TotalCages:        result.TotalCages,
 		ActiveCages:       activeCages,
 		FindingsCandidate: counts.Candidate,
 		FindingsValidated: counts.Validated,
 		FindingsRejected:  counts.Rejected,
+		TokensConsumed:    tokensConsumed,
 	}
 	_ = workflow.ExecuteActivity(
 		withActivityTimeout(ctx, TimeoutUpdateStatus),
