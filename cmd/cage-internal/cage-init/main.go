@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"strings"
@@ -152,7 +153,7 @@ func main() {
 	// 3. Set up iptables to redirect outbound HTTP through the proxy.
 	// Skipped in unisolated mode (iptables not available on macOS/non-root).
 	if proxy != nil {
-		setupIPTables()
+		setupIPTables(extractLLMPort(env.LLMEndpoint))
 	}
 
 	// 4. Export environment variables for the agent
@@ -293,7 +294,30 @@ func attachSidecarLogs(logConn net.Conn) {
 	}
 }
 
-func setupIPTables() {
+// extractLLMPort returns the TCP port of the configured LLM endpoint,
+// or "" if the endpoint is empty or unparseable. Used to add an iptables
+// redirect so LLM calls go through the proxy and get metered.
+func extractLLMPort(endpoint string) string {
+	if endpoint == "" {
+		return ""
+	}
+	u, err := url.Parse(endpoint)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	if p := u.Port(); p != "" {
+		return p
+	}
+	switch u.Scheme {
+	case "https":
+		return "443"
+	case "http":
+		return "80"
+	}
+	return ""
+}
+
+func setupIPTables(llmPort string) {
 	// Redirect all outbound TCP 80/443 through the payload proxy on :8080.
 	// The proxy sets SO_MARK=1 on its own outbound sockets so its upstream
 	// connections skip the redirect and reach the real target. Without this,
@@ -304,13 +328,20 @@ func setupIPTables() {
 		{"iptables", "-t", "nat", "-A", "OUTPUT", "-p", "tcp", "--dport", "80", "-j", "REDIRECT", "--to-port", "8080"},
 		{"iptables", "-t", "nat", "-A", "OUTPUT", "-p", "tcp", "--dport", "443", "-j", "REDIRECT", "--to-port", "8080"},
 	}
+	// Without this redirect, LLM calls to a non-standard port bypass the
+	// proxy entirely and tokens never get metered.
+	if llmPort != "" && llmPort != "80" && llmPort != "443" {
+		rules = append(rules,
+			[]string{"iptables", "-t", "nat", "-A", "OUTPUT", "-p", "tcp", "--dport", llmPort, "-j", "REDIRECT", "--to-port", "8080"},
+		)
+	}
 	for _, args := range rules {
 		cmd := exec.Command(args[0], args[1:]...)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			fmt.Printf("cage-init: warning: iptables rule failed: %v\n%s\n", err, out)
 		}
 	}
-	fmt.Println("cage-init: iptables redirect rules applied")
+	fmt.Printf("cage-init: iptables redirect rules applied (llm_port=%s)\n", llmPort)
 }
 
 func setEnv(key, value string) {

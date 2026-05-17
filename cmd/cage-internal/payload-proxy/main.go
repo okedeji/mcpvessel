@@ -220,8 +220,14 @@ func main() {
 			}
 		}
 
-		// LLM requests: validate, enforce budget, forward, and meter
-		if llmHost != "" && r.URL.Host == llmHost {
+		// LLM requests: validate, enforce budget, forward, and meter.
+		// Match on both r.URL.Host (explicit proxy mode) and r.Host
+		// (transparent redirect via iptables, where the URL is path-only).
+		reqHost := r.URL.Host
+		if reqHost == "" {
+			reqHost = r.Host
+		}
+		if llmHost != "" && reqHost == llmHost {
 			if *tokenBudget >= 0 && tokensConsumed.Load() >= *tokenBudget {
 				logger.Info("token budget exhausted", "consumed", tokensConsumed.Load(), "budget", *tokenBudget)
 				http.Error(w, "token budget exhausted", http.StatusTooManyRequests)
