@@ -45,7 +45,6 @@ func TestDefaults_HasThreeCageTypes(t *testing.T) {
 	assert.Equal(t, int32(4096), esc.MaxMemoryMB)
 	assert.Equal(t, int32(1), esc.DefaultVCPUs)
 	assert.Equal(t, int32(2048), esc.DefaultMemoryMB)
-	assert.Equal(t, int32(3), esc.MaxChainDepth)
 }
 
 func TestDefaults_HasAllActivityTimeouts(t *testing.T) {

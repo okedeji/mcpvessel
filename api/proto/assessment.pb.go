@@ -162,7 +162,7 @@ type AssessmentConfig struct {
 	CageTypeConfigs    []*CageTypeConfig      `protobuf:"bytes,3,rep,name=cage_type_configs,json=cageTypeConfigs,proto3" json:"cage_type_configs,omitempty"`
 	TotalTokenBudget   int64                  `protobuf:"varint,4,opt,name=total_token_budget,json=totalTokenBudget,proto3" json:"total_token_budget,omitempty"`
 	MaxDuration        *durationpb.Duration   `protobuf:"bytes,5,opt,name=max_duration,json=maxDuration,proto3" json:"max_duration,omitempty"`
-	MaxChainDepth      int32                  `protobuf:"varint,6,opt,name=max_chain_depth,json=maxChainDepth,proto3" json:"max_chain_depth,omitempty"`
+	MaxChainDepth      int32                  `protobuf:"varint,6,opt,name=max_chain_depth,json=maxChainDepth,proto3" json:"max_chain_depth,omitempty"` // deprecated: coordinator handles depth
 	Guidance           *Guidance              `protobuf:"bytes,8,opt,name=guidance,proto3" json:"guidance,omitempty"`
 	SkipPaths          []string               `protobuf:"bytes,9,rep,name=skip_paths,json=skipPaths,proto3" json:"skip_paths,omitempty"`
 	Tags               map[string]string      `protobuf:"bytes,11,rep,name=tags,proto3" json:"tags,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`

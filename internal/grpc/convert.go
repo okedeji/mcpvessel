@@ -71,7 +71,7 @@ func cageTypeFromProto(t pb.CageType) cage.Type {
 		return cage.TypeDiscovery
 	case pb.CageType_CAGE_TYPE_VALIDATOR:
 		return cage.TypeValidator
-	case pb.CageType_CAGE_TYPE_ESCALATION:
+	case pb.CageType_CAGE_TYPE_EXPLOITATION:
 		return cage.TypeExploitation
 	default:
 		return cage.TypeUnspecified
@@ -85,7 +85,7 @@ func cageTypeToProto(t cage.Type) pb.CageType {
 	case cage.TypeValidator:
 		return pb.CageType_CAGE_TYPE_VALIDATOR
 	case cage.TypeExploitation:
-		return pb.CageType_CAGE_TYPE_ESCALATION
+		return pb.CageType_CAGE_TYPE_EXPLOITATION
 	default:
 		return pb.CageType_CAGE_TYPE_UNSPECIFIED
 	}
@@ -132,7 +132,6 @@ func assessmentConfigFromProto(p *pb.AssessmentConfig) assessment.Config {
 		CustomerID:    p.GetCustomerId(),
 		Name:          p.GetName(),
 		TokenBudget:   p.GetTotalTokenBudget(),
-		MaxChainDepth: p.GetMaxChainDepth(),
 		MaxTotalCages: p.GetMaxConcurrentCages(),
 		MaxIterations: p.GetMaxIterations(),
 		Tags:          p.GetTags(),
@@ -273,7 +272,6 @@ func assessmentConfigToProto(cfg assessment.Config) *pb.AssessmentConfig {
 		Name:               cfg.Name,
 		CustomerId:         cfg.CustomerID,
 		TotalTokenBudget:   cfg.TokenBudget,
-		MaxChainDepth:      cfg.MaxChainDepth,
 		MaxConcurrentCages: cfg.MaxTotalCages,
 		MaxIterations:      cfg.MaxIterations,
 		SkipPaths:          cfg.SkipPaths,

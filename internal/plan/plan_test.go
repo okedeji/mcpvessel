@@ -27,7 +27,6 @@ budget:
   tokens: 500000
   max_duration: 4h
 limits:
-  max_chain_depth: 3
 guidance:
   priorities:
     vuln_classes:
@@ -51,7 +50,6 @@ customer_id: acme
 	assert.Equal(t, []string{"/health"}, p.Target.SkipPaths)
 	assert.Equal(t, int64(500000), p.Budget.Tokens)
 	assert.Equal(t, "4h", p.Budget.MaxDuration)
-	assert.Equal(t, int32(3), p.Limits.MaxChainDepth)
 	assert.Equal(t, []string{"sqli"}, p.Guidance.Priorities.VulnClasses)
 	assert.Equal(t, "Django app", p.Guidance.Strategy.Context)
 	assert.True(t, BoolVal(p.Guidance.Validation.RequirePoC))
@@ -113,7 +111,6 @@ func TestMerge_EmptyOverridePreservesBase(t *testing.T) {
 		Agent:  "keep-agent",
 		Target: Target{Hosts: []string{"keep.com"}},
 		Budget: Budget{Tokens: 100, MaxDuration: "2h"},
-		Limits: Limits{MaxChainDepth: 5},
 	}
 
 	result := Merge(base, &Plan{})
@@ -123,7 +120,6 @@ func TestMerge_EmptyOverridePreservesBase(t *testing.T) {
 	assert.Equal(t, []string{"keep.com"}, result.Target.Hosts)
 	assert.Equal(t, int64(100), result.Budget.Tokens)
 	assert.Equal(t, "2h", result.Budget.MaxDuration)
-	assert.Equal(t, int32(5), result.Limits.MaxChainDepth)
 }
 
 func TestMerge_BooleanOverrideBothDirections(t *testing.T) {

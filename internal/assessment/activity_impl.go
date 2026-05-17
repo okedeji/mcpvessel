@@ -112,7 +112,6 @@ func (a *ActivityImpl) RegisterActivities(w worker.ActivityRegistry) {
 	}
 	pin("CreateDiscoveryCage", a.CreateDiscoveryCage)
 	pin("CreateValidatorCage", a.CreateValidatorCage)
-	pin("CreateEscalationCage", a.CreateEscalationCage)
 	pin("GetCandidateFindings", a.GetCandidateFindings)
 	pin("GetValidatedFindings", a.GetValidatedFindings)
 	pin("GetFinding", a.GetFinding)
@@ -238,15 +237,6 @@ func (a *ActivityImpl) CreateValidatorCage(ctx context.Context, assessmentID str
 		return "", fmt.Errorf("creating validator cage for finding %s: %w", finding.ID, err)
 	}
 	a.log.Info("validator cage created", "assessment_id", assessmentID, "cage_id", info.ID, "finding_id", finding.ID)
-	return info.ID, nil
-}
-
-func (a *ActivityImpl) CreateEscalationCage(ctx context.Context, assessmentID string, finding findings.Finding, config cage.Config) (string, error) {
-	info, err := a.cages.CreateCage(ctx, config)
-	if err != nil {
-		return "", fmt.Errorf("creating escalation cage for finding %s: %w", finding.ID, err)
-	}
-	a.log.Info("escalation cage created", "assessment_id", assessmentID, "cage_id", info.ID, "finding_id", finding.ID)
 	return info.ID, nil
 }
 

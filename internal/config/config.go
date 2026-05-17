@@ -466,7 +466,6 @@ type CageTypeConfig struct {
 	RequiresLLM          bool          `yaml:"requires_llm"`
 	RequiresParentFinding bool         `yaml:"requires_parent_finding"`
 	RateLimit            int32         `yaml:"rate_limit"`
-	MaxChainDepth        int32         `yaml:"max_chain_depth"`
 }
 
 // AssessmentConfig defines defaults for assessment execution.
@@ -782,7 +781,6 @@ func Defaults() *Config {
 				RequiresLLM:           true,
 				RequiresParentFinding: true,
 				RateLimit:             500,
-				MaxChainDepth:         3,
 			},
 		},
 		Assessment: AssessmentConfig{
@@ -1112,9 +1110,6 @@ func Merge(base, override *Config) *Config {
 				}
 				if v.RateLimit > 0 {
 					existing.RateLimit = v.RateLimit
-				}
-				if v.MaxChainDepth > 0 {
-					existing.MaxChainDepth = v.MaxChainDepth
 				}
 				// Bool fields: always take override value when the cage
 				// type key is present. Unlike int fields, false is a

@@ -21,7 +21,6 @@ type runFlags struct {
 	skipPaths        stringSliceFlag
 	tokenBudget      int64
 	maxDuration      string
-	maxChainDepth    int
 	maxConcurrent    int
 	maxIterations    int
 	context          string
@@ -55,7 +54,6 @@ func parseRunFlags(args []string) (*runFlags, *flag.FlagSet) {
 	fs.Var(&rf.skipPaths, "skip-path", "URL path to skip (repeatable)")
 	fs.Int64Var(&rf.tokenBudget, "token-budget", 0, "LLM token cap")
 	fs.StringVar(&rf.maxDuration, "max-duration", "", "assessment wall clock (e.g. 30m, 4h)")
-	fs.IntVar(&rf.maxChainDepth, "max-chain-depth", 0, "escalation chain depth limit")
 	fs.IntVar(&rf.maxConcurrent, "max-concurrent", 0, "max concurrent cages")
 	fs.IntVar(&rf.maxIterations, "max-iterations", 0, "max coordinator iterations (server default if unset)")
 	fs.StringVar(&rf.context, "context", "", "free-text context for the LLM coordinator")
@@ -112,7 +110,6 @@ Target scoping:
 Budget & limits:
   --token-budget       LLM token cap
   --max-duration       assessment wall clock (e.g. 30m, 4h)
-  --max-chain-depth    escalation chain depth limit
   --max-concurrent     max concurrent cages
   --max-iterations     max coordinator iterations (server default if unset)
 

@@ -73,7 +73,6 @@ type Config struct {
 	CageDefaults     map[cage.Type]CageTypeConfig
 	TokenBudget      int64
 	MaxDuration      time.Duration
-	MaxChainDepth    int32
 	MaxTotalCages    int32
 	MaxIterations    int32
 	// TrustAgentProof skips spawning a validator cage when the agent

@@ -40,7 +40,7 @@ message AssessmentConfig {
   repeated CageTypeConfig cage_type_configs = 3;
   int64 total_token_budget = 4;
   google.protobuf.Duration max_duration = 5;
-  int32 max_chain_depth = 6;
+  int32 max_chain_depth = 6; // deprecated: coordinator handles depth
   Guidance guidance = 8;
   repeated string skip_paths = 9;
   map<string, string> tags = 11;

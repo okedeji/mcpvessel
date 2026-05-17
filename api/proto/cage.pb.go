@@ -26,10 +26,11 @@ const (
 type CageType int32
 
 const (
-	CageType_CAGE_TYPE_UNSPECIFIED CageType = 0
-	CageType_CAGE_TYPE_DISCOVERY   CageType = 1
-	CageType_CAGE_TYPE_VALIDATOR   CageType = 2
-	CageType_CAGE_TYPE_ESCALATION  CageType = 3
+	CageType_CAGE_TYPE_UNSPECIFIED  CageType = 0
+	CageType_CAGE_TYPE_DISCOVERY    CageType = 1
+	CageType_CAGE_TYPE_VALIDATOR    CageType = 2
+	CageType_CAGE_TYPE_ESCALATION   CageType = 3 // deprecated: use EXPLOITATION
+	CageType_CAGE_TYPE_EXPLOITATION CageType = 4
 )
 
 // Enum value maps for CageType.
@@ -39,12 +40,14 @@ var (
 		1: "CAGE_TYPE_DISCOVERY",
 		2: "CAGE_TYPE_VALIDATOR",
 		3: "CAGE_TYPE_ESCALATION",
+		4: "CAGE_TYPE_EXPLOITATION",
 	}
 	CageType_value = map[string]int32{
-		"CAGE_TYPE_UNSPECIFIED": 0,
-		"CAGE_TYPE_DISCOVERY":   1,
-		"CAGE_TYPE_VALIDATOR":   2,
-		"CAGE_TYPE_ESCALATION":  3,
+		"CAGE_TYPE_UNSPECIFIED":  0,
+		"CAGE_TYPE_DISCOVERY":    1,
+		"CAGE_TYPE_VALIDATOR":    2,
+		"CAGE_TYPE_ESCALATION":   3,
+		"CAGE_TYPE_EXPLOITATION": 4,
 	}
 )
 
@@ -1464,12 +1467,13 @@ const file_api_proto_cage_proto_rawDesc = "" +
 	"\x12DestroyCageRequest\x12\x17\n" +
 	"\acage_id\x18\x01 \x01(\tR\x06cageId\x12\x16\n" +
 	"\x06reason\x18\x02 \x01(\tR\x06reason\"\x15\n" +
-	"\x13DestroyCageResponse*q\n" +
+	"\x13DestroyCageResponse*\x8d\x01\n" +
 	"\bCageType\x12\x19\n" +
 	"\x15CAGE_TYPE_UNSPECIFIED\x10\x00\x12\x17\n" +
 	"\x13CAGE_TYPE_DISCOVERY\x10\x01\x12\x17\n" +
 	"\x13CAGE_TYPE_VALIDATOR\x10\x02\x12\x18\n" +
-	"\x14CAGE_TYPE_ESCALATION\x10\x03*\xd9\x01\n" +
+	"\x14CAGE_TYPE_ESCALATION\x10\x03\x12\x1a\n" +
+	"\x16CAGE_TYPE_EXPLOITATION\x10\x04*\xd9\x01\n" +
 	"\tCageState\x12\x1a\n" +
 	"\x16CAGE_STATE_UNSPECIFIED\x10\x00\x12\x16\n" +
 	"\x12CAGE_STATE_PENDING\x10\x01\x12\x1b\n" +

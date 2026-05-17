@@ -21,7 +21,6 @@ func configToPlan(cfg Config) *plan.Plan {
 			Tokens: cfg.TokenBudget,
 		},
 		Limits: plan.Limits{
-			MaxChainDepth:      cfg.MaxChainDepth,
 			MaxTotalCages: cfg.MaxTotalCages,
 			MaxIterations:      cfg.MaxIterations,
 		},

@@ -68,7 +68,6 @@ func cmdRun(args []string) {
 		SkipPaths:        []string(rf.skipPaths),
 		TokenBudget:      rf.tokenBudget,
 		MaxDuration:      rf.maxDuration,
-		MaxChainDepth:    rf.maxChainDepth,
 		MaxTotalCages:    rf.maxConcurrent,
 		MaxIterations:    rf.maxIterations,
 		Context:          rf.context,

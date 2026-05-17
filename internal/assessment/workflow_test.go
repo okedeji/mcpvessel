@@ -23,9 +23,6 @@ func (assessmentActivityStub) CreateDiscoveryCage(_ context.Context, _ string, _
 func (assessmentActivityStub) CreateValidatorCage(_ context.Context, _ string, _ findings.Finding, _ *Proof, _ string) (string, error) {
 	return "", nil
 }
-func (assessmentActivityStub) CreateEscalationCage(_ context.Context, _ string, _ findings.Finding, _ cage.Config) (string, error) {
-	return "", nil
-}
 func (assessmentActivityStub) GetCandidateFindings(_ context.Context, _ string) ([]findings.Finding, error) {
 	return nil, nil
 }
@@ -94,7 +91,6 @@ func testInput() AssessmentWorkflowInput {
 			CustomerID:    "customer-1",
 			Target:        cage.Scope{Hosts: []string{"target.example.com"}},
 			TokenBudget:   1000000,
-			MaxChainDepth: 3,
 			MaxIterations: 5,
 		},
 	}
@@ -146,7 +142,6 @@ func registerAssessmentHappyPathMocks(env *testsuite.TestWorkflowEnvironment) {
 		validatedFinding("f-1", findings.SeverityHigh),
 	}
 	env.OnActivity("GetValidatedFindings", mock.Anything, mock.Anything).Return(validatedFindings, nil)
-	env.OnActivity("CreateEscalationCage", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return("cage-e-1", nil)
 	env.OnActivity("GenerateReport", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return([]byte("report"), nil)
 }
 
@@ -327,5 +322,4 @@ func TestAssessmentWorkflow_ChainDepthEnforced(t *testing.T) {
 	require.NoError(t, env.GetWorkflowResult(&result))
 	assert.Equal(t, StatusApproved, result.FinalStatus)
 
-	env.AssertNotCalled(t, "CreateEscalationCage", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }

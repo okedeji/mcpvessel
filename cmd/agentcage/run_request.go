@@ -15,7 +15,6 @@ func buildCreateAssessmentRequest(p *plan.Plan, bundleRef string) (*pb.CreateAss
 		Name:               p.Name,
 		CustomerId:         p.CustomerID,
 		TotalTokenBudget:   p.Budget.Tokens,
-		MaxChainDepth:      p.Limits.MaxChainDepth,
 		MaxConcurrentCages: p.Limits.MaxTotalCages,
 		SkipPaths:          p.Target.SkipPaths,
 		Tags:               p.Tags,
@@ -140,7 +139,7 @@ func cageTypeNameToProto(name string) (pb.CageType, error) {
 	case "validator":
 		return pb.CageType_CAGE_TYPE_VALIDATOR, nil
 	case "exploitation":
-		return pb.CageType_CAGE_TYPE_ESCALATION, nil
+		return pb.CageType_CAGE_TYPE_EXPLOITATION, nil
 	default:
 		return pb.CageType_CAGE_TYPE_UNSPECIFIED, fmt.Errorf("unknown cage type %q in proto conversion", name)
 	}

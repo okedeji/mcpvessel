@@ -170,9 +170,8 @@ type Budget struct {
 }
 
 type Limits struct {
-	MaxChainDepth      int32 `yaml:"max_chain_depth"`
 	MaxTotalCages int32 `yaml:"max_total_cages"`
-	MaxIterations      int32 `yaml:"max_iterations"`
+	MaxIterations int32 `yaml:"max_iterations"`
 }
 
 type CageType struct {
@@ -300,9 +299,6 @@ func Merge(base, override *Plan) *Plan {
 		out.Budget.MaxDuration = override.Budget.MaxDuration
 	}
 
-	if override.Limits.MaxChainDepth > 0 {
-		out.Limits.MaxChainDepth = override.Limits.MaxChainDepth
-	}
 	if override.Limits.MaxTotalCages > 0 {
 		out.Limits.MaxTotalCages = override.Limits.MaxTotalCages
 	}
@@ -472,9 +468,6 @@ func Validate(p *Plan) error {
 		}
 	}
 
-	if p.Limits.MaxChainDepth < 0 {
-		return fmt.Errorf("max_chain_depth must not be negative")
-	}
 	if p.Limits.MaxTotalCages < 0 {
 		return fmt.Errorf("max_total_cages must not be negative")
 	}
@@ -680,7 +673,6 @@ type RawFlags struct {
 	SkipPaths        []string
 	TokenBudget      int64
 	MaxDuration      string
-	MaxChainDepth    int
 	MaxTotalCages    int
 	MaxIterations    int
 	Context          string
@@ -724,13 +716,6 @@ func FlagsToOverride(explicit map[string]bool, f RawFlags) (*Plan, error) {
 	}
 	if explicit["max-duration"] {
 		p.Budget.MaxDuration = f.MaxDuration
-	}
-	if explicit["max-chain-depth"] {
-		v, err := safeInt32("max-chain-depth", f.MaxChainDepth)
-		if err != nil {
-			return nil, err
-		}
-		p.Limits.MaxChainDepth = v
 	}
 	if explicit["max-concurrent"] {
 		v, err := safeInt32("max-concurrent", f.MaxTotalCages)
