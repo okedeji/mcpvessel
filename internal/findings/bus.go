@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
@@ -107,17 +108,23 @@ func (b *NATSBus) Subscribe(ctx context.Context, assessmentID string, handler Me
 		return nil, fmt.Errorf("creating consumer for assessment %s: %w", assessmentID, err)
 	}
 
+	// The subscribe ctx is the Temporal activity context, which cancels
+	// when the activity returns. Use Background() for the handler so
+	// SaveFinding and other downstream calls survive the activity's
+	// lifetime. Subscription teardown is managed via Stop().
 	cctx, err := cons.Consume(func(m jetstream.Msg) {
 		var msg Message
 		if err := json.Unmarshal(m.Data(), &msg); err != nil {
-			_ = m.Nak() // best-effort nak, redelivery will retry with the same data
-			return
-		}
-		if err := handler(ctx, msg); err != nil {
+			slog.Error("findings bus: unmarshal failed", "assessment_id", assessmentID, "error", err.Error())
 			_ = m.Nak()
 			return
 		}
-		_ = m.Ack() // best-effort ack, JetStream will redeliver if this fails
+		if err := handler(context.Background(), msg); err != nil {
+			slog.Error("findings bus: handler failed", "assessment_id", assessmentID, "finding_id", msg.Finding.ID, "error", err.Error())
+			_ = m.Nak()
+			return
+		}
+		_ = m.Ack()
 	})
 	if err != nil {
 		return nil, fmt.Errorf("starting consume for assessment %s: %w", assessmentID, err)
