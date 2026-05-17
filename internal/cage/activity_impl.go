@@ -605,18 +605,23 @@ func (a *ActivityImpl) collectFindings(ctx context.Context, cageID string, lis n
 
 	scanner := bufio.NewScanner(conn)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	var lineCount int
 	for scanner.Scan() {
+		lineCount++
 		var msg findings.Message
 		if err := json.Unmarshal(scanner.Bytes(), &msg); err != nil {
-			a.log.Error(err, "invalid finding JSON from cage", "cage_id", cageID)
+			a.log.Error(err, "invalid finding JSON from cage", "cage_id", cageID, "line_bytes", len(scanner.Bytes()))
 			continue
 		}
+		a.log.Info("finding received from cage", "cage_id", cageID, "finding_id", msg.Finding.ID, "assessment_id", msg.Finding.AssessmentID)
 		if err := a.findingsBus.Publish(ctx, msg.Finding.AssessmentID, msg); err != nil {
 			a.log.Error(err, "publishing finding to NATS", "cage_id", cageID, "finding_id", msg.Finding.ID)
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		a.log.Info("findings stream ended", "cage_id", cageID, "error", err.Error())
+		a.log.Info("findings stream ended with error", "cage_id", cageID, "lines_read", lineCount, "error", err.Error())
+	} else {
+		a.log.Info("findings stream closed", "cage_id", cageID, "lines_read", lineCount)
 	}
 }
 
