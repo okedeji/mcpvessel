@@ -36,20 +36,41 @@ export class FindingsWriter {
     }
     const sock = await this.ensureConnection();
 
-    // Default status to candidate if not set.
-    const payload = {
-      ...finding,
+    // Orchestrator unmarshals snake_case JSON. Translate keys explicitly
+    // so the agent's TypeScript object shape (camelCase) doesn't leak
+    // into a wire format the Go side will silently reject.
+    const payload: Record<string, unknown> = {
+      id: finding.id,
       status: finding.status ?? 'candidate',
-      evidence: finding.evidence
-        ? {
-            request: finding.evidence.request?.toString('base64'),
-            response: finding.evidence.response?.toString('base64'),
-            screenshot: finding.evidence.screenshot?.toString('base64'),
-            poc: finding.evidence.poc,
-            metadata: finding.evidence.metadata,
-          }
-        : undefined,
+      severity: finding.severity,
+      title: finding.title,
+      description: finding.description,
+      vuln_class: finding.vulnClass,
+      endpoint: finding.endpoint,
+      parent_finding_id: finding.parentFindingId,
+      chain_depth: finding.chainDepth,
+      cwe: finding.cwe,
+      cvss_score: finding.cvssScore,
+      remediation: finding.remediation,
     };
+    if (finding.evidence) {
+      payload.evidence = {
+        request: finding.evidence.request?.toString('base64'),
+        response: finding.evidence.response?.toString('base64'),
+        screenshot: finding.evidence.screenshot?.toString('base64'),
+        poc: finding.evidence.poc,
+        metadata: finding.evidence.metadata,
+      };
+    }
+    if (finding.validationProof) {
+      payload.validation_proof = {
+        reproduction_steps: finding.validationProof.reproductionSteps,
+        confirmed: finding.validationProof.confirmed,
+        deterministic: finding.validationProof.deterministic,
+        validator_cage_id: finding.validationProof.validatorCageId,
+        evidence: finding.validationProof.evidence,
+      };
+    }
 
     const line = JSON.stringify(payload) + '\n';
 
