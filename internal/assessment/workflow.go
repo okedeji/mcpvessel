@@ -28,7 +28,7 @@ const (
 	TimeoutPlanNextActions = 60 * time.Second
 	TimeoutReviewDeadline  = 24 * time.Hour
 	TimeoutWaitForCage     = 10 * time.Minute
-	DefaultMaxBatchSize    = int32(3)
+	DefaultMaxBatchSize    = int32(1)
 
 	// Even a 5-second proof needs cage boot + teardown overhead.
 	MinValidatorWait = 60 * time.Second
@@ -222,8 +222,18 @@ func AssessmentWorkflow(ctx workflow.Context, input AssessmentWorkflowInput) (As
 			break
 		}
 
-		batchSize := batchSizeForType(cfg, cage.TypeDiscovery)
-		spawned, completedSummaries, err := spawnCoordinatorActions(ctx, input.AssessmentID, cfg, decision.Actions, batchSize)
+		batchSize := batchSizeForType(cfg, cage.TypeExploitation)
+
+		// Cap actions to remaining cage budget so we don't overshoot MaxTotalCages.
+		actions := decision.Actions
+		if cfg.MaxTotalCages > 0 {
+			remaining := cfg.MaxTotalCages - result.TotalCages
+			if int32(len(actions)) > remaining {
+				actions = actions[:remaining]
+			}
+		}
+
+		spawned, completedSummaries, err := spawnCoordinatorActions(ctx, input.AssessmentID, cfg, actions, batchSize)
 		if err != nil {
 			return failResult(result, "spawning cages (iteration %d): %v", iteration, err), nil
 		}
@@ -264,7 +274,7 @@ func AssessmentWorkflow(ctx workflow.Context, input AssessmentWorkflowInput) (As
 		return failResult(result, "fetching candidate findings for validation: %v", err), nil
 	}
 
-	_, validatorCages, err := validateFindings(ctx, input.AssessmentID, cfg, candidates)
+	_, validatorCages, err := validateFindings(ctx, input.AssessmentID, cfg, candidates, result.TotalCages)
 	if err != nil {
 		return failResult(result, "validating findings: %v", err), nil
 	}
@@ -617,6 +627,7 @@ func validateFindings(
 	assessmentID string,
 	cfg Config,
 	candidates []findings.Finding,
+	totalCagesAlready int32,
 ) (int32, int32, error) {
 	var validatedCount int32
 	var cagesSpawned int32
@@ -629,6 +640,17 @@ func validateFindings(
 			"candidates", len(candidates),
 			"cap", MaxFindingsPerValidationPhase)
 		candidates = candidates[:MaxFindingsPerValidationPhase]
+	}
+
+	// Also respect MaxTotalCages — each candidate spawns one validator.
+	if cfg.MaxTotalCages > 0 {
+		remaining := int(cfg.MaxTotalCages - totalCagesAlready)
+		if remaining <= 0 {
+			return 0, 0, nil
+		}
+		if len(candidates) > remaining {
+			candidates = candidates[:remaining]
+		}
 	}
 
 	// Separate findings that carry agent-provided reproduction steps

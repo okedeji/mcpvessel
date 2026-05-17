@@ -131,7 +131,7 @@ func TestDefaults_AssessmentDefaults(t *testing.T) {
 	cfg := Defaults()
 	assert.Equal(t, 4*time.Hour, cfg.Assessment.MaxDuration)
 	assert.Equal(t, int64(500000), cfg.Assessment.TokenBudget)
-	assert.Equal(t, int32(20), cfg.Assessment.MaxIterations)
+	assert.Equal(t, int32(10), cfg.Assessment.MaxIterations)
 	assert.Equal(t, 24*time.Hour, cfg.Assessment.ReviewTimeout)
 }
 
