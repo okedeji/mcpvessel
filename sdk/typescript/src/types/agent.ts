@@ -20,7 +20,10 @@ export interface AgentFinding {
   cwe?: string;
   cvssScore?: number;
   remediation?: string;
-  validationProof: {
+  // Required for vulnerability findings (severity != info). The validator
+  // cage replays reproductionSteps to confirm the finding independently.
+  // Optional for surface/info findings discovered during mapping.
+  validationProof?: {
     reproductionSteps: string;
     confirmed: boolean;
     deterministic: boolean;

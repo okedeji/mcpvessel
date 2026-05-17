@@ -28,8 +28,11 @@ export class FindingsWriter {
   }
 
   async submit(finding: AgentFinding): Promise<void> {
-    if (!finding.validationProof?.reproductionSteps) {
-      throw new Error(`finding ${finding.id}: validationProof.reproductionSteps is required`);
+    // Vulnerability findings must include reproduction steps so the
+    // validator cage can confirm them independently. Surface/info
+    // findings (e.g. discovery results) don't need a proof.
+    if (finding.severity !== 'info' && !finding.validationProof?.reproductionSteps) {
+      throw new Error(`finding ${finding.id}: validationProof.reproductionSteps is required for severity=${finding.severity}`);
     }
     const sock = await this.ensureConnection();
 
