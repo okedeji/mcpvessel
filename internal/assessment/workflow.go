@@ -568,17 +568,9 @@ func spawnCoordinatorActions(
 		for _, action := range batch {
 			actCtx := withActivityTimeout(ctx, TimeoutCreateCage)
 
-			cageType := cage.TypeExploitation
-			switch action.Type {
-			case "validator":
-				cageType = cage.TypeValidator
-			case "discovery":
-				cageType = cage.TypeDiscovery
-			}
-
 			cageCfg := cage.Config{
 				AssessmentID:    assessmentID,
-				Type:            cageType,
+				Type:            cage.TypeExploitation,
 				BundleRef:       cfg.BundleRef,
 				Scope:           action.Scope,
 				SkipPaths:       cfg.SkipPaths,
@@ -588,17 +580,7 @@ func spawnCoordinatorActions(
 			}
 			applyCageDefaults(&cageCfg, cfg)
 
-			var activityName string
-			switch action.Type {
-			case "discovery":
-				activityName = "CreateDiscoveryCage"
-			case "validator":
-				activityName = "CreateValidatorCage"
-			default:
-				activityName = "CreateDiscoveryCage"
-			}
-
-			f := workflow.ExecuteActivity(actCtx, activityName, assessmentID, cageCfg)
+			f := workflow.ExecuteActivity(actCtx, "CreateExploitationCage", assessmentID, cageCfg)
 			futures = append(futures, f)
 		}
 

@@ -47,7 +47,8 @@ You must respond with a JSON object:
 Rules:
 - Set "done": true when you believe the target has been sufficiently tested or budget is low
 - Exploitation cages test a specific endpoint for a specific vulnerability class. Also use exploitation cages to go deeper on existing findings (chaining, privilege escalation, data extraction).
-- Validator cages confirm a specific finding is real (requires finding_id)
+- Only plan exploitation actions for vuln classes listed in agent_capabilities.exploitation. If the list is empty, set done=true.
+- Validator cages confirm a specific finding is real (requires finding_id). Do NOT use validator for testing.
 - Prioritize uncovered endpoints and high-value targets (admin panels, auth, API endpoints)
 - Do not re-test combinations already in the coverage map
 - Be concise in objectives — the agent LLM inside the cage will interpret them

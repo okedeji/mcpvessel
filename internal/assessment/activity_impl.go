@@ -92,6 +92,7 @@ func (a *ActivityImpl) RegisterActivities(w worker.ActivityRegistry) {
 		w.RegisterActivityWithOptions(fn, activity.RegisterOptions{Name: name})
 	}
 	pin("CreateDiscoveryCage", a.CreateDiscoveryCage)
+	pin("CreateExploitationCage", a.CreateExploitationCage)
 	pin("CreateValidatorCage", a.CreateValidatorCage)
 	pin("GetCandidateFindings", a.GetCandidateFindings)
 	pin("GetValidatedFindings", a.GetValidatedFindings)
@@ -151,6 +152,20 @@ func (a *ActivityImpl) CreateDiscoveryCage(ctx context.Context, assessmentID str
 		return "", fmt.Errorf("creating discovery cage for assessment %s: %w", assessmentID, err)
 	}
 	a.log.Info("discovery cage created", "assessment_id", assessmentID, "cage_id", info.ID)
+	return info.ID, nil
+}
+
+func (a *ActivityImpl) CreateExploitationCage(ctx context.Context, assessmentID string, config cage.Config) (string, error) {
+	info, err := a.cages.CreateCage(ctx, config)
+	if err != nil {
+		return "", fmt.Errorf("creating exploitation cage for assessment %s: %w", assessmentID, err)
+	}
+	a.log.Info("exploitation cage created",
+		"assessment_id", assessmentID,
+		"cage_id", info.ID,
+		"vuln_class", config.VulnClass,
+		"scope", config.Scope.Hosts,
+	)
 	return info.ID, nil
 }
 

@@ -21,6 +21,9 @@ type assessmentActivityStub struct{}
 func (assessmentActivityStub) CreateDiscoveryCage(_ context.Context, _ string, _ cage.Config) (string, error) {
 	return "", nil
 }
+func (assessmentActivityStub) CreateExploitationCage(_ context.Context, _ string, _ cage.Config) (string, error) {
+	return "", nil
+}
 func (assessmentActivityStub) CreateValidatorCage(_ context.Context, _ string, _ findings.Finding, _ *Proof, _ string) (string, error) {
 	return "", nil
 }
@@ -181,7 +184,7 @@ func TestAssessmentWorkflow_CoordinatorSpawnsCages(t *testing.T) {
 					Reason: "need to test /api for sqli",
 					Actions: []CoordinatorAction{
 						{
-							Type:      "discovery",
+							Type:      "exploitation",
 							Scope:     cage.Scope{Hosts: []string{"target.example.com"}},
 							VulnClass: "sqli",
 							Objective: "test /api endpoints for SQL injection",
@@ -194,6 +197,7 @@ func TestAssessmentWorkflow_CoordinatorSpawnsCages(t *testing.T) {
 		},
 	)
 
+	env.OnActivity("CreateExploitationCage", mock.Anything, mock.Anything, mock.Anything).Return("cage-e-1", nil)
 	env.OnActivity("GetCandidateFindings", mock.Anything, mock.Anything).Return([]findings.Finding{}, nil)
 	env.OnActivity("GetValidatedFindings", mock.Anything, mock.Anything).Return([]findings.Finding{}, nil)
 	env.OnActivity("GenerateReport", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return([]byte("report"), nil)

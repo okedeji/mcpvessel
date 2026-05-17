@@ -16,6 +16,7 @@ type TaskMatrixEntry struct {
 
 type Activities interface {
 	CreateDiscoveryCage(ctx context.Context, assessmentID string, config cage.Config) (string, error)
+	CreateExploitationCage(ctx context.Context, assessmentID string, config cage.Config) (string, error)
 	CreateValidatorCage(ctx context.Context, assessmentID string, finding findings.Finding, proof *Proof, bundleRef string) (string, error)
 	GetCandidateFindings(ctx context.Context, assessmentID string) ([]findings.Finding, error)
 	GetValidatedFindings(ctx context.Context, assessmentID string) ([]findings.Finding, error)
