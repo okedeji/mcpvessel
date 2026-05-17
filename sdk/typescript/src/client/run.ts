@@ -17,8 +17,7 @@ export interface RunConfig {
   // Budget & limits
   tokenBudget?: number;            // --token-budget
   maxDuration?: string;            // --max-duration
-  maxChainDepth?: number;          // --max-chain-depth
-  maxConcurrent?: number;          // --max-concurrent
+  maxTotalCages?: number;          // --max-total-cages
   maxIterations?: number;          // --max-iterations
 
   // Guidance
@@ -74,8 +73,7 @@ function buildAssessmentConfig(rc: RunConfig): AssessmentConfig {
     },
     totalTokenBudget: rc.tokenBudget,
     maxDuration: rc.maxDuration,
-    maxChainDepth: rc.maxChainDepth,
-    maxConcurrentCages: rc.maxConcurrent,
+    maxTotalCages: rc.maxTotalCages,
     maxIterations: rc.maxIterations,
     guidance: {
       attackSurface: (rc.endpoints?.length || rc.apiSpecs?.length) ? {

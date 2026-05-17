@@ -16,13 +16,10 @@ func buildCreateAssessmentRequest(p *plan.Plan, bundleRef string) (*pb.CreateAss
 		CustomerId:       p.CustomerID,
 		TotalTokenBudget: p.Budget.Tokens,
 		MaxTotalCages:    p.Limits.MaxTotalCages,
+		MaxIterations:    p.Limits.MaxIterations,
 		SkipPaths:        p.Target.SkipPaths,
 		Tags:             p.Tags,
 		Environment:      p.Environment,
-	}
-
-	if p.Limits.MaxIterations > 0 {
-		cfg.MaxIterations = p.Limits.MaxIterations
 	}
 
 	cfg.Scope = &pb.TargetScope{

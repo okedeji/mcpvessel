@@ -155,3 +155,26 @@ func EnforceConfigCeilings(p *Plan, cfg *config.Config) error {
 
 	return nil
 }
+
+// ResolveDefaults fills zero-valued limits in the plan with the
+// operator's configured defaults. Call after Merge and before
+// EnforceConfigCeilings so the final plan has concrete values.
+func ResolveDefaults(p *Plan, cfg *config.Config) {
+	if p.Limits.MaxTotalCages <= 0 {
+		p.Limits.MaxTotalCages = cfg.Assessment.MaxTotalCages
+	}
+	if p.Limits.MaxIterations <= 0 {
+		p.Limits.MaxIterations = cfg.Assessment.MaxIterations
+	}
+	if p.Budget.Tokens <= 0 {
+		p.Budget.Tokens = cfg.Assessment.TokenBudget
+	}
+	for name, ct := range p.CageTypes {
+		if ct.MaxBatchSize <= 0 {
+			if cfgCt, ok := cfg.Cages[name]; ok {
+				ct.MaxBatchSize = cfgCt.MaxBatchSize
+			}
+			p.CageTypes[name] = ct
+		}
+	}
+}

@@ -21,7 +21,7 @@ type runFlags struct {
 	skipPaths        stringSliceFlag
 	tokenBudget      int64
 	maxDuration      string
-	maxConcurrent    int
+	maxTotalCages    int
 	maxIterations    int
 	context          string
 	focus            stringSliceFlag
@@ -52,10 +52,10 @@ func parseRunFlags(args []string) (*runFlags, *flag.FlagSet) {
 	fs.Var(&rf.ports, "port", "port to include (repeatable)")
 	fs.Var(&rf.paths, "path", "URL path to scope (repeatable)")
 	fs.Var(&rf.skipPaths, "skip-path", "URL path to skip (repeatable)")
-	fs.Int64Var(&rf.tokenBudget, "token-budget", 0, "LLM token cap")
+	fs.Int64Var(&rf.tokenBudget, "token-budget", 0, "LLM token cap (0 = use server default)")
 	fs.StringVar(&rf.maxDuration, "max-duration", "", "assessment wall clock (e.g. 30m, 4h)")
-	fs.IntVar(&rf.maxConcurrent, "max-concurrent", 0, "max concurrent cages")
-	fs.IntVar(&rf.maxIterations, "max-iterations", 0, "max coordinator iterations (server default if unset)")
+	fs.IntVar(&rf.maxTotalCages, "max-total-cages", 0, "total cage cap for the assessment (0 = use server default)")
+	fs.IntVar(&rf.maxIterations, "max-iterations", 0, "max coordinator iterations (0 = use server default)")
 	fs.StringVar(&rf.context, "context", "", "free-text context for the LLM coordinator")
 	fs.Var(&rf.focus, "focus", "vuln class to prioritize (repeatable)")
 	fs.Var(&rf.skip, "deprioritize", "path to deprioritize (repeatable)")
@@ -108,10 +108,10 @@ Target scoping:
   --skip-path          URL path to skip (repeatable)
 
 Budget & limits:
-  --token-budget       LLM token cap
+  --token-budget       LLM token cap (0 = use server default)
   --max-duration       assessment wall clock (e.g. 30m, 4h)
-  --max-concurrent     max concurrent cages
-  --max-iterations     max coordinator iterations (server default if unset)
+  --max-total-cages    total cage cap for the assessment (0 = use server default)
+  --max-iterations     max coordinator iterations (0 = use server default)
 
 Guidance:
   --context            free-text context for the LLM coordinator

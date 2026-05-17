@@ -36,7 +36,7 @@ export interface NotificationConfig {
 export interface CageTypeConfig {
   vcpus?: number;
   memoryMb?: number;
-  maxConcurrent?: number;
+  maxBatchSize?: number;
   maxDuration?: string;
 }
 
@@ -56,8 +56,7 @@ export interface AssessmentConfig {
   scope: TargetScope;
   totalTokenBudget?: number;
   maxDuration?: string;
-  maxChainDepth?: number;
-  maxConcurrentCages?: number;
+  maxTotalCages?: number;
   maxIterations?: number;
   cageTypes?: Record<string, CageTypeConfig>;
   payload?: PayloadConfig;

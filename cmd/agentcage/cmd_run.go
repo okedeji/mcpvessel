@@ -68,7 +68,7 @@ func cmdRun(args []string) {
 		SkipPaths:        []string(rf.skipPaths),
 		TokenBudget:      rf.tokenBudget,
 		MaxDuration:      rf.maxDuration,
-		MaxTotalCages:    rf.maxConcurrent,
+		MaxTotalCages:    rf.maxTotalCages,
 		MaxIterations:    rf.maxIterations,
 		Context:          rf.context,
 		Focus:            []string(rf.focus),
@@ -92,6 +92,7 @@ func cmdRun(args []string) {
 	}
 	p = plan.Merge(p, override)
 
+	plan.ResolveDefaults(p, cfg)
 	plan.ApplyDefaults(p)
 	if err := plan.Validate(p); err != nil {
 		exitErr("validating plan", err)

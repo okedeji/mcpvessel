@@ -717,8 +717,8 @@ func FlagsToOverride(explicit map[string]bool, f RawFlags) (*Plan, error) {
 	if explicit["max-duration"] {
 		p.Budget.MaxDuration = f.MaxDuration
 	}
-	if explicit["max-concurrent"] {
-		v, err := safeInt32("max-concurrent", f.MaxTotalCages)
+	if explicit["max-total-cages"] {
+		v, err := safeInt32("max-total-cages", f.MaxTotalCages)
 		if err != nil {
 			return nil, err
 		}

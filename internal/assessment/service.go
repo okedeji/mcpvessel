@@ -61,6 +61,9 @@ func (s *Service) CreateAssessment(ctx context.Context, cfg Config) (*Info, erro
 	incoming := configToPlan(cfg)
 	p := plan.Merge(basePlan, incoming)
 
+	if s.operatorCfg != nil {
+		plan.ResolveDefaults(p, s.operatorCfg)
+	}
 	plan.ApplyDefaults(p)
 	if err := plan.Validate(p); err != nil {
 		return nil, fmt.Errorf("invalid assessment config: %w", err)
@@ -90,12 +93,14 @@ func (s *Service) CreateAssessment(ctx context.Context, cfg Config) (*Info, erro
 	s.assessments[assessmentID] = info
 	s.mu.Unlock()
 
+	// Write resolved limits back into cfg so the workflow sees them.
+	cfg.MaxIterations = p.Limits.MaxIterations
+	cfg.MaxTotalCages = p.Limits.MaxTotalCages
+	cfg.TokenBudget = p.Budget.Tokens
+
 	workflowOpts := client.StartWorkflowOptions{
 		ID:        "assessment-" + assessmentID,
 		TaskQueue: TaskQueue,
-	}
-	if cfg.MaxIterations <= 0 && s.operatorCfg != nil {
-		cfg.MaxIterations = s.operatorCfg.Assessment.MaxIterations
 	}
 	input := AssessmentWorkflowInput{
 		AssessmentID: assessmentID,

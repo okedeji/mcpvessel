@@ -29,7 +29,6 @@ const (
 	TimeoutReviewDeadline  = 24 * time.Hour
 	TimeoutWaitForCage     = 10 * time.Minute
 	DefaultMaxBatchSize    = int32(3)
-	DefaultMaxIterations   = int32(20)
 
 	// Even a 5-second proof needs cage boot + teardown overhead.
 	MinValidatorWait = 60 * time.Second
@@ -80,9 +79,6 @@ func AssessmentWorkflow(ctx workflow.Context, input AssessmentWorkflowInput) (As
 	}
 
 	maxIterations := cfg.MaxIterations
-	if maxIterations <= 0 {
-		maxIterations = DefaultMaxIterations
-	}
 
 	// Hard deadline on the entire assessment. When the timer fires
 	// the child context cancels, failing any in-flight activity.
@@ -546,12 +542,12 @@ func spawnCoordinatorActions(
 	assessmentID string,
 	cfg Config,
 	actions []CoordinatorAction,
-	maxConcurrent int32,
+	maxBatchSize int32,
 ) (int32, []CageSummary, error) {
 	var spawned int32
 	var summaries []CageSummary
 
-	batchSize := int(maxConcurrent)
+	batchSize := int(maxBatchSize)
 
 	for i := 0; i < len(actions); i += batchSize {
 		end := i + batchSize
