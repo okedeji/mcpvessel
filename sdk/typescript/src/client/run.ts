@@ -6,7 +6,7 @@ import { AssessmentStatus } from '../types/enums';
 export interface RunConfig {
   // Required
   agent: string;                   // --agent (path to .cage bundle or bundleRef)
-  target: string[];                // --target
+  target: string;                  // --target (one host per assessment)
   customerId: string;              // --customer-id
 
   // Target scoping
@@ -66,7 +66,7 @@ function buildAssessmentConfig(rc: RunConfig): AssessmentConfig {
     name: rc.name,
     customerId: rc.customerId,
     scope: {
-      hosts: rc.target,
+      hosts: [rc.target],
       ports: rc.ports,
       paths: rc.paths,
       skipPaths: rc.skipPaths,

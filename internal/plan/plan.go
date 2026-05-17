@@ -416,26 +416,18 @@ func Validate(p *Plan) error {
 		return fmt.Errorf("name exceeds %d characters", maxNameLen)
 	}
 
-	// Target hosts: present, non-empty, not pointing at infrastructure.
+	// One target per assessment. Multiple targets are separate assessments.
 	if len(p.Target.Hosts) == 0 {
-		return fmt.Errorf("at least one target host is required (--target or target.hosts: in plan file)")
+		return fmt.Errorf("target host is required (--target or target.hosts: in plan file)")
 	}
-	if len(p.Target.Hosts) > maxHosts {
-		return fmt.Errorf("target.hosts has %d entries, max %d", len(p.Target.Hosts), maxHosts)
+	if len(p.Target.Hosts) > 1 {
+		return fmt.Errorf("exactly one target host per assessment (got %d). Run separate assessments for multiple targets", len(p.Target.Hosts))
 	}
-	seenHosts := make(map[string]bool, len(p.Target.Hosts))
-	for _, h := range p.Target.Hosts {
-		if h == "" {
-			return fmt.Errorf("target host cannot be empty")
-		}
-		lower := strings.ToLower(h)
-		if seenHosts[lower] {
-			return fmt.Errorf("duplicate target host %q", h)
-		}
-		seenHosts[lower] = true
-		if err := validateTargetHost(h); err != nil {
-			return fmt.Errorf("target host %q: %w", h, err)
-		}
+	if p.Target.Hosts[0] == "" {
+		return fmt.Errorf("target host cannot be empty")
+	}
+	if err := validateTargetHost(p.Target.Hosts[0]); err != nil {
+		return fmt.Errorf("target host %q: %w", p.Target.Hosts[0], err)
 	}
 	if len(p.Target.Ports) > maxPorts {
 		return fmt.Errorf("target.ports has %d entries, max %d", len(p.Target.Ports), maxPorts)
@@ -700,7 +692,7 @@ func FlagsToOverride(explicit map[string]bool, f RawFlags) (*Plan, error) {
 		p.Agent = f.Agent
 	}
 	if explicit["target"] {
-		p.Target.Hosts = splitAndTrim(f.Target, ",")
+		p.Target.Hosts = []string{strings.TrimSpace(f.Target)}
 	}
 	if explicit["port"] {
 		p.Target.Ports = f.Ports

@@ -48,7 +48,7 @@ func parseRunFlags(args []string) (*runFlags, *flag.FlagSet) {
 
 	fs.StringVar(&rf.plan, "plan", "", "path to assessment YAML plan file")
 	fs.StringVar(&rf.agent, "agent", "", "agent name:tag or ref (e.g. agent-starter:latest)")
-	fs.StringVar(&rf.target, "target", "", "target host(s), comma-separated")
+	fs.StringVar(&rf.target, "target", "", "target host (one per assessment)")
 	fs.Var(&rf.ports, "port", "port to include (repeatable)")
 	fs.Var(&rf.paths, "path", "URL path to scope (repeatable)")
 	fs.Var(&rf.skipPaths, "skip-path", "URL path to skip (repeatable)")
@@ -96,7 +96,7 @@ Examples:
 
 Required (unless in plan file):
   --agent              agent name:tag or ref (e.g. agent-starter:latest)
-  --target             target host(s), comma-separated
+  --target             target host (one per assessment)
   --customer-id        customer identifier
 
 Plan file:

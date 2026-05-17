@@ -94,7 +94,7 @@ func TestMerge_OverrideScalars(t *testing.T) {
 
 func TestMerge_OverrideSlicesReplace(t *testing.T) {
 	base := &Plan{
-		Target: Target{Hosts: []string{"a.com", "b.com"}},
+		Target: Target{Hosts: []string{"a.com"}},
 	}
 	override := &Plan{
 		Target: Target{Hosts: []string{"c.com"}},
