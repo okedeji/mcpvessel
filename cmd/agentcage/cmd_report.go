@@ -121,7 +121,7 @@ func formatReportText(r *assessment.Report) []byte {
 
 	w("FINDINGS\n\n")
 	for i, f := range r.Findings {
-		w("  %d. [%s] %s\n", i+1, f.Severity, f.Title)
+		w("  %d. [%s/%s] %s\n", i+1, f.Severity, f.Status, f.Title)
 		if f.CWE != "" {
 			w("     CWE: %s", f.CWE)
 			if f.CVSSScore > 0 {

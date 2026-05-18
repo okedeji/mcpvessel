@@ -289,8 +289,15 @@ func AssessmentWorkflow(ctx workflow.Context, input AssessmentWorkflowInput) (As
 	if err != nil {
 		return failResult(result, "fetching enriched findings for report: %v", err), nil
 	}
+	// Include candidates so discovery-only runs (and any unvalidated
+	// surface findings) still surface in the report.
+	candidates, err = getCandidateFindings(ctx, input.AssessmentID)
+	if err != nil {
+		return failResult(result, "fetching candidate findings for report: %v", err), nil
+	}
+	allFindings := append(validated, candidates...)
 
-	if err := generateReport(ctx, input.AssessmentID, cfg.CustomerID, cfg.Target.Host, validated); err != nil {
+	if err := generateReport(ctx, input.AssessmentID, cfg.CustomerID, cfg.Target.Host, allFindings); err != nil {
 		return failResult(result, "generating draft report: %v", err), nil
 	}
 

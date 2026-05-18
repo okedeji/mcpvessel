@@ -35,6 +35,7 @@ type ReportSummary struct {
 type ReportFinding struct {
 	ID              string  `json:"id"`
 	Title           string  `json:"title"`
+	Status          string  `json:"status"`
 	Severity        string  `json:"severity"`
 	VulnClass       string  `json:"vuln_class"`
 	CWE             string  `json:"cwe,omitempty"`
@@ -46,7 +47,11 @@ type ReportFinding struct {
 	ValidationProof string  `json:"validation_proof,omitempty"`
 }
 
-func GenerateReport(ctx context.Context, assessmentID, customerID string, validated []findings.Finding, target string, llm *gateway.Client) (*Report, error) {
+// GenerateReport accepts every finding the assessment produced — both
+// validated vulnerabilities and unvalidated candidates from surface
+// discovery. The report shows them all so a discovery-only run still
+// gives the operator visibility into what was learned.
+func GenerateReport(ctx context.Context, assessmentID, customerID string, allFindings []findings.Finding, target string, llm *gateway.Client) (*Report, error) {
 	if assessmentID == "" {
 		return nil, fmt.Errorf("generating report: assessment ID is required")
 	}
@@ -54,10 +59,10 @@ func GenerateReport(ctx context.Context, assessmentID, customerID string, valida
 		return nil, fmt.Errorf("generating report: customer ID is required")
 	}
 
-	summary := ReportSummary{TotalFindings: len(validated)}
-	reportFindings := make([]ReportFinding, 0, len(validated))
+	summary := ReportSummary{TotalFindings: len(allFindings)}
+	reportFindings := make([]ReportFinding, 0, len(allFindings))
 
-	for _, f := range validated {
+	for _, f := range allFindings {
 		switch f.Severity {
 		case findings.SeverityCritical:
 			summary.Critical++
@@ -89,6 +94,7 @@ func GenerateReport(ctx context.Context, assessmentID, customerID string, valida
 		reportFindings = append(reportFindings, ReportFinding{
 			ID:              f.ID,
 			Title:           f.Title,
+			Status:          f.Status.String(),
 			Severity:        f.Severity.String(),
 			VulnClass:       f.VulnClass,
 			CWE:             f.CWE,
