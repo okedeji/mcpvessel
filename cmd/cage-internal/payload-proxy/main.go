@@ -14,7 +14,6 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
-	"strings"
 	"sync/atomic"
 	"time"
 
@@ -29,13 +28,12 @@ import (
 
 func main() {
 	listenAddr := flag.String("listen", ":8080", "proxy listen address")
-	controlAddr := flag.String("control-listen", "", "control endpoint for hold release (e.g. :8081). Disabled when empty.")
 	targetAddr := flag.String("target", "", "upstream target address")
 	caCertPath := flag.String("ca-cert", "", "path to CA certificate for TLS interception")
 	caKeyPath := flag.String("ca-key", "", "path to CA private key for TLS interception")
 	vulnClass := flag.String("vuln-class", "", "vulnerability class for blocklist selection")
 	llmEndpoint := flag.String("llm-endpoint", "", "external LLM endpoint URL. Requests to this host are metered, not inspected.")
-	hostControlURL := flag.String("host-control", "", "host-side control endpoint URL for hold notifications")
+	holdsEnabled := flag.Bool("holds-enabled", false, "enable payload-hold flow over vsock (cage→host notify + host→cage release)")
 	holdTimeoutSec := flag.Int("hold-timeout", 300, "seconds to wait for a hold decision before fail-closed block")
 	maxHeld := flag.Int("max-held", 10, "maximum concurrent held requests before fail-closed block")
 	cageID := flag.String("cage-id", "", "cage ID for hold notifications")
@@ -90,14 +88,14 @@ func main() {
 
 	holdTimeout := time.Duration(*holdTimeoutSec) * time.Second
 	var holdMgr *HoldManager
-	if *controlAddr != "" {
+	if *holdsEnabled {
 		holdMgr = NewHoldManager(*maxHeld)
-		lis, lisErr := net.Listen("tcp", *controlAddr)
+		lis, lisErr := listenVsock(vsockPortHoldRelease)
 		if lisErr != nil {
-			fmt.Fprintf(os.Stderr, "error: control server bind %s: %v\n", *controlAddr, lisErr)
+			fmt.Fprintf(os.Stderr, "error: vsock listen for hold release on port %d: %v\n", vsockPortHoldRelease, lisErr)
 			os.Exit(1)
 		}
-		go serveControlEndpoint(lis, holdMgr)
+		go serveHoldReleaseVsock(lis, holdMgr)
 	}
 
 	transport := proxyTransport()
@@ -196,7 +194,7 @@ func main() {
 					"consumed", tokensConsumed.Load(),
 					"remaining", remaining,
 				)
-				reportTokenUsage(*hostControlURL, *cageID, *assessmentID, tokensConsumed.Load())
+				reportTokenUsage(*cageID, *assessmentID, tokensConsumed.Load())
 			}
 			return nil
 		},
@@ -261,7 +259,7 @@ func main() {
 			return
 
 		case enforcement.PayloadHold:
-			if handlePayloadHold(w, r, holdMgr, holdTimeout, *hostControlURL, *cageID, reason, logger) {
+			if handlePayloadHold(w, r, holdMgr, holdTimeout, *cageID, reason, logger) {
 				return
 			}
 
@@ -279,7 +277,7 @@ func main() {
 					http.Error(w, fmt.Sprintf("blocked by judge: %s", jReason), http.StatusForbidden)
 					return
 				case enforcement.PayloadHold:
-					if handlePayloadHold(w, r, holdMgr, holdTimeout, *hostControlURL, *cageID, jReason, logger) {
+					if handlePayloadHold(w, r, holdMgr, holdTimeout, *cageID, jReason, logger) {
 						return
 					}
 				}
@@ -339,56 +337,10 @@ func main() {
 	}
 }
 
-func serveControlEndpoint(lis net.Listener, holdMgr *HoldManager) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/hold/", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		// Path: /hold/{holdID}/release
-		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/hold/"), "/")
-		if len(parts) != 2 || parts[1] != "release" {
-			http.Error(w, "expected /hold/{id}/release", http.StatusBadRequest)
-			return
-		}
-		holdID := parts[0]
-
-		var body struct {
-			Decision string `json:"decision"`
-		}
-		if err := json.NewDecoder(io.LimitReader(r.Body, 1024)).Decode(&body); err != nil {
-			http.Error(w, "invalid JSON body", http.StatusBadRequest)
-			return
-		}
-
-		var decision HoldDecision
-		switch body.Decision {
-		case "allow":
-			decision = HoldAllow
-		case "block":
-			decision = HoldBlock
-		default:
-			http.Error(w, "decision must be 'allow' or 'block'", http.StatusBadRequest)
-			return
-		}
-
-		if err := holdMgr.Release(holdID, decision); err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-	})
-
-	if err := http.Serve(lis, mux); err != nil {
-		fmt.Fprintf(os.Stderr, "control server error: %v\n", err)
-	}
-}
-
 // handlePayloadHold holds a request for human review. Returns true if the
 // request was handled (blocked or allowed after review), false if hold
 // infrastructure is unavailable and the caller should fall through to allow.
-func handlePayloadHold(w http.ResponseWriter, r *http.Request, holdMgr *HoldManager, holdTimeout time.Duration, hostControlURL, cageID, reason string, logger logr.Logger) bool {
+func handlePayloadHold(w http.ResponseWriter, r *http.Request, holdMgr *HoldManager, holdTimeout time.Duration, cageID, reason string, logger logr.Logger) bool {
 	if holdMgr == nil {
 		logger.Info("payload would be held but hold manager not configured, blocking", "method", r.Method, "url", r.URL.String(), "reason", reason)
 		http.Error(w, fmt.Sprintf("blocked by payload proxy (no hold configured): %s", reason), http.StatusForbidden)
@@ -396,7 +348,7 @@ func handlePayloadHold(w http.ResponseWriter, r *http.Request, holdMgr *HoldMana
 	}
 	holdID := ids.Hold()
 	logger.Info("payload held for review", "hold_id", holdID, "method", r.Method, "url", r.URL.String(), "reason", reason)
-	if err := notifyHostHold(hostControlURL, holdID, cageID, r.Method, r.URL.String(), reason); err != nil {
+	if err := notifyHostHold(holdID, cageID, r.Method, r.URL.String(), reason); err != nil {
 		logger.Info("host notification failed, blocking payload", "hold_id", holdID, "error", err.Error())
 		http.Error(w, "blocked by payload proxy: host unreachable for review", http.StatusForbidden)
 		return true
@@ -411,42 +363,93 @@ func handlePayloadHold(w http.ResponseWriter, r *http.Request, holdMgr *HoldMana
 	return false
 }
 
-var holdNotifyClient = &http.Client{Timeout: 5 * time.Second, Transport: proxyTransport()}
+// Vsock ports MUST match internal/cage/directive.go. Both sides agree
+// on these numbers; updating one without the other is a startup-time
+// connection failure.
+const (
+	vsockPortProxyControl uint32 = 56 // guest → host: proxy control messages
+	vsockPortHoldRelease  uint32 = 57 // host → guest: hold release decisions
+)
 
-func notifyHostHold(hostURL, holdID, cageID, method, reqURL, reason string) error {
-	if hostURL == "" {
-		return fmt.Errorf("no host control URL configured")
+// sendProxyControl dials the host vsock proxy-control port, writes one
+// JSON line, and closes. One connection per message keeps the host
+// listener simple (no multiplexing) at the cost of a vsock dial per
+// hold notification. Token usage messages are small and infrequent so
+// per-message dial is fine in practice.
+func sendProxyControl(msg map[string]any) error {
+	conn, err := dialVsock(vsockCIDHost, vsockPortProxyControl)
+	if err != nil {
+		return fmt.Errorf("dialing host vsock port %d: %w", vsockPortProxyControl, err)
 	}
-	payload, _ := json.Marshal(map[string]string{
+	defer func() { _ = conn.Close() }()
+	_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("marshaling proxy control message: %w", err)
+	}
+	data = append(data, '\n')
+	if _, err := conn.Write(data); err != nil {
+		return fmt.Errorf("writing proxy control message: %w", err)
+	}
+	return nil
+}
+
+func notifyHostHold(holdID, cageID, method, reqURL, reason string) error {
+	return sendProxyControl(map[string]any{
+		"type":    "hold_notify",
 		"hold_id": holdID,
 		"cage_id": cageID,
 		"method":  method,
 		"url":     reqURL,
 		"reason":  reason,
 	})
-	resp, err := holdNotifyClient.Post(hostURL+"/payload-hold", "application/json", bytes.NewReader(payload))
-	if err != nil {
-		return fmt.Errorf("notifying host: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode >= 400 {
-		return fmt.Errorf("host rejected hold notification: status %d", resp.StatusCode)
-	}
-	return nil
 }
 
-func reportTokenUsage(hostURL, cageID, assessmentID string, consumed int64) {
-	if hostURL == "" {
-		return
-	}
-	payload, _ := json.Marshal(map[string]any{
+func reportTokenUsage(cageID, assessmentID string, consumed int64) {
+	// Best-effort: a failed usage report shouldn't break the agent.
+	// The proxy's own log line ("llm_usage ...") still records consumption.
+	_ = sendProxyControl(map[string]any{
+		"type":          "token_usage",
 		"cage_id":       cageID,
 		"assessment_id": assessmentID,
 		"consumed":      consumed,
 	})
-	resp, err := holdNotifyClient.Post(hostURL+"/token-usage", "application/json", bytes.NewReader(payload))
-	if err != nil {
-		return
+}
+
+// serveHoldReleaseVsock accepts host-initiated vsock connections on
+// VsockPortHoldRelease and reads one HoldReleaseMessage per connection.
+// The host opens a fresh connection for each release.
+func serveHoldReleaseVsock(lis *vsockListener, holdMgr *HoldManager) {
+	for {
+		conn, err := lis.Accept()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "hold-release vsock accept: %v\n", err)
+			return
+		}
+		go func(c net.Conn) {
+			defer func() { _ = c.Close() }()
+			_ = c.SetReadDeadline(time.Now().Add(5 * time.Second))
+			var msg struct {
+				HoldID   string `json:"hold_id"`
+				Decision string `json:"decision"`
+			}
+			if err := json.NewDecoder(c).Decode(&msg); err != nil {
+				fmt.Fprintf(os.Stderr, "hold-release vsock decode: %v\n", err)
+				return
+			}
+			var decision HoldDecision
+			switch msg.Decision {
+			case "allow":
+				decision = HoldAllow
+			case "block":
+				decision = HoldBlock
+			default:
+				fmt.Fprintf(os.Stderr, "hold-release vsock: invalid decision %q\n", msg.Decision)
+				return
+			}
+			if err := holdMgr.Release(msg.HoldID, decision); err != nil {
+				fmt.Fprintf(os.Stderr, "hold-release vsock: %v\n", err)
+			}
+		}(conn)
 	}
-	_ = resp.Body.Close()
 }

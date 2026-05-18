@@ -11,11 +11,45 @@ import (
 // Vsock port assignments for host↔guest communication. Firecracker
 // multiplexes a single vsock device; each service uses a distinct port.
 const (
-	VsockPortDirective = 52 // host → guest: post-resume instructions
-	VsockPortHold      = 53 // guest → host: agent-initiated holds
-	VsockPortLogs      = 54 // guest → host: structured log stream
-	VsockPortFindings  = 55 // guest → host: validated findings
+	VsockPortDirective    = 52 // host → guest: post-resume instructions
+	VsockPortHold         = 53 // guest → host: agent-initiated holds
+	VsockPortLogs         = 54 // guest → host: structured log stream
+	VsockPortFindings     = 55 // guest → host: validated findings
+	VsockPortProxyControl = 56 // guest → host: payload-proxy control messages (token usage, hold notifications)
+	VsockPortHoldRelease  = 57 // host → guest: payload-proxy hold release decisions
 )
+
+// ProxyControlMessage is line-delimited JSON sent by the payload proxy
+// to the host on VsockPortProxyControl. The Type field discriminates
+// which other fields are populated.
+type ProxyControlMessage struct {
+	Type string `json:"type"`
+
+	// Common attribution.
+	CageID       string `json:"cage_id,omitempty"`
+	AssessmentID string `json:"assessment_id,omitempty"`
+
+	// token_usage: cumulative tokens consumed so far.
+	Consumed int64 `json:"consumed,omitempty"`
+
+	// hold_notify: payload held pending operator review.
+	HoldID string `json:"hold_id,omitempty"`
+	Method string `json:"method,omitempty"`
+	URL    string `json:"url,omitempty"`
+	Reason string `json:"reason,omitempty"`
+}
+
+const (
+	ProxyControlTokenUsage = "token_usage"
+	ProxyControlHoldNotify = "hold_notify"
+)
+
+// HoldReleaseMessage is JSON sent by the host on VsockPortHoldRelease
+// to release a held payload back to the proxy.
+type HoldReleaseMessage struct {
+	HoldID   string `json:"hold_id"`
+	Decision string `json:"decision"` // "allow" or "block"
+}
 
 // DirectiveType classifies an instruction delivered to the agent after
 // a VM resume or in response to an agent-initiated hold.

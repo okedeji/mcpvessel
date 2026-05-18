@@ -41,7 +41,7 @@ func alwaysValid(_ Config) error { return nil }
 func alwaysInvalid(_ Config) error { return fmt.Errorf("invalid config") }
 
 func TestServer_GetCage_NotFound(t *testing.T) {
-	srv := NewService(nil, alwaysValid, nil, func() string { return "" }, "", "", "", Timeouts{}, 15*time.Minute)
+	srv := NewService(nil, alwaysValid, nil, func() string { return "" }, "", "", false, Timeouts{}, 15*time.Minute)
 
 	_, err := srv.GetCage(context.Background(), "nonexistent-id")
 	require.Error(t, err)
@@ -51,7 +51,7 @@ func TestServer_GetCage_NotFound(t *testing.T) {
 func TestServer_CreateCage_ValidationPassesThenWorkflowFails(t *testing.T) {
 	// With a nil Temporal client, ExecuteWorkflow panics. This test verifies
 	// validation works; workflow integration requires a real Temporal test env.
-	srv := NewService(nil, alwaysValid, nil, func() string { return "" }, "", "", "", Timeouts{}, 15*time.Minute)
+	srv := NewService(nil, alwaysValid, nil, func() string { return "" }, "", "", false, Timeouts{}, 15*time.Minute)
 	cfg := validTestConfig()
 
 	require.Panics(t, func() {
@@ -60,7 +60,7 @@ func TestServer_CreateCage_ValidationPassesThenWorkflowFails(t *testing.T) {
 }
 
 func TestServer_CreateCage_InvalidConfig(t *testing.T) {
-	srv := NewService(nil, alwaysInvalid, nil, func() string { return "" }, "", "", "", Timeouts{}, 15*time.Minute)
+	srv := NewService(nil, alwaysInvalid, nil, func() string { return "" }, "", "", false, Timeouts{}, 15*time.Minute)
 	cfg := validTestConfig()
 
 	_, err := srv.CreateCage(context.Background(), cfg)
@@ -69,7 +69,7 @@ func TestServer_CreateCage_InvalidConfig(t *testing.T) {
 }
 
 func TestServer_DestroyCage_NotFound(t *testing.T) {
-	srv := NewService(nil, alwaysValid, nil, func() string { return "" }, "", "", "", Timeouts{}, 15*time.Minute)
+	srv := NewService(nil, alwaysValid, nil, func() string { return "" }, "", "", false, Timeouts{}, 15*time.Minute)
 
 	err := srv.DestroyCage(context.Background(), "nonexistent-id", "test")
 	require.Error(t, err)
@@ -77,7 +77,7 @@ func TestServer_DestroyCage_NotFound(t *testing.T) {
 }
 
 func TestServer_DestroyCage_InvalidTransition(t *testing.T) {
-	srv := NewService(nil, alwaysValid, nil, func() string { return "" }, "", "", "", Timeouts{}, 15*time.Minute)
+	srv := NewService(nil, alwaysValid, nil, func() string { return "" }, "", "", false, Timeouts{}, 15*time.Minute)
 	srv.cages["cage-1"] = &Info{
 		ID:    "cage-1",
 		State: StateCompleted,

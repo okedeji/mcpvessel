@@ -23,7 +23,7 @@ type CageWorkflowInput struct {
 	LLMEndpoint         string
 	LLMAPIKey           string
 	NATSAddr            string
-	HostControlAddr     string
+	HoldsEnabled        bool
 	Timeouts            Timeouts
 	InterventionTimeout time.Duration
 }
@@ -79,7 +79,7 @@ func CageWorkflow(ctx workflow.Context, input CageWorkflowInput) (CageWorkflowRe
 		ScopePaths:      cfg.Scope.Paths,
 		SkipPaths:       cfg.SkipPaths,
 		Guidance:        cfg.Guidance,
-		HostControlAddr: input.HostControlAddr,
+		HoldsEnabled:    input.HoldsEnabled,
 		HoldTimeoutSec:  int(input.InterventionTimeout.Seconds()),
 		JudgeEndpoint:   cfg.ProxyConfig.JudgeEndpoint,
 		JudgeConfidence: cfg.ProxyConfig.JudgeConfidence,

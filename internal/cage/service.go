@@ -28,14 +28,14 @@ type Service struct {
 	llmEndpointFn       func() string
 	llmAPIKey           string
 	natsAddr            string
-	hostControlAddr     string
+	holdsEnabled        bool
 	timeouts            Timeouts
 	interventionTimeout time.Duration
 	mu                  sync.RWMutex
 	cages               map[string]*Info
 }
 
-func NewService(temporal client.Client, validate ConfigValidator, db *sql.DB, llmEndpointFn func() string, llmAPIKey, natsAddr, hostControlAddr string, timeouts Timeouts, interventionTimeout time.Duration) *Service {
+func NewService(temporal client.Client, validate ConfigValidator, db *sql.DB, llmEndpointFn func() string, llmAPIKey, natsAddr string, holdsEnabled bool, timeouts Timeouts, interventionTimeout time.Duration) *Service {
 	return &Service{
 		temporal:            temporal,
 		validate:            validate,
@@ -43,7 +43,7 @@ func NewService(temporal client.Client, validate ConfigValidator, db *sql.DB, ll
 		llmEndpointFn:       llmEndpointFn,
 		llmAPIKey:           llmAPIKey,
 		natsAddr:            natsAddr,
-		hostControlAddr:     hostControlAddr,
+		holdsEnabled:        holdsEnabled,
 		timeouts:            timeouts,
 		interventionTimeout: interventionTimeout,
 		cages:               make(map[string]*Info),
@@ -85,7 +85,7 @@ func (s *Service) CreateCage(ctx context.Context, config Config) (*Info, error) 
 		LLMEndpoint:         s.llmEndpointFn(),
 		LLMAPIKey:           s.llmAPIKey,
 		NATSAddr:            s.natsAddr,
-		HostControlAddr:     s.hostControlAddr,
+		HoldsEnabled:        s.holdsEnabled,
 		Timeouts:            s.timeouts,
 		InterventionTimeout: s.interventionTimeout,
 	}

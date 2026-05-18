@@ -198,7 +198,7 @@ func runInit(configFile, grpcAddr, secretsFile string, debug bool) (initErr erro
 		return err
 	}
 
-	cageSvc := cage.NewService(temporalClient, cageValidator, db, func() string { return configServer.GetConfig(ctx).LLM.Endpoint }, llmAPIKey, natsURL, cfg.InterventionHoldControlAddr(), cage.TimeoutsFromConfig(cfg.Timeouts), cfg.InterventionTimeout())
+	cageSvc := cage.NewService(temporalClient, cageValidator, db, func() string { return configServer.GetConfig(ctx).LLM.Endpoint }, llmAPIKey, natsURL, cfg.InterventionHoldsEnabled(), cage.TimeoutsFromConfig(cfg.Timeouts), cfg.InterventionTimeout())
 	fleetSvc := fleet.NewService(fleetSetup.pool, fleetSetup.demand, fleetSetup.provisioner, log.WithValues("component", "fleet"))
 	var fleetSignaler assessment.FleetSignaler
 	if fleetSetup.autoscaler != nil {
@@ -214,11 +214,9 @@ func runInit(configFile, grpcAddr, secretsFile string, debug bool) (initErr erro
 		return err
 	}
 
-	holdControlAddr := cfg.InterventionHoldControlAddr()
 	payloadHoldHandler := cage.NewPayloadHoldHandler(cage.PayloadHoldConfig{
 		Enqueuer:        &interventionQueueAdapter{q: iQueue},
 		InterventionTTL: cfg.InterventionTimeout(),
-		ControlPort:     portFromAddr(holdControlAddr),
 		Log:             log,
 	})
 	iSvc.SetPayloadHoldResolver(payloadHoldHandler)
@@ -268,6 +266,7 @@ func runInit(configFile, grpcAddr, secretsFile string, debug bool) (initErr erro
 		AgentHolds:        agentHoldListener,
 		LogCollector:      logCollector,
 		FindingsBus:       findingsBus,
+		TokenMeter:        tokenMeter,
 		CageService:       cageSvc,
 		LogDir:            cageLogDir,
 		Log:               log,
@@ -370,11 +369,6 @@ func runInit(configFile, grpcAddr, secretsFile string, debug bool) (initErr erro
 		return err
 	}
 	serveGRPC(grpcServer, lis, cancel, log)
-
-	if err := startHoldControlServer(holdControlAddr, payloadHoldHandler, tokenMeter, cancel, log); err != nil {
-		shutdownSequence(cancel, deps, nil, log)
-		return fmt.Errorf("starting payload hold control server: %w", err)
-	}
 
 	if err := waitForGRPCReady(ctx, cfg, grpcAddr); err != nil {
 		shutdownSequence(cancel, deps, nil, log)

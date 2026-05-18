@@ -29,7 +29,7 @@ type CageEnv struct {
 	ScopePaths        []string          `json:"scope_paths,omitempty"`
 	TokenBudget       int64             `json:"token_budget,omitempty"`
 	VulnClass         string            `json:"vuln_class,omitempty"`
-	HostControlAddr   string            `json:"host_control_addr,omitempty"`
+	HoldsEnabled      bool              `json:"holds_enabled,omitempty"`
 	HoldTimeoutSec    int               `json:"hold_timeout_sec,omitempty"`
 	TargetCredentials json.RawMessage   `json:"target_credentials,omitempty"`
 	JudgeEndpoint     string            `json:"judge_endpoint,omitempty"`
@@ -123,11 +123,8 @@ func main() {
 		if env.TokenBudget > 0 {
 			proxyArgs = append(proxyArgs, "-token-budget", fmt.Sprintf("%d", env.TokenBudget))
 		}
-		if env.HostControlAddr != "" {
-			proxyArgs = append(proxyArgs,
-				"-control-listen", ":8081",
-				"-host-control", env.HostControlAddr,
-			)
+		if env.HoldsEnabled {
+			proxyArgs = append(proxyArgs, "-holds-enabled")
 			if env.HoldTimeoutSec > 0 {
 				proxyArgs = append(proxyArgs, "-hold-timeout", fmt.Sprintf("%d", env.HoldTimeoutSec))
 			}
@@ -324,7 +321,6 @@ func setupIPTables(llmPort string) {
 	// the proxy's forwarded requests loop back through port 8080.
 	rules := [][]string{
 		{"iptables", "-t", "nat", "-A", "OUTPUT", "-m", "mark", "--mark", "1", "-j", "RETURN"},
-		{"iptables", "-t", "nat", "-A", "OUTPUT", "-p", "tcp", "--dport", "8081", "-j", "RETURN"},
 		{"iptables", "-t", "nat", "-A", "OUTPUT", "-p", "tcp", "--dport", "80", "-j", "REDIRECT", "--to-port", "8080"},
 		{"iptables", "-t", "nat", "-A", "OUTPUT", "-p", "tcp", "--dport", "443", "-j", "REDIRECT", "--to-port", "8080"},
 	}

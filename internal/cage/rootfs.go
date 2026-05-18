@@ -38,7 +38,7 @@ type Env struct {
 	SkipPaths         []string                   `json:"skip_paths,omitempty"`
 	TokenBudget       int64                      `json:"token_budget,omitempty"`
 	VulnClass         string                     `json:"vuln_class,omitempty"`
-	HostControlAddr   string                     `json:"host_control_addr,omitempty"`
+	HoldsEnabled      bool                       `json:"holds_enabled,omitempty"`
 	HoldTimeoutSec    int                        `json:"hold_timeout_sec,omitempty"`
 	TargetCredentials json.RawMessage            `json:"target_credentials,omitempty"`
 	JudgeEndpoint     string                     `json:"judge_endpoint,omitempty"`

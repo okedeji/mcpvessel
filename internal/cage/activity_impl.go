@@ -116,11 +116,20 @@ type ActivityImpl struct {
 	logDir            string
 	log               logr.Logger
 	allocMu           sync.Mutex
-	allocs            map[string]string       // vmID -> hostID
-	vsockPaths        map[string]string       // vmID -> vsock UDS path
-	tapDevices        map[string]string       // cageID -> TAP device name
-	logListeners      map[string]net.Listener // vmID -> pre-created log listener
-	findingsListeners map[string]net.Listener // vmID -> pre-created findings listener
+	tokenMeter            ProxyTokenMeter
+	allocs                map[string]string       // vmID -> hostID
+	vsockPaths            map[string]string       // vmID -> vsock UDS path
+	tapDevices            map[string]string       // cageID -> TAP device name
+	logListeners          map[string]net.Listener // vmID -> pre-created log listener
+	findingsListeners     map[string]net.Listener // vmID -> pre-created findings listener
+	proxyControlListeners map[string]net.Listener // vmID -> pre-created proxy-control listener
+}
+
+// ProxyTokenMeter is the host-side interface the proxy-control collector
+// uses to record token usage reported by an in-cage payload-proxy.
+// Defined as an interface so this package doesn't import gateway.
+type ProxyTokenMeter interface {
+	SetUsage(cageID, assessmentID string, consumed int64)
 }
 
 type ActivityImplConfig struct {
@@ -141,6 +150,7 @@ type ActivityImplConfig struct {
 	TargetCreds       TargetCredentialReader
 	LogCollector      *VsockCollector
 	FindingsBus       findings.Bus
+	TokenMeter        ProxyTokenMeter
 	CageService       *Service
 	LogDir            string
 	BundleStoreDir    string
@@ -202,15 +212,17 @@ func NewActivityImpl(cfg ActivityImplConfig) *ActivityImpl {
 		targetCreds:       cfg.TargetCreds,
 		directiveWriter:   NewDirectiveWriter(),
 		logCollector:      cfg.LogCollector,
-		findingsBus:       cfg.FindingsBus,
-		cageService:       cfg.CageService,
-		logDir:            cfg.LogDir,
-		log:               cfg.Log.WithValues("component", "cage-activities"),
-		allocs:            make(map[string]string),
-		vsockPaths:        make(map[string]string),
-		tapDevices:        make(map[string]string),
-		logListeners:      make(map[string]net.Listener),
-		findingsListeners: make(map[string]net.Listener),
+		findingsBus:           cfg.FindingsBus,
+		tokenMeter:            cfg.TokenMeter,
+		cageService:           cfg.CageService,
+		logDir:                cfg.LogDir,
+		log:                   cfg.Log.WithValues("component", "cage-activities"),
+		allocs:                make(map[string]string),
+		vsockPaths:            make(map[string]string),
+		tapDevices:            make(map[string]string),
+		logListeners:          make(map[string]net.Listener),
+		findingsListeners:     make(map[string]net.Listener),
+		proxyControlListeners: make(map[string]net.Listener),
 	}
 }
 
@@ -405,8 +417,23 @@ func (a *ActivityImpl) ProvisionVM(ctx context.Context, vmConfig VMConfig) (*VMH
 		}
 	}
 
+	// Proxy-control listener accepts the in-cage payload-proxy's
+	// fire-and-forget messages (token usage, hold notifications).
+	{
+		lisPath := fmt.Sprintf("%s_%d", handle.VsockPath, VsockPortProxyControl)
+		_ = os.Remove(lisPath)
+		pcLis, pcErr := net.Listen("unix", lisPath)
+		if pcErr != nil {
+			a.log.Error(pcErr, "creating proxy-control listener", "cage_id", vmConfig.CageID, "path", lisPath)
+		} else {
+			a.allocMu.Lock()
+			a.proxyControlListeners[handle.ID] = pcLis
+			a.allocMu.Unlock()
+		}
+	}
+
 	if a.payloadHolds != nil {
-		a.payloadHolds.RegisterVM(vmConfig.CageID, handle.IPAddress)
+		a.payloadHolds.RegisterVM(vmConfig.CageID, handle.VsockPath)
 	}
 
 	if a.agentHolds != nil {
@@ -447,12 +474,16 @@ func (a *ActivityImpl) MonitorCage(ctx context.Context, cageID, vmID string, con
 	a.allocMu.Lock()
 	logLis := a.logListeners[vmID]
 	findingsLis := a.findingsListeners[vmID]
+	proxyCtlLis := a.proxyControlListeners[vmID]
 	a.allocMu.Unlock()
 	if logLis != nil && a.logCollector != nil {
 		go a.collectLogs(ctx, cageID, logLis)
 	}
 	if findingsLis != nil && a.findingsBus != nil {
 		go a.collectFindings(ctx, cageID, findingsLis)
+	}
+	if proxyCtlLis != nil {
+		go a.collectProxyControl(cageID, proxyCtlLis)
 	}
 
 	deadline := time.After(config.TimeLimits.MaxDuration)
@@ -622,6 +653,60 @@ func (a *ActivityImpl) collectFindings(ctx context.Context, cageID string, lis n
 		a.log.Info("findings stream ended with error", "cage_id", cageID, "lines_read", lineCount, "error", err.Error())
 	} else {
 		a.log.Info("findings stream closed", "cage_id", cageID, "lines_read", lineCount)
+	}
+}
+
+// collectProxyControl accepts vsock connections from the in-cage
+// payload-proxy and dispatches each line-delimited message to the
+// matching host-side handler. One connection per message — the proxy
+// dials, writes one JSON line, and closes.
+func (a *ActivityImpl) collectProxyControl(cageID string, lis net.Listener) {
+	defer func() { _ = lis.Close() }()
+	for {
+		conn, err := lis.Accept()
+		if err != nil {
+			a.log.Info("proxy-control listener accept ended", "cage_id", cageID, "error", err.Error())
+			return
+		}
+		go a.handleProxyControlConn(cageID, conn)
+	}
+}
+
+func (a *ActivityImpl) handleProxyControlConn(cageID string, conn net.Conn) {
+	defer func() { _ = conn.Close() }()
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+
+	scanner := bufio.NewScanner(conn)
+	scanner.Buffer(make([]byte, 0, 8*1024), 64*1024)
+	for scanner.Scan() {
+		var msg ProxyControlMessage
+		if err := json.Unmarshal(scanner.Bytes(), &msg); err != nil {
+			a.log.Error(err, "invalid proxy-control message", "cage_id", cageID)
+			continue
+		}
+		switch msg.Type {
+		case ProxyControlTokenUsage:
+			if a.tokenMeter != nil {
+				a.tokenMeter.SetUsage(msg.CageID, msg.AssessmentID, msg.Consumed)
+			}
+		case ProxyControlHoldNotify:
+			if a.payloadHolds == nil {
+				a.log.Info("hold_notify received but no hold handler configured", "cage_id", cageID, "hold_id", msg.HoldID)
+				continue
+			}
+			notif := PayloadHoldNotification{
+				HoldID: msg.HoldID,
+				CageID: msg.CageID,
+				Method: msg.Method,
+				URL:    msg.URL,
+				Reason: msg.Reason,
+			}
+			if err := a.payloadHolds.HandleNotification(context.Background(), notif); err != nil {
+				a.log.Error(err, "handling hold notification", "cage_id", cageID, "hold_id", msg.HoldID)
+			}
+		default:
+			a.log.Info("unknown proxy-control message type", "cage_id", cageID, "type", msg.Type)
+		}
 	}
 }
 
@@ -812,6 +897,10 @@ func (a *ActivityImpl) TeardownVM(ctx context.Context, vmID string) error {
 	if fLis, ok := a.findingsListeners[vmID]; ok {
 		_ = fLis.Close()
 		delete(a.findingsListeners, vmID)
+	}
+	if pcLis, ok := a.proxyControlListeners[vmID]; ok {
+		_ = pcLis.Close()
+		delete(a.proxyControlListeners, vmID)
 	}
 	a.allocMu.Unlock()
 

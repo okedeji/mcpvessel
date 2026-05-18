@@ -245,13 +245,14 @@ func (c *Config) InterventionWarningThreshold() float64 {
 	return 0.7
 }
 
-// InterventionHoldControlAddr returns the host-side HTTP address for
-// payload hold notifications. Falls back to ":9091".
-func (c *Config) InterventionHoldControlAddr() string {
-	if c.Intervention.HoldControlAddr != "" {
-		return c.Intervention.HoldControlAddr
+// InterventionHoldsEnabled returns whether payload-hold support is
+// enabled. Defaults to true; operators set holds_enabled=false to
+// disable the entire hold flow.
+func (c *Config) InterventionHoldsEnabled() bool {
+	if c.Intervention.HoldsEnabled != nil {
+		return *c.Intervention.HoldsEnabled
 	}
-	return ":9091"
+	return true
 }
 
 func (c *Config) JudgeEndpoint() string {
@@ -535,10 +536,11 @@ type InterventionConfig struct {
 	// Defaults to 0.7 (70%).
 	WarningThreshold float64 `yaml:"warning_threshold"`
 
-	// HoldControlAddr is the host-side HTTP address that receives
-	// payload hold notifications from in-cage proxies. Defaults to
-	// ":9091". Set to "" to disable payload hold support.
-	HoldControlAddr string `yaml:"hold_control_addr"`
+	// HoldsEnabled toggles the payload-hold flow. When true, the cage
+	// proxy notifies the host over vsock when a payload needs review;
+	// the host enqueues an intervention and signals the proxy back
+	// over vsock with the operator's decision. Defaults to true.
+	HoldsEnabled *bool `yaml:"holds_enabled,omitempty"`
 }
 
 // JudgeConfig configures the external LLM-as-a-Judge endpoint that
@@ -968,8 +970,8 @@ func Merge(base, override *Config) *Config {
 	if override.Intervention.WarningThreshold > 0 {
 		result.Intervention.WarningThreshold = override.Intervention.WarningThreshold
 	}
-	if override.Intervention.HoldControlAddr != "" {
-		result.Intervention.HoldControlAddr = override.Intervention.HoldControlAddr
+	if override.Intervention.HoldsEnabled != nil {
+		result.Intervention.HoldsEnabled = override.Intervention.HoldsEnabled
 	}
 
 	// Infrastructure: override individual service configs if provided
