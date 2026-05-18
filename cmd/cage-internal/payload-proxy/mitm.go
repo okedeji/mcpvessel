@@ -51,16 +51,65 @@ func loadCA(certPath, keyPath string) (*x509.Certificate, *rsa.PrivateKey, error
 	return cert, key, nil
 }
 
-var leafCache sync.Map // hostname → *tls.Certificate
+var (
+	leafCache    sync.Map // hostname → *tls.Certificate
+	leafKey      *rsa.PrivateKey
+	leafKeyOnce  sync.Once
+	leafKeyErr   error
+	leafFlightMu sync.Mutex
+	leafInFlight = make(map[string]chan struct{})
+)
+
+// sharedLeafKey lazily generates a single 2048-bit RSA key shared by
+// every leaf cert this process issues. Per-hostname cert generation
+// then only signs (microseconds) instead of also generating a key
+// (hundreds of ms). Without this, parallel cold-start TLS interception
+// of the first few requests easily exceeds an agent's HTTP timeout.
+func sharedLeafKey() (*rsa.PrivateKey, error) {
+	leafKeyOnce.Do(func() {
+		leafKey, leafKeyErr = rsa.GenerateKey(rand.Reader, 2048)
+	})
+	return leafKey, leafKeyErr
+}
 
 // leafCert returns a TLS certificate for hostname, signed by the CA.
-// Certificates are cached for the lifetime of the process.
+// Certificates are cached for the lifetime of the process. Concurrent
+// cache misses for the same hostname are deduplicated so only one
+// goroutine signs while the others wait on the result.
 func leafCert(hostname string, ca *x509.Certificate, caKey *rsa.PrivateKey) (*tls.Certificate, error) {
 	if cached, ok := leafCache.Load(hostname); ok {
 		return cached.(*tls.Certificate), nil
 	}
 
-	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	// Singleflight by hostname: first goroutine generates, others wait.
+	leafFlightMu.Lock()
+	if wait, ok := leafInFlight[hostname]; ok {
+		leafFlightMu.Unlock()
+		<-wait
+		if cached, ok := leafCache.Load(hostname); ok {
+			return cached.(*tls.Certificate), nil
+		}
+		// In-flight finished without populating the cache (error path).
+		// Fall through and retry; rare.
+	} else {
+		wait := make(chan struct{})
+		leafInFlight[hostname] = wait
+		leafFlightMu.Unlock()
+		defer func() {
+			leafFlightMu.Lock()
+			delete(leafInFlight, hostname)
+			leafFlightMu.Unlock()
+			close(wait)
+		}()
+	}
+
+	// Double-check after acquiring the slot in case another goroutine
+	// populated the cache between our miss and our claim.
+	if cached, ok := leafCache.Load(hostname); ok {
+		return cached.(*tls.Certificate), nil
+	}
+
+	priv, err := sharedLeafKey()
 	if err != nil {
 		return nil, fmt.Errorf("generating leaf key: %w", err)
 	}

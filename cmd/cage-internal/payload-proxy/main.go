@@ -301,6 +301,14 @@ func main() {
 		if caErr != nil {
 			fmt.Fprintf(os.Stderr, "warning: TLS interception disabled: %v\n", caErr)
 		} else {
+			// Pre-generate the shared leaf RSA key in the background so
+			// the first intercepted request doesn't pay the ~hundreds-of-ms
+			// keygen cost on its hot path.
+			go func() {
+				if _, err := sharedLeafKey(); err != nil {
+					logger.Error(err, "pre-generating leaf key failed")
+				}
+			}()
 			logger.Info("TLS interception enabled")
 		}
 	}
