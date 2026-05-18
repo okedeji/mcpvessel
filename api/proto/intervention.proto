@@ -50,6 +50,9 @@ enum ReviewDecision {
   REVIEW_DECISION_APPROVE = 1;
   REVIEW_DECISION_REQUEST_RETEST = 2;
   REVIEW_DECISION_REJECT = 3;
+  // Reserved for the deadline enforcer. Operator-driven resolves
+  // that send TIMEOUT are rejected by ResolveAssessmentReview.
+  REVIEW_DECISION_TIMEOUT = 4;
 }
 
 message InterventionInfo {

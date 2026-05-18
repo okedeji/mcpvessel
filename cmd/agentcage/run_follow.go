@@ -235,9 +235,9 @@ func printInterventionCommand(iv *pb.InterventionInfo) {
 	id := iv.GetInterventionId()
 	switch {
 	case strings.Contains(iv.GetType().String(), "TRIPWIRE"):
-		fmt.Printf("           Run: agentcage intervention resolve %s --resume  (or --kill)\n", id)
+		fmt.Printf("           Run: agentcage interventions resolve --id %s --action resume  (or --action kill)\n", id)
 	case strings.Contains(iv.GetType().String(), "REPORT_REVIEW"):
-		fmt.Printf("           Run: agentcage intervention resolve %s --approve\n", id)
+		fmt.Printf("           Run: agentcage interventions resolve --id %s --action approve\n", id)
 	default:
 		fmt.Printf("           Run: agentcage interventions\n")
 	}
@@ -247,6 +247,7 @@ func isTerminal(status pb.AssessmentStatus) bool {
 	switch status {
 	case pb.AssessmentStatus_ASSESSMENT_STATUS_APPROVED,
 		pb.AssessmentStatus_ASSESSMENT_STATUS_REJECTED,
+		pb.AssessmentStatus_ASSESSMENT_STATUS_UNREVIEWED,
 		pb.AssessmentStatus_ASSESSMENT_STATUS_FAILED,
 		pb.AssessmentStatus_ASSESSMENT_STATUS_PENDING_REVIEW:
 		return true
@@ -265,6 +266,8 @@ func printTerminalSummary(info *pb.AssessmentInfo, s *followState, assessmentID 
 		fmt.Println("Assessment approved.")
 	case pb.AssessmentStatus_ASSESSMENT_STATUS_REJECTED:
 		fmt.Println("Assessment rejected.")
+	case pb.AssessmentStatus_ASSESSMENT_STATUS_UNREVIEWED:
+		fmt.Println("Assessment unreviewed (review window elapsed without an operator decision).")
 	case pb.AssessmentStatus_ASSESSMENT_STATUS_FAILED:
 		fmt.Println("Assessment failed.")
 	case pb.AssessmentStatus_ASSESSMENT_STATUS_PENDING_REVIEW:

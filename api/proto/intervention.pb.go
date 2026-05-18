@@ -253,6 +253,9 @@ const (
 	ReviewDecision_REVIEW_DECISION_APPROVE        ReviewDecision = 1
 	ReviewDecision_REVIEW_DECISION_REQUEST_RETEST ReviewDecision = 2
 	ReviewDecision_REVIEW_DECISION_REJECT         ReviewDecision = 3
+	// Reserved for the deadline enforcer. Operator-driven resolves
+	// that send TIMEOUT are rejected by ResolveAssessmentReview.
+	ReviewDecision_REVIEW_DECISION_TIMEOUT ReviewDecision = 4
 )
 
 // Enum value maps for ReviewDecision.
@@ -262,12 +265,14 @@ var (
 		1: "REVIEW_DECISION_APPROVE",
 		2: "REVIEW_DECISION_REQUEST_RETEST",
 		3: "REVIEW_DECISION_REJECT",
+		4: "REVIEW_DECISION_TIMEOUT",
 	}
 	ReviewDecision_value = map[string]int32{
 		"REVIEW_DECISION_UNSPECIFIED":    0,
 		"REVIEW_DECISION_APPROVE":        1,
 		"REVIEW_DECISION_REQUEST_RETEST": 2,
 		"REVIEW_DECISION_REJECT":         3,
+		"REVIEW_DECISION_TIMEOUT":        4,
 	}
 )
 
@@ -985,12 +990,13 @@ const file_api_proto_intervention_proto_rawDesc = "" +
 	"\x19INTERVENTION_PRIORITY_LOW\x10\x01\x12 \n" +
 	"\x1cINTERVENTION_PRIORITY_MEDIUM\x10\x02\x12\x1e\n" +
 	"\x1aINTERVENTION_PRIORITY_HIGH\x10\x03\x12\"\n" +
-	"\x1eINTERVENTION_PRIORITY_CRITICAL\x10\x04*\x8e\x01\n" +
+	"\x1eINTERVENTION_PRIORITY_CRITICAL\x10\x04*\xab\x01\n" +
 	"\x0eReviewDecision\x12\x1f\n" +
 	"\x1bREVIEW_DECISION_UNSPECIFIED\x10\x00\x12\x1b\n" +
 	"\x17REVIEW_DECISION_APPROVE\x10\x01\x12\"\n" +
 	"\x1eREVIEW_DECISION_REQUEST_RETEST\x10\x02\x12\x1a\n" +
-	"\x16REVIEW_DECISION_REJECT\x10\x032\xb5\x04\n" +
+	"\x16REVIEW_DECISION_REJECT\x10\x03\x12\x1b\n" +
+	"\x17REVIEW_DECISION_TIMEOUT\x10\x042\xb5\x04\n" +
 	"\x13InterventionService\x12~\n" +
 	"\x11ListInterventions\x123.agentcage.intervention.v1.ListInterventionsRequest\x1a4.agentcage.intervention.v1.ListInterventionsResponse\x12x\n" +
 	"\x0fGetIntervention\x121.agentcage.intervention.v1.GetInterventionRequest\x1a2.agentcage.intervention.v1.GetInterventionResponse\x12\x90\x01\n" +

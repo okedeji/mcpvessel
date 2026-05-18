@@ -222,6 +222,8 @@ func assessmentStatusToProto(s assessment.Status) pb.AssessmentStatus {
 		return pb.AssessmentStatus_ASSESSMENT_STATUS_REJECTED
 	case assessment.StatusFailed:
 		return pb.AssessmentStatus_ASSESSMENT_STATUS_FAILED
+	case assessment.StatusUnreviewed:
+		return pb.AssessmentStatus_ASSESSMENT_STATUS_UNREVIEWED
 	default:
 		return pb.AssessmentStatus_ASSESSMENT_STATUS_UNSPECIFIED
 	}
@@ -243,6 +245,8 @@ func assessmentStatusFromProto(s pb.AssessmentStatus) assessment.Status {
 		return assessment.StatusRejected
 	case pb.AssessmentStatus_ASSESSMENT_STATUS_FAILED:
 		return assessment.StatusFailed
+	case pb.AssessmentStatus_ASSESSMENT_STATUS_UNREVIEWED:
+		return assessment.StatusUnreviewed
 	default:
 		return assessment.StatusUnspecified
 	}
@@ -398,6 +402,10 @@ func reviewDecisionFromProto(d pb.ReviewDecision) intervention.ReviewDecision {
 		return intervention.ReviewRequestRetest
 	case pb.ReviewDecision_REVIEW_DECISION_REJECT:
 		return intervention.ReviewReject
+	case pb.ReviewDecision_REVIEW_DECISION_TIMEOUT:
+		// Mapped so ResolveAssessmentReview can reject the misuse
+		// explicitly rather than silently downgrading to Reject.
+		return intervention.ReviewTimeout
 	default:
 		// Fail closed: unknown decision rejects rather than approves.
 		return intervention.ReviewReject

@@ -20,6 +20,10 @@ const (
 	StatusApproved
 	StatusRejected
 	StatusFailed
+	// Terminal state when the review window (default 24h) elapsed
+	// without an operator decision. Distinct from Rejected, which
+	// requires an explicit operator click.
+	StatusUnreviewed
 )
 
 func (s Status) String() string {
@@ -38,6 +42,8 @@ func (s Status) String() string {
 		return "rejected"
 	case StatusFailed:
 		return "failed"
+	case StatusUnreviewed:
+		return "unreviewed"
 	default:
 		return "unspecified"
 	}
@@ -59,6 +65,8 @@ func StatusFromString(s string) Status {
 		return StatusRejected
 	case "failed":
 		return StatusFailed
+	case "unreviewed":
+		return StatusUnreviewed
 	default:
 		return StatusUnspecified
 	}
@@ -156,7 +164,7 @@ var validTransitions = map[Status][]Status{
 	StatusDiscovery:     {StatusExploitation, StatusRejected, StatusFailed},
 	StatusExploitation:  {StatusValidation, StatusRejected, StatusFailed},
 	StatusValidation:    {StatusPendingReview, StatusRejected, StatusFailed},
-	StatusPendingReview: {StatusApproved, StatusRejected, StatusFailed},
+	StatusPendingReview: {StatusApproved, StatusRejected, StatusUnreviewed, StatusFailed},
 }
 
 var ErrInvalidTransition = errors.New("invalid assessment state transition")

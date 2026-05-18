@@ -7,6 +7,7 @@ export enum AssessmentStatus {
   Approved = 'ASSESSMENT_STATUS_APPROVED',
   Rejected = 'ASSESSMENT_STATUS_REJECTED',
   Failed = 'ASSESSMENT_STATUS_FAILED',
+  Unreviewed = 'ASSESSMENT_STATUS_UNREVIEWED',
 }
 
 export enum FindingStatus {

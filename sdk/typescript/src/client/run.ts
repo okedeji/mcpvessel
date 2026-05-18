@@ -55,6 +55,7 @@ export interface RunEvent {
 const TERMINAL_STATUSES = new Set([
   AssessmentStatus.Approved,
   AssessmentStatus.Rejected,
+  AssessmentStatus.Unreviewed,
   AssessmentStatus.Failed,
   AssessmentStatus.PendingReview,
   AssessmentStatus.Unspecified,

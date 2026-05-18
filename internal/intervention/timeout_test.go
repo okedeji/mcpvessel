@@ -68,6 +68,29 @@ func TestExpiredInterventionTimedOut(t *testing.T) {
 	assert.Equal(t, SignalIntervention, signals[0].SignalName)
 }
 
+func TestExpiredReportReviewSignalsTimeout(t *testing.T) {
+	e, q, sig := newTestEnforcer()
+	ctx := context.Background()
+
+	req, err := q.Enqueue(ctx, TypeReportReview, PriorityHigh, "", "a-1", "report ready", nil, 1*time.Millisecond)
+	require.NoError(t, err)
+
+	time.Sleep(5 * time.Millisecond)
+	e.pollOnce(ctx)
+
+	stored, err := q.store.GetIntervention(ctx, req.ID)
+	require.NoError(t, err)
+	assert.Equal(t, StatusTimedOut, stored.Status)
+
+	signals := sig.getSignals()
+	require.Len(t, signals, 1)
+	assert.Equal(t, "a-1", signals[0].WorkflowID)
+	assert.Equal(t, SignalReportReview, signals[0].SignalName)
+	payload, ok := signals[0].Arg.(ReportReviewSignal)
+	require.True(t, ok)
+	assert.Equal(t, ReviewTimeout, payload.Decision)
+}
+
 func TestFreshInterventionNotTimedOut(t *testing.T) {
 	e, q, sig := newTestEnforcer()
 	ctx := context.Background()

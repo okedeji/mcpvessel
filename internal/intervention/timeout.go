@@ -134,7 +134,7 @@ func (e *TimeoutEnforcer) signalTimeout(ctx context.Context, req *Request) error
 			req.AssessmentID,
 			"",
 			SignalReportReview,
-			ReportReviewSignal{Decision: ReviewReject, Rationale: "intervention timeout"},
+			ReportReviewSignal{Decision: ReviewTimeout, Rationale: "intervention timeout"},
 		)
 	default:
 		return fmt.Errorf("unknown intervention type %d for timeout signaling", req.Type)

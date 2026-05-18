@@ -89,7 +89,7 @@ func AssessmentWorkflow(ctx workflow.Context, input AssessmentWorkflowInput) (As
 	}
 
 	if err := startFindingsStream(ctx, input.AssessmentID); err != nil {
-		return failResult(result, "starting findings stream: %v", err), nil
+		return failResult(ctx, input.AssessmentID, result, "starting findings stream: %v", err), nil
 	}
 	defer func() {
 		_ = workflow.ExecuteActivity(
@@ -103,12 +103,12 @@ func AssessmentWorkflow(ctx workflow.Context, input AssessmentWorkflowInput) (As
 	var budgetDrained bool
 
 	if err := updateStatus(ctx, input.AssessmentID, StatusDiscovery); err != nil {
-		return failResult(result, "updating status to mapping: %v", err), nil
+		return failResult(ctx, input.AssessmentID, result, "updating status to mapping: %v", err), nil
 	}
 
 	discoveryCageID, err := createDiscoveryCage(ctx, input.AssessmentID, cfg)
 	if err != nil {
-		return failResult(result, "creating discovery cage for surface mapping: %v", err), nil
+		return failResult(ctx, input.AssessmentID, result, "creating discovery cage for surface mapping: %v", err), nil
 	}
 	result.TotalCages++
 	cagesCompleted = append(cagesCompleted, CageSummary{
@@ -122,7 +122,7 @@ func AssessmentWorkflow(ctx workflow.Context, input AssessmentWorkflowInput) (As
 
 	resolveCageOutcome(ctx, &cagesCompleted[0])
 	if cagesCompleted[0].Outcome == "failed" {
-		return failResult(result, "discovery cage failed (see: agentcage logs cage %s)", discoveryCageID), nil
+		return failResult(ctx, input.AssessmentID, result, "discovery cage failed (see: agentcage logs cage %s)", discoveryCageID), nil
 	}
 
 	// Skip exploitation if agent has no exploitation capabilities.
@@ -132,7 +132,7 @@ func AssessmentWorkflow(ctx workflow.Context, input AssessmentWorkflowInput) (As
 	}
 
 	if err := updateStatus(ctx, input.AssessmentID, StatusExploitation); err != nil {
-		return failResult(result, "updating status to testing: %v", err), nil
+		return failResult(ctx, input.AssessmentID, result, "updating status to testing: %v", err), nil
 	}
 
 	startTime := workflow.Now(ctx)
@@ -184,7 +184,7 @@ func AssessmentWorkflow(ctx workflow.Context, input AssessmentWorkflowInput) (As
 
 		allFindings, err := getAllFindings(ctx, input.AssessmentID)
 		if err != nil {
-			return failResult(result, "fetching findings for coordinator (iteration %d): %v", iteration, err), nil
+			return failResult(ctx, input.AssessmentID, result, "fetching findings for coordinator (iteration %d): %v", iteration, err), nil
 		}
 
 		elapsed := workflow.Now(ctx).Sub(startTime)
@@ -206,7 +206,7 @@ func AssessmentWorkflow(ctx workflow.Context, input AssessmentWorkflowInput) (As
 
 		decision, err := planNextActions(ctx, state)
 		if err != nil {
-			return failResult(result, "coordinator planning (iteration %d): %v", iteration, err), nil
+			return failResult(ctx, input.AssessmentID, result, "coordinator planning (iteration %d): %v", iteration, err), nil
 		}
 
 		if decision.Done {
@@ -232,7 +232,7 @@ func AssessmentWorkflow(ctx workflow.Context, input AssessmentWorkflowInput) (As
 
 		spawned, completedSummaries, err := spawnCoordinatorActions(ctx, input.AssessmentID, cfg, actions, batchSize)
 		if err != nil {
-			return failResult(result, "spawning cages (iteration %d): %v", iteration, err), nil
+			return failResult(ctx, input.AssessmentID, result, "spawning cages (iteration %d): %v", iteration, err), nil
 		}
 		result.TotalCages += spawned
 		cagesCompleted = append(cagesCompleted, completedSummaries...)
@@ -263,23 +263,23 @@ func AssessmentWorkflow(ctx workflow.Context, input AssessmentWorkflowInput) (As
 	}
 
 	if err := updateStatus(ctx, input.AssessmentID, StatusValidation); err != nil {
-		return failResult(result, "updating status to validating: %v", err), nil
+		return failResult(ctx, input.AssessmentID, result, "updating status to validating: %v", err), nil
 	}
 
 	candidates, err := getCandidateFindings(ctx, input.AssessmentID)
 	if err != nil {
-		return failResult(result, "fetching candidate findings for validation: %v", err), nil
+		return failResult(ctx, input.AssessmentID, result, "fetching candidate findings for validation: %v", err), nil
 	}
 
 	_, validatorCages, err := validateFindings(ctx, input.AssessmentID, cfg, candidates, result.TotalCages)
 	if err != nil {
-		return failResult(result, "validating findings: %v", err), nil
+		return failResult(ctx, input.AssessmentID, result, "validating findings: %v", err), nil
 	}
 	result.TotalCages += validatorCages
 
 	validated, err := getValidatedFindings(ctx, input.AssessmentID)
 	if err != nil {
-		return failResult(result, "fetching validated findings for report: %v", err), nil
+		return failResult(ctx, input.AssessmentID, result, "fetching validated findings for report: %v", err), nil
 	}
 	result.Findings = int32(len(validated))
 
@@ -287,22 +287,28 @@ func AssessmentWorkflow(ctx workflow.Context, input AssessmentWorkflowInput) (As
 
 	validated, err = getValidatedFindings(ctx, input.AssessmentID)
 	if err != nil {
-		return failResult(result, "fetching enriched findings for report: %v", err), nil
+		return failResult(ctx, input.AssessmentID, result, "fetching enriched findings for report: %v", err), nil
 	}
 	// Include candidates so discovery-only runs (and any unvalidated
 	// surface findings) still surface in the report.
 	candidates, err = getCandidateFindings(ctx, input.AssessmentID)
 	if err != nil {
-		return failResult(result, "fetching candidate findings for report: %v", err), nil
+		return failResult(ctx, input.AssessmentID, result, "fetching candidate findings for report: %v", err), nil
 	}
 	allFindings := append(validated, candidates...)
 
-	if err := generateReport(ctx, input.AssessmentID, cfg.CustomerID, cfg.Target.Host, allFindings); err != nil {
-		return failResult(result, "generating draft report: %v", err), nil
+	// Flip the row BEFORE writing the report blob. Without this swap,
+	// a reader between StoreReport and updateStatus sees the report
+	// claiming pending_review while the row still says validation.
+	// With it, the only window is "row=pending_review, report=null",
+	// which makes the report fetch return the honest "not generated
+	// yet" instead of a stale snapshot.
+	if err := updateStatus(ctx, input.AssessmentID, StatusPendingReview); err != nil {
+		return failResult(ctx, input.AssessmentID, result, "updating status to pending_review: %v", err), nil
 	}
 
-	if err := updateStatus(ctx, input.AssessmentID, StatusPendingReview); err != nil {
-		return failResult(result, "updating status to pending_review: %v", err), nil
+	if err := generateReport(ctx, input.AssessmentID, cfg.CustomerID, cfg.Target.Host, allFindings); err != nil {
+		return failResult(ctx, input.AssessmentID, result, "generating draft report: %v", err), nil
 	}
 
 	// Without this, the assessment would silently hang at pending_review
@@ -311,53 +317,62 @@ func AssessmentWorkflow(ctx workflow.Context, input AssessmentWorkflowInput) (As
 	// intervention ID, so we discard the returned ID.
 	enqueueCtx := withActivityTimeout(ctx, TimeoutUpdateStatus)
 	if err := workflow.ExecuteActivity(enqueueCtx, "EnqueueReportReview", input.AssessmentID, cfg.CustomerID, result.Findings).Get(ctx, nil); err != nil {
-		return failResult(result, "enqueueing report review intervention: %v", err), nil
+		return failResult(ctx, input.AssessmentID, result, "enqueueing report review intervention: %v", err), nil
 	}
 
 	decision, err := waitForReportReview(ctx)
 	if err != nil {
-		return failResult(result, "waiting for report review: %v", err), nil
+		return failResult(ctx, input.AssessmentID, result, "waiting for report review: %v", err), nil
 	}
 
 	switch decision.Decision {
 	case intervention.ReviewApprove:
 		if err := updateStatus(ctx, input.AssessmentID, StatusApproved); err != nil {
-			return failResult(result, "updating status to approved: %v", err), nil
+			return failResult(ctx, input.AssessmentID, result, "updating status to approved: %v", err), nil
 		}
 		result.FinalStatus = StatusApproved
 
 	case intervention.ReviewReject:
 		if err := updateStatus(ctx, input.AssessmentID, StatusRejected); err != nil {
-			return failResult(result, "updating status to rejected: %v", err), nil
+			return failResult(ctx, input.AssessmentID, result, "updating status to rejected: %v", err), nil
 		}
 		result.FinalStatus = StatusRejected
+
+	case intervention.ReviewTimeout:
+		if err := updateStatus(ctx, input.AssessmentID, StatusUnreviewed); err != nil {
+			return failResult(ctx, input.AssessmentID, result, "updating status to unreviewed: %v", err), nil
+		}
+		result.FinalStatus = StatusUnreviewed
 
 	case intervention.ReviewRequestRetest:
 		retestCages, retestErr := retestFindings(ctx, input.AssessmentID, cfg, decision.Adjustments)
 		if retestErr != nil {
-			return failResult(result, "retesting findings: %v", retestErr), nil
+			return failResult(ctx, input.AssessmentID, result, "retesting findings: %v", retestErr), nil
 		}
 		result.TotalCages += retestCages
 
 		validated, err = getValidatedFindings(ctx, input.AssessmentID)
 		if err != nil {
-			return failResult(result, "fetching validated findings after retest: %v", err), nil
+			return failResult(ctx, input.AssessmentID, result, "fetching validated findings after retest: %v", err), nil
 		}
 		result.Findings = int32(len(validated))
 
 		if err := generateReport(ctx, input.AssessmentID, cfg.CustomerID, cfg.Target.Host, validated); err != nil {
-			return failResult(result, "generating final report after retest: %v", err), nil
+			return failResult(ctx, input.AssessmentID, result, "generating final report after retest: %v", err), nil
 		}
 		if err := updateStatus(ctx, input.AssessmentID, StatusApproved); err != nil {
-			return failResult(result, "updating status to approved after retest: %v", err), nil
+			return failResult(ctx, input.AssessmentID, result, "updating status to approved after retest: %v", err), nil
 		}
 		result.FinalStatus = StatusApproved
 
 	default:
-		if err := updateStatus(ctx, input.AssessmentID, StatusRejected); err != nil {
-			return failResult(result, "updating status to rejected after review timeout: %v", err), nil
+		// Unknown decision value: treat as failed rather than silently
+		// rejecting. Should never fire — sender side is constrained by
+		// reviewDecisionFromProto and the timer fallback.
+		if err := updateStatus(ctx, input.AssessmentID, StatusFailed); err != nil {
+			return failResult(ctx, input.AssessmentID, result, "updating status to failed on unknown review decision: %v", err), nil
 		}
-		result.FinalStatus = StatusRejected
+		result.FinalStatus = StatusFailed
 	}
 
 	syncStats(ctx, input.AssessmentID, result, 0)
@@ -817,7 +832,7 @@ func waitForReportReview(ctx workflow.Context) (*intervention.ReportReviewSignal
 
 	if timedOut {
 		return &intervention.ReportReviewSignal{
-			Decision:  intervention.ReviewReject,
+			Decision:  intervention.ReviewTimeout,
 			Rationale: "review deadline exceeded",
 		}, nil
 	}
@@ -893,8 +908,14 @@ func parseSeverityOverride(s string) findings.Severity {
 	}
 }
 
-func failResult(result AssessmentWorkflowResult, format string, args ...interface{}) AssessmentWorkflowResult {
-	result.FinalStatus = StatusRejected
+// failResult records a workflow-level failure: best-effort flips the
+// assessment row to StatusFailed so external observers see the same
+// outcome the workflow result reports. The DB error is intentionally
+// dropped — the workflow is already failing, and surfacing a secondary
+// error here would mask the original cause.
+func failResult(ctx workflow.Context, assessmentID string, result AssessmentWorkflowResult, format string, args ...interface{}) AssessmentWorkflowResult {
+	_ = updateStatus(ctx, assessmentID, StatusFailed)
+	result.FinalStatus = StatusFailed
 	result.Error = fmt.Sprintf(format, args...)
 	return result
 }

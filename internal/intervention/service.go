@@ -130,6 +130,13 @@ func (s *Service) ResolveCageIntervention(ctx context.Context, interventionID st
 }
 
 func (s *Service) ResolveAssessmentReview(ctx context.Context, interventionID string, decision ReviewDecision, rationale string, adjustments []FindingAdjustment, operatorID string) error {
+	// ReviewTimeout is reserved for the deadline enforcer: it records
+	// "no human decided" and produces a distinct terminal state. An
+	// operator who wants the same effect should use ReviewReject.
+	if decision == ReviewTimeout {
+		return fmt.Errorf("review decision %q is reserved for the deadline enforcer", decision)
+	}
+
 	req, err := s.queue.store.GetIntervention(ctx, interventionID)
 	if err != nil {
 		return fmt.Errorf("getting intervention %s for review: %w", interventionID, err)

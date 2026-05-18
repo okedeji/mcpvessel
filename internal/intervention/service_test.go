@@ -103,6 +103,19 @@ func TestResolveAssessmentReviewReject(t *testing.T) {
 	assert.Equal(t, ReviewReject, sig0.Decision)
 }
 
+func TestResolveAssessmentReviewRejectsTimeoutDecision(t *testing.T) {
+	srv, q, sig := newTestServer()
+	ctx := context.Background()
+
+	req, err := q.Enqueue(ctx, TypeReportReview, PriorityMedium, "", "a-1", "report ready", nil, 1*time.Hour)
+	require.NoError(t, err)
+
+	err = srv.ResolveAssessmentReview(ctx, req.ID, ReviewTimeout, "trying to fake a timeout", nil, "op-4")
+	require.Error(t, err)
+
+	assert.Empty(t, sig.getSignals(), "no workflow signal should be sent when operator misuses ReviewTimeout")
+}
+
 func TestResolveNonexistentIntervention(t *testing.T) {
 	srv, _, _ := newTestServer()
 	ctx := context.Background()

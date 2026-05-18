@@ -107,6 +107,10 @@ const (
 	ReviewApprove ReviewDecision = iota + 1
 	ReviewRequestRetest
 	ReviewReject
+	// Emitted only by the deadline enforcer when the review window
+	// expires without an operator response. Not a valid operator-driven
+	// decision: ResolveAssessmentReview rejects it at the gRPC boundary.
+	ReviewTimeout
 )
 
 func (d ReviewDecision) String() string {
@@ -117,6 +121,8 @@ func (d ReviewDecision) String() string {
 		return "request_retest"
 	case ReviewReject:
 		return "reject"
+	case ReviewTimeout:
+		return "timeout"
 	default:
 		return "unknown"
 	}

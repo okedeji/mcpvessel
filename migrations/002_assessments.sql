@@ -1,5 +1,5 @@
 -- +migrate Up
-CREATE TYPE assessment_status AS ENUM ('discovery', 'exploitation', 'validation', 'pending_review', 'approved', 'rejected', 'failed');
+CREATE TYPE assessment_status AS ENUM ('discovery', 'exploitation', 'validation', 'pending_review', 'approved', 'rejected', 'unreviewed', 'failed');
 
 CREATE TABLE assessments (
     id              TEXT PRIMARY KEY,

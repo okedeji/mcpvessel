@@ -283,7 +283,7 @@ func TestAssessmentWorkflow_ReviewTimeout(t *testing.T) {
 
 	var result AssessmentWorkflowResult
 	require.NoError(t, env.GetWorkflowResult(&result))
-	assert.Equal(t, StatusRejected, result.FinalStatus)
+	assert.Equal(t, StatusUnreviewed, result.FinalStatus)
 }
 
 func TestAssessmentWorkflow_ChainDepthEnforced(t *testing.T) {

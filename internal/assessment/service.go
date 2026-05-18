@@ -187,7 +187,11 @@ func (s *Service) forceStatus(ctx context.Context, assessmentID string, status S
 	}
 	now := time.Now()
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE assessments SET status = $1, updated_at = $2 WHERE id = $3`,
+		`UPDATE assessments
+		   SET status = $1,
+		       updated_at = $2,
+		       report = jsonb_set(report, '{status}', to_jsonb($1::text))
+		 WHERE id = $3`,
 		status.String(), now, assessmentID,
 	)
 	if err != nil {
@@ -358,14 +362,22 @@ func (s *Service) UpdateStatus(ctx context.Context, assessmentID string, status 
 		return nil
 	}
 
+	// Update the report blob's status field in the same statement so
+	// exports never disagree with the assessment row. jsonb_set on a
+	// NULL report (pre-generation) is a no-op, which is what we want
+	// during the discovery/exploitation/validation phases.
+	//
 	// Only update if the row isn't already terminal. Prevents a
 	// late-arriving workflow activity from overwriting a cancel.
 	now := time.Now()
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE assessments SET status = $1, updated_at = $2
-		 WHERE id = $3 AND status NOT IN ($4, $5, $6)`,
+		`UPDATE assessments
+		   SET status = $1,
+		       updated_at = $2,
+		       report = jsonb_set(report, '{status}', to_jsonb($1::text))
+		 WHERE id = $3 AND status NOT IN ($4, $5, $6, $7)`,
 		status.String(), now, assessmentID,
-		StatusApproved.String(), StatusRejected.String(), StatusFailed.String(),
+		StatusApproved.String(), StatusRejected.String(), StatusUnreviewed.String(), StatusFailed.String(),
 	)
 	if err != nil {
 		return fmt.Errorf("updating assessment %s status to %s: %w", assessmentID, status, err)

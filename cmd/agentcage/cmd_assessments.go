@@ -29,7 +29,7 @@ func cmdAssessments(args []string) {
 	follow := fs.Bool("follow", false, "follow live progress")
 	followShort := fs.Bool("f", false, "follow live progress (short)")
 	format := fs.String("format", "", "output format: json")
-	statusFilter := fs.String("status", "", "filter by status: discovery, exploitation, validation, pending_review, approved, rejected, failed")
+	statusFilter := fs.String("status", "", "filter by status: discovery, exploitation, validation, pending_review, approved, rejected, unreviewed, failed")
 	limit := fs.Int("limit", 50, "max results to return")
 	_ = fs.Parse(args)
 
@@ -220,7 +220,7 @@ func listAssessments(ctx context.Context, client pb.AssessmentServiceClient, sta
 	if statusFilter != "" {
 		s, ok := parseAssessmentStatusFilter(statusFilter)
 		if !ok {
-			fmt.Fprintf(os.Stderr, "error: unknown status %q (valid: discovery, exploitation, validation, pending_review, approved, rejected, failed)\n", statusFilter)
+			fmt.Fprintf(os.Stderr, "error: unknown status %q (valid: discovery, exploitation, validation, pending_review, approved, rejected, unreviewed, failed)\n", statusFilter)
 			os.Exit(1)
 		}
 		req.StatusFilter = s
@@ -253,7 +253,7 @@ func listAssessments(ctx context.Context, client pb.AssessmentServiceClient, sta
 		}
 		fmt.Printf("  %s  %-16s  %-15s  %s\n",
 			info.GetAssessmentId(),
-			info.GetStatus(),
+			friendlyStatus(info.GetStatus().String()),
 			target,
 			created,
 		)
@@ -274,6 +274,8 @@ func parseAssessmentStatusFilter(s string) (pb.AssessmentStatus, bool) {
 		return pb.AssessmentStatus_ASSESSMENT_STATUS_APPROVED, true
 	case "rejected":
 		return pb.AssessmentStatus_ASSESSMENT_STATUS_REJECTED, true
+	case "unreviewed":
+		return pb.AssessmentStatus_ASSESSMENT_STATUS_UNREVIEWED, true
 	case "failed":
 		return pb.AssessmentStatus_ASSESSMENT_STATUS_FAILED, true
 	default:
@@ -322,6 +324,7 @@ func cmdAssessmentsCancel(args []string) {
 			s := info.GetStatus()
 			if s == pb.AssessmentStatus_ASSESSMENT_STATUS_APPROVED ||
 				s == pb.AssessmentStatus_ASSESSMENT_STATUS_REJECTED ||
+				s == pb.AssessmentStatus_ASSESSMENT_STATUS_UNREVIEWED ||
 				s == pb.AssessmentStatus_ASSESSMENT_STATUS_FAILED {
 				continue
 			}

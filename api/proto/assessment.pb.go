@@ -34,6 +34,7 @@ const (
 	AssessmentStatus_ASSESSMENT_STATUS_APPROVED       AssessmentStatus = 5
 	AssessmentStatus_ASSESSMENT_STATUS_REJECTED       AssessmentStatus = 6
 	AssessmentStatus_ASSESSMENT_STATUS_FAILED         AssessmentStatus = 7
+	AssessmentStatus_ASSESSMENT_STATUS_UNREVIEWED     AssessmentStatus = 8
 )
 
 // Enum value maps for AssessmentStatus.
@@ -47,6 +48,7 @@ var (
 		5: "ASSESSMENT_STATUS_APPROVED",
 		6: "ASSESSMENT_STATUS_REJECTED",
 		7: "ASSESSMENT_STATUS_FAILED",
+		8: "ASSESSMENT_STATUS_UNREVIEWED",
 	}
 	AssessmentStatus_value = map[string]int32{
 		"ASSESSMENT_STATUS_UNSPECIFIED":    0,
@@ -57,6 +59,7 @@ var (
 		"ASSESSMENT_STATUS_APPROVED":       5,
 		"ASSESSMENT_STATUS_REJECTED":       6,
 		"ASSESSMENT_STATUS_FAILED":         7,
+		"ASSESSMENT_STATUS_UNREVIEWED":     8,
 	}
 )
 
@@ -1501,7 +1504,7 @@ const file_api_proto_assessment_proto_rawDesc = "" +
 	"\tcancelled\x18\x01 \x01(\bR\tcancelled\">\n" +
 	"\x17FinishAssessmentRequest\x12#\n" +
 	"\rassessment_id\x18\x01 \x01(\tR\fassessmentId\"\x1a\n" +
-	"\x18FinishAssessmentResponse*\xa0\x02\n" +
+	"\x18FinishAssessmentResponse*\xc2\x02\n" +
 	"\x10AssessmentStatus\x12!\n" +
 	"\x1dASSESSMENT_STATUS_UNSPECIFIED\x10\x00\x12\x1f\n" +
 	"\x1bASSESSMENT_STATUS_DISCOVERY\x10\x01\x12\"\n" +
@@ -1510,7 +1513,8 @@ const file_api_proto_assessment_proto_rawDesc = "" +
 	" ASSESSMENT_STATUS_PENDING_REVIEW\x10\x04\x12\x1e\n" +
 	"\x1aASSESSMENT_STATUS_APPROVED\x10\x05\x12\x1e\n" +
 	"\x1aASSESSMENT_STATUS_REJECTED\x10\x06\x12\x1c\n" +
-	"\x18ASSESSMENT_STATUS_FAILED\x10\a2\xc8\x05\n" +
+	"\x18ASSESSMENT_STATUS_FAILED\x10\a\x12 \n" +
+	"\x1cASSESSMENT_STATUS_UNREVIEWED\x10\b2\xc8\x05\n" +
 	"\x11AssessmentService\x12w\n" +
 	"\x10CreateAssessment\x120.agentcage.assessment.v1.CreateAssessmentRequest\x1a1.agentcage.assessment.v1.CreateAssessmentResponse\x12n\n" +
 	"\rGetAssessment\x12-.agentcage.assessment.v1.GetAssessmentRequest\x1a..agentcage.assessment.v1.GetAssessmentResponse\x12t\n" +
