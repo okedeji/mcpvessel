@@ -173,30 +173,42 @@ func isWorkflowGone(err error) bool {
 
 // forceStatus sets the status unconditionally, bypassing transition
 // validation. Used when the workflow is gone and the row is orphaned.
+//
+// Cache is mutated AFTER the DB write, not before, so a failed write
+// doesn't leave the cache and the DB disagreeing.
 func (s *Service) forceStatus(ctx context.Context, assessmentID string, status Status) error {
-	s.mu.Lock()
-	info, ok := s.assessments[assessmentID]
-	if ok {
-		info.Status = status
-		info.UpdatedAt = time.Now()
-	}
-	s.mu.Unlock()
-
 	if s.db == nil {
+		s.mu.Lock()
+		if info, ok := s.assessments[assessmentID]; ok {
+			info.Status = status
+			info.UpdatedAt = time.Now()
+		}
+		s.mu.Unlock()
 		return nil
 	}
 	now := time.Now()
+	// Status passed twice: once as the assessment_status enum column,
+	// once as text inside to_jsonb. Sharing one parameter trips lib/pq's
+	// type inference ("inconsistent types deduced for parameter $1").
+	statusStr := status.String()
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE assessments
 		   SET status = $1,
 		       updated_at = $2,
-		       report = jsonb_set(report, '{status}', to_jsonb($1::text))
-		 WHERE id = $3`,
-		status.String(), now, assessmentID,
+		       report = jsonb_set(report, '{status}', to_jsonb($3::text))
+		 WHERE id = $4`,
+		statusStr, now, statusStr, assessmentID,
 	)
 	if err != nil {
 		return fmt.Errorf("force-setting assessment %s status to %s: %w", assessmentID, status, err)
 	}
+
+	s.mu.Lock()
+	if info, ok := s.assessments[assessmentID]; ok {
+		info.Status = status
+		info.UpdatedAt = now
+	}
+	s.mu.Unlock()
 	return nil
 }
 
@@ -346,19 +358,29 @@ func (s *Service) LoadReport(ctx context.Context, assessmentID string) ([]byte, 
 }
 
 func (s *Service) UpdateStatus(ctx context.Context, assessmentID string, status Status) error {
-	s.mu.Lock()
+	// Validate the transition against the cache, but DO NOT mutate the
+	// cache yet. If the DB write fails (e.g. transient pq error) and
+	// Temporal retries the activity, a pre-mutated cache would make the
+	// retry's ValidateTransition reject the now-same status and return
+	// nil silently — leaving the DB stale forever.
+	s.mu.RLock()
 	info, ok := s.assessments[assessmentID]
 	if ok {
 		if err := ValidateTransition(info.Status, status); err != nil {
-			s.mu.Unlock()
+			s.mu.RUnlock()
 			return nil
 		}
-		info.Status = status
-		info.UpdatedAt = time.Now()
 	}
-	s.mu.Unlock()
+	s.mu.RUnlock()
 
 	if s.db == nil {
+		// Cache-only mode (tests): apply the mutation now.
+		s.mu.Lock()
+		if info, ok := s.assessments[assessmentID]; ok {
+			info.Status = status
+			info.UpdatedAt = time.Now()
+		}
+		s.mu.Unlock()
 		return nil
 	}
 
@@ -369,19 +391,32 @@ func (s *Service) UpdateStatus(ctx context.Context, assessmentID string, status 
 	//
 	// Only update if the row isn't already terminal. Prevents a
 	// late-arriving workflow activity from overwriting a cancel.
+	//
+	// Status passed twice ($1 as enum column, $3 as text into to_jsonb)
+	// because lib/pq fails type inference when one $N is both an enum
+	// and a text value in the same statement.
 	now := time.Now()
+	statusStr := status.String()
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE assessments
 		   SET status = $1,
 		       updated_at = $2,
-		       report = jsonb_set(report, '{status}', to_jsonb($1::text))
-		 WHERE id = $3 AND status NOT IN ($4, $5, $6, $7)`,
-		status.String(), now, assessmentID,
+		       report = jsonb_set(report, '{status}', to_jsonb($3::text))
+		 WHERE id = $4 AND status NOT IN ($5, $6, $7, $8)`,
+		statusStr, now, statusStr, assessmentID,
 		StatusApproved.String(), StatusRejected.String(), StatusUnreviewed.String(), StatusFailed.String(),
 	)
 	if err != nil {
 		return fmt.Errorf("updating assessment %s status to %s: %w", assessmentID, status, err)
 	}
+
+	// DB succeeded — now safe to update the cache.
+	s.mu.Lock()
+	if info, ok := s.assessments[assessmentID]; ok {
+		info.Status = status
+		info.UpdatedAt = now
+	}
+	s.mu.Unlock()
 	return nil
 }
 
