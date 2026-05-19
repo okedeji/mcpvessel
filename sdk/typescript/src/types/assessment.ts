@@ -32,6 +32,13 @@ export interface Workflow {
    * runs where exploitation should follow discovery without a human gate.
    */
   requirePlanApproval?: boolean;
+  /**
+   * Inject an X-Agentcage-Pentest header on every outbound request to the
+   * target, identifying the traffic as authorized pentest activity.
+   * Default true. Set false (or pass --no-pentest-header) for
+   * adversarial-simulation engagements.
+   */
+  identifyInRequests?: boolean;
 }
 
 export interface PlanProposalAction {

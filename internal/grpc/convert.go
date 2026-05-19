@@ -132,10 +132,13 @@ func assessmentConfigFromProto(p *pb.AssessmentConfig) assessment.Config {
 	}
 	if w := p.GetWorkflow(); w != nil {
 		cfg.RequirePlanApproval = w.GetRequirePlanApproval()
+		cfg.IdentifyInRequests = w.GetIdentifyInRequests()
 	} else {
 		// Missing workflow message = client didn't send one. Default to
-		// safe: require approval before exploitation.
+		// safe: require approval before exploitation, and identify our
+		// traffic as authorized pentest activity.
 		cfg.RequirePlanApproval = true
+		cfg.IdentifyInRequests = true
 	}
 	for _, ct := range p.GetCageTypeConfigs() {
 		if cfg.CageDefaults == nil {
@@ -277,7 +280,10 @@ func assessmentConfigToProto(cfg assessment.Config) *pb.AssessmentConfig {
 	if cfg.Guidance != nil {
 		out.Guidance = guidanceToProto(cfg.Guidance)
 	}
-	out.Workflow = &pb.Workflow{RequirePlanApproval: cfg.RequirePlanApproval}
+	out.Workflow = &pb.Workflow{
+		RequirePlanApproval: cfg.RequirePlanApproval,
+		IdentifyInRequests:  cfg.IdentifyInRequests,
+	}
 	for t, ct := range cfg.CageDefaults {
 		ctPb := &pb.CageTypeConfig{
 			Type:         cageTypeToProto(t),

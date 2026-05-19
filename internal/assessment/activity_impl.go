@@ -244,7 +244,7 @@ func (a *ActivityImpl) CreateExploitationCage(ctx context.Context, assessmentID 
 	return info.ID, nil
 }
 
-func (a *ActivityImpl) CreateValidatorCage(ctx context.Context, assessmentID string, finding findings.Finding, proof *Proof, bundleRef string) (string, error) {
+func (a *ActivityImpl) CreateValidatorCage(ctx context.Context, assessmentID, customerID string, identifyInRequests bool, finding findings.Finding, proof *Proof, bundleRef string) (string, error) {
 	if proof != nil && proof.Safety.Destructive {
 		a.log.Info("skipping destructive proof",
 			"assessment_id", assessmentID,
@@ -256,12 +256,14 @@ func (a *ActivityImpl) CreateValidatorCage(ctx context.Context, assessmentID str
 	}
 
 	config := cage.Config{
-		AssessmentID:    assessmentID,
-		Type:            cage.TypeValidator,
-		BundleRef:       bundleRef,
-		Scope:           cage.Scope{Host: finding.Endpoint},
-		ParentFindingID: finding.ID,
-		VulnClass:       finding.VulnClass,
+		AssessmentID:       assessmentID,
+		CustomerID:         customerID,
+		Type:               cage.TypeValidator,
+		BundleRef:          bundleRef,
+		Scope:              cage.Scope{Host: finding.Endpoint},
+		ParentFindingID:    finding.ID,
+		VulnClass:          finding.VulnClass,
+		IdentifyInRequests: identifyInRequests,
 	}
 	if proof != nil {
 		// Serialize the full structured proof so the validator cage receives

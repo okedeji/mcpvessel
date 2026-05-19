@@ -29,6 +29,7 @@ type runFlags struct {
 	knownWeaknesses  stringSliceFlag
 	limitToListed    bool
 	autoApprovePlan  bool
+	noPentestHeader  bool
 	notify           string
 	notifyOnFinding  bool
 	notifyOnComplete bool
@@ -60,6 +61,7 @@ func parseRunFlags(args []string) (*runFlags, *flag.FlagSet) {
 	fs.Var(&rf.knownWeaknesses, "known-weakness", "known weakness hint (repeatable)")
 	fs.BoolVar(&rf.limitToListed, "limit-to-listed", false, "test only the listed endpoints; ignore other discovery findings")
 	fs.BoolVar(&rf.autoApprovePlan, "auto-approve-plan", false, "skip the human plan-approval gate after discovery (autonomous runs)")
+	fs.BoolVar(&rf.noPentestHeader, "no-pentest-header", false, "skip the X-Agentcage-Pentest header on outbound requests (adversarial-simulation engagements)")
 	fs.StringVar(&rf.notify, "notify", "", "webhook URL for notifications")
 	fs.BoolVar(&rf.notifyOnFinding, "notify-on-finding", false, "notify per validated finding")
 	fs.BoolVar(&rf.notifyOnComplete, "notify-on-complete", false, "notify when assessment finishes")
@@ -118,6 +120,7 @@ Guidance:
 
 Workflow:
   --auto-approve-plan  skip the human plan-approval gate after discovery (autonomous runs)
+  --no-pentest-header  skip the X-Agentcage-Pentest header on outbound requests (adversarial-simulation engagements)
 
 Notifications:
   --notify             webhook URL for notifications

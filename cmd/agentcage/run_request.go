@@ -80,7 +80,18 @@ func buildCreateAssessmentRequest(p *plan.Plan, bundleRef string) (*pb.CreateAss
 	if p.Workflow.RequirePlanApproval != nil {
 		requirePlanApproval = *p.Workflow.RequirePlanApproval
 	}
-	cfg.Workflow = &pb.Workflow{RequirePlanApproval: requirePlanApproval}
+	// Pentest-identification header is on by default for responsible
+	// disclosure. Operator opts out via --no-pentest-header or
+	// workflow.identify_in_requests: false for adversarial-simulation
+	// engagements that test detection capability.
+	identifyInRequests := true
+	if p.Workflow.IdentifyInRequests != nil {
+		identifyInRequests = *p.Workflow.IdentifyInRequests
+	}
+	cfg.Workflow = &pb.Workflow{
+		RequirePlanApproval: requirePlanApproval,
+		IdentifyInRequests:  identifyInRequests,
+	}
 
 	return &pb.CreateAssessmentRequest{
 		Config:    cfg,

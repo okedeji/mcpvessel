@@ -63,6 +63,12 @@ message Workflow {
   // discovery on a plan_approval intervention; false runs the
   // generated plan immediately.
   bool require_plan_approval = 1;
+  // identify_in_requests=true (default) injects an X-Agentcage-Pentest
+  // header on every cage-originated request to the target, identifying
+  // the traffic as authorized pentest activity. Set false for
+  // adversarial-simulation engagements that deliberately test the
+  // target's detection capability.
+  bool identify_in_requests = 2;
 }
 
 // PlanProposal is the orchestrator-generated exploitation plan

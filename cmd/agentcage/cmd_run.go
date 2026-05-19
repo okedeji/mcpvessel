@@ -76,6 +76,7 @@ func cmdRun(args []string) {
 		KnownWeaknesses:  []string(rf.knownWeaknesses),
 		LimitToListed:    rf.limitToListed,
 		AutoApprovePlan:  rf.autoApprovePlan,
+		NoPentestHeader:  rf.noPentestHeader,
 		Notify:           rf.notify,
 		NotifyOnFinding:  rf.notifyOnFinding,
 		NotifyOnComplete: rf.notifyOnComplete,

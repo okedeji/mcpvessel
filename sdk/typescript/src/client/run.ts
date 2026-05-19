@@ -29,6 +29,7 @@ export interface RunConfig {
 
   // Workflow
   autoApprovePlan?: boolean;       // --auto-approve-plan (default false; gate ON)
+  noPentestHeader?: boolean;       // --no-pentest-header (default false; header ON)
 
   // Notifications
   notify?: string;                 // --notify (webhook URL)
@@ -90,6 +91,7 @@ function buildAssessmentConfig(rc: RunConfig): AssessmentConfig {
     },
     workflow: {
       requirePlanApproval: rc.autoApprovePlan ? false : true,
+      identifyInRequests: rc.noPentestHeader ? false : true,
     },
     notifications: (rc.notify || rc.notifyOnFinding || rc.notifyOnComplete) ? {
       webhook: rc.notify,

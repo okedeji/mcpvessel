@@ -645,12 +645,14 @@ func waitForPlanApproval(ctx workflow.Context) (*intervention.PlanApprovalSignal
 func createDiscoveryCage(ctx workflow.Context, assessmentID string, cfg Config, goal string) (string, error) {
 	actCtx := withActivityTimeout(ctx, TimeoutCreateCage)
 	cageCfg := cage.Config{
-		AssessmentID: assessmentID,
-		Type:         cage.TypeDiscovery,
-		BundleRef:    cfg.BundleRef,
-		Scope:        cfg.Target,
-		SkipPaths:    cfg.SkipPaths,
-		InputContext: []byte(goal),
+		AssessmentID:       assessmentID,
+		CustomerID:         cfg.CustomerID,
+		Type:               cage.TypeDiscovery,
+		BundleRef:          cfg.BundleRef,
+		Scope:              cfg.Target,
+		SkipPaths:          cfg.SkipPaths,
+		InputContext:       []byte(goal),
+		IdentifyInRequests: cfg.IdentifyInRequests,
 	}
 	applyCageDefaults(&cageCfg, cfg)
 
@@ -791,14 +793,16 @@ func spawnCoordinatorActions(
 			actCtx := withActivityTimeout(ctx, TimeoutCreateCage)
 
 			cageCfg := cage.Config{
-				AssessmentID:    assessmentID,
-				Type:            cage.TypeExploitation,
-				BundleRef:       cfg.BundleRef,
-				Scope:           action.Scope,
-				SkipPaths:       cfg.SkipPaths,
-				ParentFindingID: action.FindingID,
-				VulnClass:       action.VulnClass,
-				InputContext:    []byte(action.Objective),
+				AssessmentID:       assessmentID,
+				CustomerID:         cfg.CustomerID,
+				Type:               cage.TypeExploitation,
+				BundleRef:          cfg.BundleRef,
+				Scope:              action.Scope,
+				SkipPaths:          cfg.SkipPaths,
+				ParentFindingID:    action.FindingID,
+				VulnClass:          action.VulnClass,
+				InputContext:       []byte(action.Objective),
+				IdentifyInRequests: cfg.IdentifyInRequests,
 			}
 			applyCageDefaults(&cageCfg, cfg)
 
@@ -938,7 +942,7 @@ func validateFindingGroup(
 	for _, f := range group {
 		actCtx := withActivityTimeout(ctx, TimeoutCreateCage)
 		var cageID string
-		if err := workflow.ExecuteActivity(actCtx, "CreateValidatorCage", assessmentID, f, proof, cfg.BundleRef).Get(ctx, &cageID); err != nil {
+		if err := workflow.ExecuteActivity(actCtx, "CreateValidatorCage", assessmentID, cfg.CustomerID, cfg.IdentifyInRequests, f, proof, cfg.BundleRef).Get(ctx, &cageID); err != nil {
 			return validatedCount, cagesSpawned, fmt.Errorf("creating validator cage for finding %s: %w", f.ID, err)
 		}
 		cagesSpawned++
@@ -1059,7 +1063,7 @@ func retestFindings(
 
 		actCtx := withActivityTimeout(ctx, TimeoutCreateCage)
 		var cageID string
-		err := workflow.ExecuteActivity(actCtx, "CreateValidatorCage", assessmentID, f, proof, cfg.BundleRef).Get(ctx, &cageID)
+		err := workflow.ExecuteActivity(actCtx, "CreateValidatorCage", assessmentID, cfg.CustomerID, cfg.IdentifyInRequests, f, proof, cfg.BundleRef).Get(ctx, &cageID)
 		if err != nil {
 			return cages, fmt.Errorf("creating retest cage for finding %s: %w", adj.FindingID, err)
 		}

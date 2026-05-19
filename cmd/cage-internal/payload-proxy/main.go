@@ -44,6 +44,8 @@ func main() {
 	judgeTimeout := flag.Int("judge-timeout", 10, "judge endpoint timeout in seconds")
 	objective := flag.String("objective", "", "per-cage objective forwarded to the judge for context")
 	tokenBudget := flag.Int64("token-budget", -1, "max tokens for this cage. -1 means unlimited.")
+	customerID := flag.String("customer-id", "", "customer ID injected into X-Agentcage-Pentest for attribution")
+	identifyInRequests := flag.Bool("identify-in-requests", false, "inject X-Agentcage-Pentest header on every forwarded request")
 	flag.Parse()
 
 	if *targetAddr == "" {
@@ -91,6 +93,20 @@ func main() {
 	}
 
 	var tokensConsumed atomic.Int64
+
+	// Pre-compute the X-Agentcage-Pentest header value. Identifies the
+	// traffic as authorized pentest activity so the target's defenders
+	// can correlate it to a specific assessment. Empty when
+	// identify-in-requests is off; the handler injects nothing in that
+	// case.
+	var pentestHeader string
+	if *identifyInRequests {
+		parts := []string{"assessment=" + *assessmentID, "cage=" + *cageID}
+		if *customerID != "" {
+			parts = append(parts, "customer="+*customerID)
+		}
+		pentestHeader = strings.Join(parts, "; ")
+	}
 
 	proxy := &httputil.ReverseProxy{
 		Transport: transport,
@@ -286,6 +302,13 @@ func main() {
 		if len(bodyBytes) > 0 {
 			r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 			r.ContentLength = int64(len(bodyBytes))
+		}
+		// Identify this as authorized pentest traffic so the target's
+		// defenders can correlate it to the assessment. Injected after
+		// the agentcage-internal header strip so an agent can't forge
+		// or override it.
+		if pentestHeader != "" {
+			r.Header.Set("X-Agentcage-Pentest", pentestHeader)
 		}
 		proxy.ServeHTTP(w, r)
 	})

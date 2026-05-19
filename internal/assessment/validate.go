@@ -54,6 +54,8 @@ func configToPlan(cfg Config) *plan.Plan {
 
 	require := cfg.RequirePlanApproval
 	p.Workflow.RequirePlanApproval = &require
+	identify := cfg.IdentifyInRequests
+	p.Workflow.IdentifyInRequests = &identify
 
 	return p
 }

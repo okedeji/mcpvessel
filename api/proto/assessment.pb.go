@@ -322,8 +322,14 @@ type Workflow struct {
 	// discovery on a plan_approval intervention; false runs the
 	// generated plan immediately.
 	RequirePlanApproval bool `protobuf:"varint,1,opt,name=require_plan_approval,json=requirePlanApproval,proto3" json:"require_plan_approval,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	// identify_in_requests=true (default) injects an X-Agentcage-Pentest
+	// header on every cage-originated request to the target, identifying
+	// the traffic as authorized pentest activity. Set false for
+	// adversarial-simulation engagements that deliberately test the
+	// target's detection capability.
+	IdentifyInRequests bool `protobuf:"varint,2,opt,name=identify_in_requests,json=identifyInRequests,proto3" json:"identify_in_requests,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *Workflow) Reset() {
@@ -359,6 +365,13 @@ func (*Workflow) Descriptor() ([]byte, []int) {
 func (x *Workflow) GetRequirePlanApproval() bool {
 	if x != nil {
 		return x.RequirePlanApproval
+	}
+	return false
+}
+
+func (x *Workflow) GetIdentifyInRequests() bool {
+	if x != nil {
+		return x.IdentifyInRequests
 	}
 	return false
 }
@@ -1494,9 +1507,10 @@ const file_api_proto_assessment_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a>\n" +
 	"\x10EnvironmentEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\">\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"p\n" +
 	"\bWorkflow\x122\n" +
-	"\x15require_plan_approval\x18\x01 \x01(\bR\x13requirePlanApproval\"\xe5\x01\n" +
+	"\x15require_plan_approval\x18\x01 \x01(\bR\x13requirePlanApproval\x120\n" +
+	"\x14identify_in_requests\x18\x02 \x01(\bR\x12identifyInRequests\"\xe5\x01\n" +
 	"\fPlanProposal\x12\x12\n" +
 	"\x04goal\x18\x01 \x01(\tR\x04goal\x12\x18\n" +
 	"\asummary\x18\x02 \x01(\tR\asummary\x12=\n" +

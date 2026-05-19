@@ -151,6 +151,12 @@ type Workflow struct {
 	// runs where exploitation should follow discovery without a human
 	// gate.
 	RequirePlanApproval *bool `yaml:"require_plan_approval,omitempty"`
+	// IdentifyInRequests injects an X-Agentcage-Pentest header on
+	// every cage-originated request to the target. Nil = use default
+	// (true). Set false via plan YAML or the --no-pentest-header CLI
+	// flag for adversarial-simulation engagements that deliberately
+	// test the target's detection capability.
+	IdentifyInRequests *bool `yaml:"identify_in_requests,omitempty"`
 }
 
 type Target struct {
@@ -349,6 +355,9 @@ func Merge(base, override *Plan) *Plan {
 
 	if override.Workflow.RequirePlanApproval != nil {
 		out.Workflow.RequirePlanApproval = override.Workflow.RequirePlanApproval
+	}
+	if override.Workflow.IdentifyInRequests != nil {
+		out.Workflow.IdentifyInRequests = override.Workflow.IdentifyInRequests
 	}
 
 	if len(override.Tags) > 0 {
@@ -619,6 +628,7 @@ type RawFlags struct {
 	KnownWeaknesses  []string
 	LimitToListed    bool
 	AutoApprovePlan  bool
+	NoPentestHeader  bool
 	Notify           string
 	NotifyOnFinding  bool
 	NotifyOnComplete bool
@@ -687,6 +697,11 @@ func FlagsToOverride(explicit map[string]bool, f RawFlags) (*Plan, error) {
 		// require_plan_approval=false. The bool always carries true when
 		// the flag is set (it's a switch, not a value), so we invert.
 		p.Workflow.RequirePlanApproval = boolPtr(!f.AutoApprovePlan)
+	}
+	if explicit["no-pentest-header"] {
+		// Same inversion pattern: --no-pentest-header means
+		// identify_in_requests=false.
+		p.Workflow.IdentifyInRequests = boolPtr(!f.NoPentestHeader)
 	}
 	if explicit["notify"] {
 		p.Notifications.Webhook = f.Notify

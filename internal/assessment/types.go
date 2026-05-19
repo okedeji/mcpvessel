@@ -109,11 +109,16 @@ type Config struct {
 	// plan_approval intervention; when false, the generated plan is
 	// logged for audit and exploitation runs immediately.
 	RequirePlanApproval bool
-	Tags                map[string]string
-	Notifications       NotificationConfig
-	Credentials         string
-	Environment         map[string]string
-	Capabilities        cagefile.AgentCapabilities
+	// IdentifyInRequests injects an X-Agentcage-Pentest header on every
+	// cage-originated request to the target, identifying the traffic
+	// as authorized pentest activity. True by default; set false for
+	// adversarial-simulation engagements.
+	IdentifyInRequests bool
+	Tags               map[string]string
+	Notifications      NotificationConfig
+	Credentials        string
+	Environment        map[string]string
+	Capabilities       cagefile.AgentCapabilities
 }
 
 type NotificationConfig struct {

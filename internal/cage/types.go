@@ -93,6 +93,7 @@ func StateFromString(s string) State {
 
 type Config struct {
 	AssessmentID    string
+	CustomerID      string
 	Type            Type
 	BundleRef       string
 	Scope           Scope
@@ -108,7 +109,12 @@ type Config struct {
 	InputContext    []byte
 	Credentials     string
 	ProofThreshold  float64
-	Environment     map[string]string
+	// IdentifyInRequests causes the payload proxy to inject an
+	// X-Agentcage-Pentest header attributing traffic to this
+	// assessment. Toggled at the assessment level; propagated to every
+	// cage it spawns.
+	IdentifyInRequests bool
+	Environment        map[string]string
 }
 
 type Scope struct {
