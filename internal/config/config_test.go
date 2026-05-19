@@ -15,7 +15,6 @@ func TestDefaults_ReturnsPopulatedConfig(t *testing.T) {
 	require.NotNil(t, cfg)
 	assert.NotEmpty(t, cfg.Cages)
 	assert.NotEmpty(t, cfg.Monitoring)
-	assert.NotEmpty(t, cfg.Scope.Deny)
 }
 
 func TestDefaults_HasThreeCageTypes(t *testing.T) {
@@ -28,7 +27,6 @@ func TestDefaults_HasThreeCageTypes(t *testing.T) {
 	assert.Equal(t, int32(8192), disc.MaxMemoryMB)
 	assert.Equal(t, int32(2), disc.DefaultVCPUs)
 	assert.Equal(t, int32(4096), disc.DefaultMemoryMB)
-	assert.True(t, disc.RequiresLLM)
 
 	val := cfg.Cages["validator"]
 	assert.Equal(t, 60*time.Second, val.MaxDuration)
@@ -36,7 +34,6 @@ func TestDefaults_HasThreeCageTypes(t *testing.T) {
 	assert.Equal(t, int32(1024), val.MaxMemoryMB)
 	assert.Equal(t, int32(1), val.DefaultVCPUs)
 	assert.Equal(t, int32(512), val.DefaultMemoryMB)
-	assert.True(t, val.RequiresParentFinding)
 
 	esc := cfg.Cages["exploitation"]
 	assert.Equal(t, 15*time.Minute, esc.MaxDuration)
@@ -99,15 +96,12 @@ func TestDefaults_HasThreeMonitoringSets(t *testing.T) {
 	assert.Contains(t, cfg.Monitoring, "exploitation")
 }
 
-func TestDefaults_ScopeDenyIncludesPrivateRanges(t *testing.T) {
+func TestDefaults_ScopeDenyEmptyByDefault(t *testing.T) {
 	cfg := Defaults()
-	assert.Contains(t, cfg.Scope.Deny, "10.0.0.0/8")
-	assert.Contains(t, cfg.Scope.Deny, "172.16.0.0/12")
-	assert.Contains(t, cfg.Scope.Deny, "192.168.0.0/16")
-	assert.Contains(t, cfg.Scope.Deny, "127.0.0.0/8")
-	assert.Contains(t, cfg.Scope.Deny, "169.254.0.0/16")
-	assert.Contains(t, cfg.Scope.Deny, "fc00::/7")
-	assert.Contains(t, cfg.Scope.Deny, "fe80::/10")
+	// Intrinsic safety rules (private CIDRs, agentcage infra,
+	// wildcards) live in the enforcement validator. scope.deny is for
+	// operator-added carve-outs on top — empty in defaults.
+	assert.Empty(t, cfg.Scope.Deny)
 	// Defaults() leaves the deny pointers nil; the posture default supplies
 	// the value. PostureStrict (the zero value) → deny by default.
 	assert.True(t, cfg.ScopeDenyWildcardsDefault())

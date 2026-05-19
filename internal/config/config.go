@@ -455,16 +455,18 @@ type AutoscalerConfig struct {
 // CageTypeConfig defines resource and behavioral limits for a cage type.
 // Default* fields are what cages receive when the plan does not specify
 // resources. Max* fields are ceilings that EnforceConfigCeilings checks.
+// CageTypeConfig holds operator-tunable resource ceilings and
+// defaults per cage type. Required-field rules (LLM presence,
+// parent-finding) are intrinsic to cage types and live in
+// enforcement.Validator, not here.
 type CageTypeConfig struct {
-	MaxDuration           time.Duration `yaml:"max_duration"`
-	MaxVCPUs              int32         `yaml:"max_vcpus"`
-	MaxMemoryMB           int32         `yaml:"max_memory_mb"`
-	DefaultVCPUs          int32         `yaml:"default_vcpus"`
-	DefaultMemoryMB       int32         `yaml:"default_memory_mb"`
-	MaxBatchSize          int32         `yaml:"max_batch_size"`
-	RequiresLLM           bool          `yaml:"requires_llm"`
-	RequiresParentFinding bool          `yaml:"requires_parent_finding"`
-	RateLimit             int32         `yaml:"rate_limit"`
+	MaxDuration     time.Duration `yaml:"max_duration"`
+	MaxVCPUs        int32         `yaml:"max_vcpus"`
+	MaxMemoryMB     int32         `yaml:"max_memory_mb"`
+	DefaultVCPUs    int32         `yaml:"default_vcpus"`
+	DefaultMemoryMB int32         `yaml:"default_memory_mb"`
+	MaxBatchSize    int32         `yaml:"max_batch_size"`
+	RateLimit       int32         `yaml:"rate_limit"`
 }
 
 // AssessmentConfig defines defaults for assessment execution.
@@ -698,30 +700,25 @@ func Defaults() *Config {
 				DefaultVCPUs:    2,
 				DefaultMemoryMB: 4096,
 				MaxBatchSize:    1,
-				RequiresLLM:     true,
 				RateLimit:       50,
 			},
 			"validator": {
-				MaxDuration:           60 * time.Second,
-				MaxVCPUs:              1,
-				MaxMemoryMB:           1024,
-				DefaultVCPUs:          1,
-				DefaultMemoryMB:       512,
-				MaxBatchSize:          1,
-				RequiresLLM:           false,
-				RequiresParentFinding: true,
-				RateLimit:             10,
+				MaxDuration:     60 * time.Second,
+				MaxVCPUs:        1,
+				MaxMemoryMB:     1024,
+				DefaultVCPUs:    1,
+				DefaultMemoryMB: 512,
+				MaxBatchSize:    1,
+				RateLimit:       10,
 			},
 			"exploitation": {
-				MaxDuration:           15 * time.Minute,
-				MaxVCPUs:              2,
-				MaxMemoryMB:           4096,
-				DefaultVCPUs:          1,
-				DefaultMemoryMB:       2048,
-				MaxBatchSize:          1,
-				RequiresLLM:           true,
-				RequiresParentFinding: false,
-				RateLimit:             20,
+				MaxDuration:     15 * time.Minute,
+				MaxVCPUs:        2,
+				MaxMemoryMB:     4096,
+				DefaultVCPUs:    1,
+				DefaultMemoryMB: 2048,
+				MaxBatchSize:    1,
+				RateLimit:       20,
 			},
 		},
 		Assessment: AssessmentConfig{
@@ -733,26 +730,12 @@ func Defaults() *Config {
 			MaxScreenshotSize: 5 << 20, // 5MB
 		},
 		Scope: ScopeConfig{
-			Deny: []string{
-				"10.0.0.0/8",
-				"172.16.0.0/12",
-				"192.168.0.0/16",
-				"127.0.0.0/8",
-				"0.0.0.0",
-				"255.255.255.255",
-				"100.64.0.0/10",
-				"169.254.0.0/16",
-				"::1",
-				"fc00::/7",
-				"fe80::/10",
-				"fd00:ec2::254",
-				"orchestrator.agentcage.internal",
-				"vault.agentcage.internal",
-				"spire.agentcage.internal",
-				"nats.agentcage.internal",
-				"temporal.agentcage.internal",
-				"postgres.agentcage.internal",
-			},
+			// scope.deny is for operator-added entries on top of the
+			// intrinsic safety rules baked into the cage admission
+			// validator (private CIDRs in strict posture, agentcage
+			// infrastructure hostnames, wildcards, etc.). Defaults are
+			// empty; operators add carve-outs as needed.
+			Deny: nil,
 			// DenyWildcards/DenyLocalhost are intentionally nil so the
 			// posture default applies (strict=true, dev=false). Operators
 			// can still set them explicitly to override.
@@ -985,11 +968,6 @@ func Merge(base, override *Config) *Config {
 				if v.RateLimit > 0 {
 					existing.RateLimit = v.RateLimit
 				}
-				// Bool fields: always take override value when the cage
-				// type key is present. Unlike int fields, false is a
-				// valid intent ("this cage type doesn't need LLM").
-				existing.RequiresLLM = v.RequiresLLM
-				existing.RequiresParentFinding = v.RequiresParentFinding
 				result.Cages[k] = existing
 			} else {
 				result.Cages[k] = v

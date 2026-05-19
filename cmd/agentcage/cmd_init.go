@@ -121,7 +121,7 @@ func runInit(configFile, grpcAddr, secretsFile string, debug bool) (initErr erro
 	}
 	defer otelShutdown()
 
-	opaEngine, err := buildPolicyEngine(cfg)
+	cageConfigValidator, err := enforcement.NewValidator(cfg)
 	if err != nil {
 		return err
 	}
@@ -170,8 +170,7 @@ func runInit(configFile, grpcAddr, secretsFile string, debug bool) (initErr erro
 	defer temporalClient.Close()
 
 	iStore, notifier, alertDispatcher := setupNotifications(db, cfg, log)
-	scopeValidator := enforcement.NewScopeValidator(cfg)
-	cageValidator := buildCageValidator(cfg, opaEngine, scopeValidator, alertDispatcher)
+	cageValidator := buildCageValidator(cageConfigValidator, alertDispatcher)
 
 	fleetSetup, err := setupFleet(ctx, cfg, embeddedMgr, secretReader, alertDispatcher, log)
 	if err != nil {
@@ -261,7 +260,7 @@ func runInit(configFile, grpcAddr, secretsFile string, debug bool) (initErr erro
 		Rootfs:            cageRuntime.rootfs,
 		BundleStoreDir:    filepath.Join(embedded.DataDir(), "bundles"),
 		Network:           cageRuntime.network,
-		Validator:         scopeValidator,
+		Validator:         cageConfigValidator,
 		AlertHandler:      alertHandler,
 		AlertNotifier:     alertDispatcher,
 		FalcoReader:       cageRuntime.falcoReader,

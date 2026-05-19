@@ -44,12 +44,6 @@ func (d PayloadDecision) String() string {
 	}
 }
 
-type PolicyDecision struct {
-	Allowed    bool
-	Reason     string
-	Violations []string
-}
-
 type FalcoAlert struct {
 	RuleName  string
 	Priority  string

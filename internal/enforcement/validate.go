@@ -7,48 +7,146 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/okedeji/agentcage/internal/cage"
 	"github.com/okedeji/agentcage/internal/config"
 )
 
+// ErrInvalidConfig wraps every cage admission rejection. Callers use
+// errors.Is to recognize policy-driven failures vs unrelated errors.
 var ErrInvalidConfig = errors.New("invalid cage config")
 
-// Catches any cage that bypassed the gRPC ingress check.
-type ScopeValidator struct {
-	limits *config.Config
+// dnsResolveTimeout bounds DNS lookups during cage admission. Strict
+// posture resolves the target hostname and rejects if any A/AAAA
+// record points to private space (rebind defense). The lookup is
+// best-effort: transient failures fail open so a flaky resolver
+// cannot block legitimate assessments.
+const dnsResolveTimeout = 2 * time.Second
+
+// Validator is the single cage-admission gate. It pre-compiles the
+// operator's denylist and per-type caps at construction so per-cage
+// validation is bounded map lookups + slice scans + bounds checks.
+// No reflection, no engine, no Rego.
+type Validator struct {
+	denyHosts    map[string]struct{}
+	denyCIDRs    []*net.IPNet
+	posture      config.Posture
+	cageTypeCaps map[string]typeCaps
+	resolver     *net.Resolver
 }
 
-func NewScopeValidator(limits *config.Config) *ScopeValidator {
-	return &ScopeValidator{limits: limits}
+type typeCaps struct {
+	maxDuration time.Duration
+	maxVCPUs    int32
+	maxMemoryMB int32
+	maxRateLim  int32
 }
 
-func (v *ScopeValidator) ValidateCageConfig(_ context.Context, cageConfig cage.Config) error {
-	return ValidateCageConfig(cageConfig, v.limits)
+// Targets the orchestrator and its sidecars listen on. Cages must
+// never target these regardless of posture. Duplicated from
+// plan/plan.go::denylistedHosts because enforcement can't import plan
+// (layering). If a third consumer appears, move to config.Defaults().
+var infrastructureHosts = map[string]struct{}{
+	"localhost":                       {},
+	"orchestrator.agentcage.internal": {},
+	"vault.agentcage.internal":        {},
+	"spire.agentcage.internal":        {},
+	"nats.agentcage.internal":         {},
+	"temporal.agentcage.internal":     {},
+	"postgres.agentcage.internal":     {},
+	"metadata.google.internal":        {},
 }
 
-func ValidateCageConfig(cageConfig cage.Config, limits *config.Config) error {
+// Posture-sensitive ranges. Strict denies, dev allows.
+var privateRanges = []net.IPNet{
+	mustParseCIDR("10.0.0.0/8"),
+	mustParseCIDR("172.16.0.0/12"),
+	mustParseCIDR("192.168.0.0/16"),
+	mustParseCIDR("100.64.0.0/10"),
+	mustParseCIDR("169.254.0.0/16"),
+	mustParseCIDR("fc00::/7"),
+	mustParseCIDR("fe80::/10"),
+}
+
+func mustParseCIDR(s string) net.IPNet {
+	_, n, err := net.ParseCIDR(s)
+	if err != nil {
+		panic("enforcement: bad CIDR literal " + s)
+	}
+	return *n
+}
+
+// NewValidator pre-compiles the operator's denylist and per-type
+// caps. Returns an error if the operator's YAML is malformed (e.g.
+// unparseable CIDR) so misconfiguration surfaces at startup, not on
+// the first cage admission.
+func NewValidator(cfg *config.Config) (*Validator, error) {
+	v := &Validator{
+		denyHosts:    make(map[string]struct{}),
+		posture:      cfg.Posture,
+		cageTypeCaps: make(map[string]typeCaps, len(cfg.Cages)),
+		resolver:     net.DefaultResolver,
+	}
+
+	for _, entry := range cfg.Scope.Deny {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		if strings.Contains(entry, "/") {
+			_, n, err := net.ParseCIDR(entry)
+			if err != nil {
+				return nil, fmt.Errorf("scope.deny: invalid CIDR %q: %w", entry, err)
+			}
+			v.denyCIDRs = append(v.denyCIDRs, n)
+			continue
+		}
+		v.denyHosts[strings.ToLower(entry)] = struct{}{}
+	}
+
+	for name, ct := range cfg.Cages {
+		v.cageTypeCaps[name] = typeCaps{
+			maxDuration: ct.MaxDuration,
+			maxVCPUs:    ct.MaxVCPUs,
+			maxMemoryMB: ct.MaxMemoryMB,
+			maxRateLim:  ct.RateLimit,
+		}
+	}
+
+	return v, nil
+}
+
+// ValidateCageConfig runs every rule and accumulates violations into
+// a single multi-error so an operator sees all problems at once. The
+// wrap chain (`ErrInvalidConfig`, then `errors.Join`) mirrors the
+// existing convention in findings/validate.go. ctx scopes DNS
+// resolution (strict-posture rebind defense); pass context.Background
+// when called outside an activity.
+func (v *Validator) ValidateCageConfig(ctx context.Context, c cage.Config) error {
 	var errs []error
 
-	if cageConfig.Type == cage.TypeUnspecified {
+	// Identity fields. Cage type validation happens via the typeCaps
+	// lookup below; an unknown type yields a clear error there.
+	if c.Type == cage.TypeUnspecified {
 		errs = append(errs, fmt.Errorf("cage type is required"))
 	}
-	if cageConfig.AssessmentID == "" {
+	if c.AssessmentID == "" {
 		errs = append(errs, fmt.Errorf("assessment ID is required"))
 	}
-	if cageConfig.BundleRef == "" {
+	if c.BundleRef == "" {
 		errs = append(errs, fmt.Errorf("bundle ref is required"))
 	}
 
-	errs = append(errs, validateScope(cageConfig.Scope)...)
-	errs = append(errs, validateRateLimits(cageConfig.RateLimits, limits.RateLimit(cageConfig.Type.String()))...)
+	errs = append(errs, v.validateScope(ctx, c.Scope)...)
+	errs = append(errs, v.validatePorts(c.Scope.Ports)...)
 
-	typeLimits, hasType := limits.Cages[cageConfig.Type.String()]
-	errs = append(errs, validateTimeLimits(cageConfig.Type, cageConfig.TimeLimits, hasType, typeLimits)...)
-	errs = append(errs, validateResources(cageConfig.Type, cageConfig.Resources, hasType, typeLimits)...)
-	errs = append(errs, validateRequiredFields(cageConfig)...)
-	errs = append(errs, validateLLMConfig(cageConfig)...)
-	errs = append(errs, validatePorts(cageConfig.Scope.Ports)...)
+	caps, hasCaps := v.cageTypeCaps[c.Type.String()]
+	errs = append(errs, v.validateRateLimits(c.RateLimits, caps, hasCaps)...)
+	errs = append(errs, v.validateTimeLimits(c.Type, c.TimeLimits, caps, hasCaps)...)
+	errs = append(errs, v.validateResources(c.Type, c.Resources, caps, hasCaps)...)
+	errs = append(errs, v.validateRequiredFields(c)...)
+	errs = append(errs, v.validateLLMConfig(c)...)
 
 	if len(errs) > 0 {
 		return fmt.Errorf("%w: %w", ErrInvalidConfig, errors.Join(errs...))
@@ -56,20 +154,53 @@ func ValidateCageConfig(cageConfig cage.Config, limits *config.Config) error {
 	return nil
 }
 
-func validateScope(scope cage.Scope) []error {
+// Violations from ValidateCageConfig as a flat slice — used by the
+// alert dispatcher to populate intervention details.
+func Violations(err error) []string {
+	if err == nil {
+		return nil
+	}
+	type unwrapMany interface{ Unwrap() []error }
+	out := []string{}
+	var walk func(error)
+	walk = func(e error) {
+		if e == nil {
+			return
+		}
+		if u, ok := e.(unwrapMany); ok {
+			for _, child := range u.Unwrap() {
+				walk(child)
+			}
+			return
+		}
+		if next := errors.Unwrap(e); next != nil && next != e {
+			walk(next)
+			return
+		}
+		out = append(out, e.Error())
+	}
+	walk(err)
+	return out
+}
+
+func (v *Validator) validateScope(ctx context.Context, scope cage.Scope) []error {
 	var errs []error
 
-	host := scope.Host
+	host := strings.TrimSpace(scope.Host)
 	if host == "" {
-		errs = append(errs, fmt.Errorf("scope must contain a host"))
-		return errs
+		return []error{fmt.Errorf("scope must contain a host")}
 	}
 	if strings.Contains(host, "*") {
-		errs = append(errs, fmt.Errorf("scope host %q must not contain wildcard", host))
+		return []error{fmt.Errorf("scope host %q must not contain wildcard", host)}
+	}
+
+	lowered := strings.ToLower(host)
+	if _, blocked := infrastructureHosts[lowered]; blocked {
+		errs = append(errs, fmt.Errorf("scope host %q targets agentcage infrastructure", host))
 		return errs
 	}
-	if strings.ToLower(host) == "localhost" {
-		errs = append(errs, fmt.Errorf("scope host %q is a loopback address", host))
+	if _, custom := v.denyHosts[lowered]; custom {
+		errs = append(errs, fmt.Errorf("scope host %q is in operator denylist (scope.deny)", host))
 		return errs
 	}
 
@@ -80,122 +211,72 @@ func validateScope(scope cage.Scope) []error {
 		}
 		if check.IsLoopback() {
 			errs = append(errs, fmt.Errorf("scope host %q is a loopback address", host))
+			return errs
 		}
-		if isPrivateIP(check) {
-			errs = append(errs, fmt.Errorf("scope host %q is a private IP address (override via scope.deny in config.yaml)", host))
+		for _, cidr := range v.denyCIDRs {
+			if cidr.Contains(check) {
+				errs = append(errs, fmt.Errorf("scope host %q is in operator denylist (%s)", host, cidr.String()))
+				return errs
+			}
+		}
+		if v.posture == config.PostureStrict && isInPrivateRange(check) {
+			errs = append(errs, fmt.Errorf("scope host %q is in a private/link-local range (set posture=dev to allow)", host))
+			return errs
+		}
+		return errs
+	}
+
+	// Hostname: walk the operator's CIDR denylist (covered above for
+	// bare IPs; here we only get here if it's a hostname, so we let DNS
+	// resolution handle CIDR matches via checkHostResolvesToPrivate).
+	if v.posture == config.PostureStrict {
+		if err := v.checkHostResolvesToPrivate(ctx, host); err != nil {
+			errs = append(errs, fmt.Errorf("scope host %q %w", host, err))
 		}
 	}
 
 	return errs
 }
 
-var privateRanges []net.IPNet
+// checkHostResolvesToPrivate resolves the hostname and rejects it if
+// any A/AAAA record falls in private/loopback space. Strict posture
+// only. Fail-open on resolution errors — transient DNS failures must
+// not block legitimate assessments, and the cage's runtime egress
+// layer fails non-resolvable hosts at request time anyway.
+func (v *Validator) checkHostResolvesToPrivate(ctx context.Context, host string) error {
+	ctx, cancel := context.WithTimeout(ctx, dnsResolveTimeout)
+	defer cancel()
 
-func init() {
-	cidrs := []string{
-		"10.0.0.0/8",
-		"172.16.0.0/12",
-		"192.168.0.0/16",
-		"100.64.0.0/10",
-		"169.254.0.0/16",
-		"fc00::/7",
-		"fe80::/10",
+	addrs, err := v.resolver.LookupHost(ctx, host)
+	if err != nil {
+		return nil
 	}
-	for _, cidr := range cidrs {
-		_, ipNet, _ := net.ParseCIDR(cidr)
-		privateRanges = append(privateRanges, *ipNet)
+	for _, a := range addrs {
+		ip := net.ParseIP(a)
+		if ip == nil {
+			continue
+		}
+		check := ip
+		if v4 := ip.To4(); v4 != nil {
+			check = v4
+		}
+		if check.IsLoopback() || isInPrivateRange(check) {
+			return fmt.Errorf("resolves to private/loopback address %s", a)
+		}
 	}
+	return nil
 }
 
-func isPrivateIP(ip net.IP) bool {
+func isInPrivateRange(ip net.IP) bool {
 	for _, r := range privateRanges {
 		if r.Contains(ip) {
 			return true
 		}
 	}
-	return false
+	return ip.IsUnspecified() || ip.IsLinkLocalUnicast()
 }
 
-func validateRateLimits(limits cage.RateLimits, maxRPS int32) []error {
-	var errs []error
-	if limits.RequestsPerSecond <= 0 {
-		errs = append(errs, fmt.Errorf("rate limit must be positive, got %d", limits.RequestsPerSecond))
-	}
-	if maxRPS > 0 && limits.RequestsPerSecond > maxRPS {
-		errs = append(errs, fmt.Errorf("rate limit must be ≤ %d, got %d", maxRPS, limits.RequestsPerSecond))
-	}
-	if maxRPS == 0 {
-		errs = append(errs, fmt.Errorf("no rate limit configured for this cage type"))
-	}
-	return errs
-}
-
-func validateTimeLimits(t cage.Type, limits cage.TimeLimits, hasType bool, typeCfg config.CageTypeConfig) []error {
-	var errs []error
-	if limits.MaxDuration <= 0 {
-		errs = append(errs, fmt.Errorf("time limit must be positive, got %s", limits.MaxDuration))
-		return errs
-	}
-	if hasType && limits.MaxDuration > typeCfg.MaxDuration {
-		errs = append(errs, fmt.Errorf("%s cage time limit must be ≤ %s, got %s", t, typeCfg.MaxDuration, limits.MaxDuration))
-	}
-	return errs
-}
-
-func validateResources(t cage.Type, res cage.ResourceLimits, hasType bool, typeCfg config.CageTypeConfig) []error {
-	var errs []error
-	if res.VCPUs <= 0 {
-		errs = append(errs, fmt.Errorf("vCPUs must be positive, got %d", res.VCPUs))
-	}
-	if res.MemoryMB <= 0 {
-		errs = append(errs, fmt.Errorf("memory must be positive, got %d MB", res.MemoryMB))
-	}
-
-	if hasType && res.VCPUs > typeCfg.MaxVCPUs {
-		errs = append(errs, fmt.Errorf("%s cage must use ≤ %d vCPU(s), got %d", t, typeCfg.MaxVCPUs, res.VCPUs))
-	}
-	if hasType && res.MemoryMB > typeCfg.MaxMemoryMB {
-		errs = append(errs, fmt.Errorf("%s cage must use ≤ %d MB memory, got %d", t, typeCfg.MaxMemoryMB, res.MemoryMB))
-	}
-	return errs
-}
-
-func validateRequiredFields(config cage.Config) []error {
-	var errs []error
-	switch config.Type {
-	case cage.TypeValidator:
-		if config.ParentFindingID == "" {
-			errs = append(errs, fmt.Errorf("validator cage requires ParentFindingID"))
-		}
-	case cage.TypeDiscovery:
-		if config.LLM == nil {
-			errs = append(errs, fmt.Errorf("discovery cage requires LLM configuration"))
-		}
-	case cage.TypeExploitation:
-		if config.LLM == nil {
-			errs = append(errs, fmt.Errorf("exploitation cage requires LLM configuration"))
-		}
-	}
-	return errs
-}
-
-func validateLLMConfig(config cage.Config) []error {
-	if config.LLM == nil {
-		return nil
-	}
-	var errs []error
-	if config.LLM.TokenBudget <= 0 {
-		errs = append(errs, fmt.Errorf("LLM token budget must be positive, got %d", config.LLM.TokenBudget))
-	}
-	switch config.LLM.RoutingStrategy {
-	case "", "cost_optimized", "quality_first", "latency_first", "round_robin":
-	default:
-		errs = append(errs, fmt.Errorf("invalid LLM routing strategy %q", config.LLM.RoutingStrategy))
-	}
-	return errs
-}
-
-func validatePorts(ports []string) []error {
+func (v *Validator) validatePorts(ports []string) []error {
 	var errs []error
 	for _, p := range ports {
 		if p == "" {
@@ -210,6 +291,93 @@ func validatePorts(ports []string) []error {
 		if port < 0 || port > 65535 {
 			errs = append(errs, fmt.Errorf("scope port %d out of range (0-65535)", port))
 		}
+	}
+	return errs
+}
+
+func (v *Validator) validateRateLimits(limits cage.RateLimits, caps typeCaps, hasCaps bool) []error {
+	var errs []error
+	if limits.RequestsPerSecond <= 0 {
+		errs = append(errs, fmt.Errorf("rate limit must be positive, got %d", limits.RequestsPerSecond))
+	}
+	if !hasCaps {
+		errs = append(errs, fmt.Errorf("no rate limit configured for this cage type"))
+		return errs
+	}
+	if caps.maxRateLim > 0 && limits.RequestsPerSecond > caps.maxRateLim {
+		errs = append(errs, fmt.Errorf("rate limit must be ≤ %d, got %d", caps.maxRateLim, limits.RequestsPerSecond))
+	}
+	return errs
+}
+
+func (v *Validator) validateTimeLimits(t cage.Type, limits cage.TimeLimits, caps typeCaps, hasCaps bool) []error {
+	var errs []error
+	if limits.MaxDuration <= 0 {
+		errs = append(errs, fmt.Errorf("time limit must be positive, got %s", limits.MaxDuration))
+		return errs
+	}
+	if hasCaps && limits.MaxDuration > caps.maxDuration {
+		errs = append(errs, fmt.Errorf("%s cage time limit must be ≤ %s, got %s", t, caps.maxDuration, limits.MaxDuration))
+	}
+	return errs
+}
+
+func (v *Validator) validateResources(t cage.Type, res cage.ResourceLimits, caps typeCaps, hasCaps bool) []error {
+	var errs []error
+	if res.VCPUs <= 0 {
+		errs = append(errs, fmt.Errorf("vCPUs must be positive, got %d", res.VCPUs))
+	}
+	if res.MemoryMB <= 0 {
+		errs = append(errs, fmt.Errorf("memory must be positive, got %d MB", res.MemoryMB))
+	}
+	if hasCaps && res.VCPUs > caps.maxVCPUs {
+		errs = append(errs, fmt.Errorf("%s cage must use ≤ %d vCPU(s), got %d", t, caps.maxVCPUs, res.VCPUs))
+	}
+	if hasCaps && res.MemoryMB > caps.maxMemoryMB {
+		errs = append(errs, fmt.Errorf("%s cage must use ≤ %d MB memory, got %d", t, caps.maxMemoryMB, res.MemoryMB))
+	}
+	return errs
+}
+
+// Required-field rules are intrinsic to cage type, not operator
+// policy. A discovery or exploitation cage without an LLM is broken
+// by definition; a validator without a parent finding has nothing to
+// validate. Operators cannot legitimately override these, so the
+// rules live in code not YAML.
+func (v *Validator) validateRequiredFields(c cage.Config) []error {
+	var errs []error
+	switch c.Type {
+	case cage.TypeValidator:
+		if c.ParentFindingID == "" {
+			errs = append(errs, fmt.Errorf("validator cage requires ParentFindingID"))
+		}
+		if c.LLM != nil {
+			errs = append(errs, fmt.Errorf("validator cage must not have LLM access"))
+		}
+	case cage.TypeDiscovery:
+		if c.LLM == nil {
+			errs = append(errs, fmt.Errorf("discovery cage requires LLM gateway configuration"))
+		}
+	case cage.TypeExploitation:
+		if c.LLM == nil {
+			errs = append(errs, fmt.Errorf("exploitation cage requires LLM gateway configuration"))
+		}
+	}
+	return errs
+}
+
+func (v *Validator) validateLLMConfig(c cage.Config) []error {
+	if c.LLM == nil {
+		return nil
+	}
+	var errs []error
+	if c.LLM.TokenBudget <= 0 {
+		errs = append(errs, fmt.Errorf("LLM token budget must be positive, got %d", c.LLM.TokenBudget))
+	}
+	switch c.LLM.RoutingStrategy {
+	case "", "cost_optimized", "quality_first", "latency_first", "round_robin":
+	default:
+		errs = append(errs, fmt.Errorf("invalid LLM routing strategy %q", c.LLM.RoutingStrategy))
 	}
 	return errs
 }
