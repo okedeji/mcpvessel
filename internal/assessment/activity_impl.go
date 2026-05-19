@@ -116,6 +116,9 @@ func (a *ActivityImpl) RegisterActivities(w worker.ActivityRegistry) {
 	pin("NotifyFleetAssessmentComplete", a.NotifyFleetAssessmentComplete)
 	pin("NotifyAssessmentComplete", a.NotifyAssessmentComplete)
 	pin("EnqueueReportReview", a.EnqueueReportReview)
+	pin("GenerateGoal", a.GenerateGoal)
+	pin("GenerateExploitationPlan", a.GenerateExploitationPlan)
+	pin("EnqueuePlanApproval", a.EnqueuePlanApproval)
 	pin("StartFindingsStream", a.StartFindingsStream)
 	pin("StopFindingsStream", a.StopFindingsStream)
 	pin("StoreReport", a.StoreReport)
@@ -144,6 +147,48 @@ func (a *ActivityImpl) EnqueueReportReview(ctx context.Context, assessmentID, cu
 		return "", fmt.Errorf("enqueueing report review for %s: %w", assessmentID, err)
 	}
 	a.log.Info("report review intervention enqueued", "assessment_id", assessmentID, "intervention_id", id, "customer_id", customerID)
+	return id, nil
+}
+
+// GenerateGoal calls the planner LLM to produce the assessment-wide
+// goal that anchors discovery and exploitation. Activity boundary so
+// the workflow can heartbeat and the LLM call can retry.
+func (a *ActivityImpl) GenerateGoal(ctx context.Context, assessmentID, target string, guidance *Guidance, tokenBudget int64) (string, error) {
+	if a.planner == nil {
+		return "", fmt.Errorf("planner not configured")
+	}
+	return a.planner.GenerateGoal(ctx, assessmentID, target, guidance, tokenBudget)
+}
+
+// GenerateExploitationPlan asks the planner LLM to propose a concrete
+// plan the operator can review (or that runs straight through when
+// auto-approve is on). Returns the structured proposal serialized as
+// the intervention's context_data.
+func (a *ActivityImpl) GenerateExploitationPlan(ctx context.Context, in PlanProposalInput) (PlanProposal, error) {
+	if a.planner == nil {
+		return PlanProposal{}, fmt.Errorf("planner not configured")
+	}
+	return a.planner.GenerateExploitationPlan(ctx, in)
+}
+
+// EnqueuePlanApproval creates the pending plan-approval intervention
+// so an operator can approve/reject/modify via `agentcage
+// interventions resolve`. context_data carries the PlanProposal as
+// JSON; the operator views it with `agentcage assessments plan <id>`.
+func (a *ActivityImpl) EnqueuePlanApproval(ctx context.Context, assessmentID, customerID string, contextData []byte) (string, error) {
+	if a.interventions == nil {
+		return "", fmt.Errorf("intervention queue not configured")
+	}
+	timeout := a.reviewTimeout
+	if timeout <= 0 {
+		timeout = 24 * time.Hour
+	}
+	description := fmt.Sprintf("Assessment %s: exploitation plan ready for approval", assessmentID)
+	id, err := a.interventions.EnqueuePlanApproval(ctx, assessmentID, description, contextData, timeout)
+	if err != nil {
+		return "", fmt.Errorf("enqueueing plan approval for %s: %w", assessmentID, err)
+	}
+	a.log.Info("plan approval intervention enqueued", "assessment_id", assessmentID, "intervention_id", id, "customer_id", customerID)
 	return id, nil
 }
 

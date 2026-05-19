@@ -52,5 +52,8 @@ func configToPlan(cfg Config) *plan.Plan {
 		p.Notifications.OnComplete = &c
 	}
 
+	require := cfg.RequirePlanApproval
+	p.Workflow.RequirePlanApproval = &require
+
 	return p
 }

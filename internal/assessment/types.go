@@ -14,6 +14,7 @@ type Status int
 const (
 	StatusUnspecified Status = iota
 	StatusDiscovery
+	StatusAwaitingPlanApproval
 	StatusExploitation
 	StatusValidation
 	StatusPendingReview
@@ -24,12 +25,19 @@ const (
 	// without an operator decision. Distinct from Rejected, which
 	// requires an explicit operator click.
 	StatusUnreviewed
+	// Terminal state when the plan-approval window elapsed without an
+	// operator decision, or the operator rejected the proposed plan.
+	// Discovery findings are still written; exploitation and validation
+	// are skipped.
+	StatusPlanUnapproved
 )
 
 func (s Status) String() string {
 	switch s {
 	case StatusDiscovery:
 		return "discovery"
+	case StatusAwaitingPlanApproval:
+		return "awaiting_plan_approval"
 	case StatusExploitation:
 		return "exploitation"
 	case StatusValidation:
@@ -44,6 +52,8 @@ func (s Status) String() string {
 		return "failed"
 	case StatusUnreviewed:
 		return "unreviewed"
+	case StatusPlanUnapproved:
+		return "plan_unapproved"
 	default:
 		return "unspecified"
 	}
@@ -53,6 +63,8 @@ func StatusFromString(s string) Status {
 	switch s {
 	case "discovery":
 		return StatusDiscovery
+	case "awaiting_plan_approval":
+		return StatusAwaitingPlanApproval
 	case "exploitation":
 		return StatusExploitation
 	case "validation":
@@ -67,6 +79,8 @@ func StatusFromString(s string) Status {
 		return StatusFailed
 	case "unreviewed":
 		return StatusUnreviewed
+	case "plan_unapproved":
+		return StatusPlanUnapproved
 	default:
 		return StatusUnspecified
 	}
@@ -90,11 +104,16 @@ type Config struct {
 	TrustAgentProof bool
 	ProofThreshold  float64
 	Guidance        *Guidance
-	Tags            map[string]string
-	Notifications   NotificationConfig
-	Credentials     string
-	Environment     map[string]string
-	Capabilities    cagefile.AgentCapabilities
+	// RequirePlanApproval gates exploitation on an operator decision.
+	// When true (default), the workflow pauses after discovery on a
+	// plan_approval intervention; when false, the generated plan is
+	// logged for audit and exploitation runs immediately.
+	RequirePlanApproval bool
+	Tags                map[string]string
+	Notifications       NotificationConfig
+	Credentials         string
+	Environment         map[string]string
+	Capabilities        cagefile.AgentCapabilities
 }
 
 type NotificationConfig struct {
@@ -117,6 +136,21 @@ type AttackSurfaceGuidance struct {
 type AttackStrategyGuidance struct {
 	KnownWeaknesses []string `json:"known_weaknesses,omitempty"`
 	Context         string   `json:"context,omitempty"`
+}
+
+// PlanProposal is the orchestrator-generated exploitation plan
+// surfaced to operators on a plan_approval intervention. It anchors
+// the assessment's goal (carried forward from pre-discovery
+// generation), summarizes what discovery found, and enumerates the
+// concrete coordinator actions the workflow will spawn if approved.
+// Serialized as the intervention's context_data.
+type PlanProposal struct {
+	Goal            string              `json:"goal"`
+	Summary         string              `json:"summary"`
+	Actions         []CoordinatorAction `json:"actions"`
+	EstimatedCages  int32               `json:"estimated_cages"`
+	EstimatedTokens int64               `json:"estimated_tokens"`
+	Notes           string              `json:"notes,omitempty"`
 }
 
 type CageTypeConfig struct {
@@ -147,10 +181,12 @@ type Stats struct {
 }
 
 var validTransitions = map[Status][]Status{
-	StatusDiscovery:     {StatusExploitation, StatusRejected, StatusFailed},
-	StatusExploitation:  {StatusValidation, StatusRejected, StatusFailed},
-	StatusValidation:    {StatusPendingReview, StatusRejected, StatusFailed},
-	StatusPendingReview: {StatusApproved, StatusRejected, StatusUnreviewed, StatusFailed},
+	StatusDiscovery:            {StatusAwaitingPlanApproval, StatusExploitation, StatusRejected, StatusFailed},
+	StatusAwaitingPlanApproval: {StatusExploitation, StatusPlanUnapproved, StatusRejected, StatusFailed},
+	StatusExploitation:         {StatusValidation, StatusRejected, StatusFailed},
+	StatusValidation:           {StatusPendingReview, StatusRejected, StatusFailed},
+	StatusPendingReview:        {StatusApproved, StatusRejected, StatusUnreviewed, StatusFailed},
+	StatusPlanUnapproved:       {StatusPendingReview, StatusFailed},
 }
 
 var ErrInvalidTransition = errors.New("invalid assessment state transition")

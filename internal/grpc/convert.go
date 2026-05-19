@@ -130,6 +130,13 @@ func assessmentConfigFromProto(p *pb.AssessmentConfig) assessment.Config {
 	if g := p.GetGuidance(); g != nil {
 		cfg.Guidance = guidanceFromProto(g)
 	}
+	if w := p.GetWorkflow(); w != nil {
+		cfg.RequirePlanApproval = w.GetRequirePlanApproval()
+	} else {
+		// Missing workflow message = client didn't send one. Default to
+		// safe: require approval before exploitation.
+		cfg.RequirePlanApproval = true
+	}
 	for _, ct := range p.GetCageTypeConfigs() {
 		if cfg.CageDefaults == nil {
 			cfg.CageDefaults = make(map[cage.Type]assessment.CageTypeConfig)
@@ -172,6 +179,8 @@ func assessmentStatusToProto(s assessment.Status) pb.AssessmentStatus {
 	switch s {
 	case assessment.StatusDiscovery:
 		return pb.AssessmentStatus_ASSESSMENT_STATUS_DISCOVERY
+	case assessment.StatusAwaitingPlanApproval:
+		return pb.AssessmentStatus_ASSESSMENT_STATUS_AWAITING_PLAN_APPROVAL
 	case assessment.StatusExploitation:
 		return pb.AssessmentStatus_ASSESSMENT_STATUS_EXPLOITATION
 	case assessment.StatusValidation:
@@ -186,6 +195,8 @@ func assessmentStatusToProto(s assessment.Status) pb.AssessmentStatus {
 		return pb.AssessmentStatus_ASSESSMENT_STATUS_FAILED
 	case assessment.StatusUnreviewed:
 		return pb.AssessmentStatus_ASSESSMENT_STATUS_UNREVIEWED
+	case assessment.StatusPlanUnapproved:
+		return pb.AssessmentStatus_ASSESSMENT_STATUS_PLAN_UNAPPROVED
 	default:
 		return pb.AssessmentStatus_ASSESSMENT_STATUS_UNSPECIFIED
 	}
@@ -195,6 +206,8 @@ func assessmentStatusFromProto(s pb.AssessmentStatus) assessment.Status {
 	switch s {
 	case pb.AssessmentStatus_ASSESSMENT_STATUS_DISCOVERY:
 		return assessment.StatusDiscovery
+	case pb.AssessmentStatus_ASSESSMENT_STATUS_AWAITING_PLAN_APPROVAL:
+		return assessment.StatusAwaitingPlanApproval
 	case pb.AssessmentStatus_ASSESSMENT_STATUS_EXPLOITATION:
 		return assessment.StatusExploitation
 	case pb.AssessmentStatus_ASSESSMENT_STATUS_VALIDATION:
@@ -209,6 +222,8 @@ func assessmentStatusFromProto(s pb.AssessmentStatus) assessment.Status {
 		return assessment.StatusFailed
 	case pb.AssessmentStatus_ASSESSMENT_STATUS_UNREVIEWED:
 		return assessment.StatusUnreviewed
+	case pb.AssessmentStatus_ASSESSMENT_STATUS_PLAN_UNAPPROVED:
+		return assessment.StatusPlanUnapproved
 	default:
 		return assessment.StatusUnspecified
 	}
@@ -262,6 +277,7 @@ func assessmentConfigToProto(cfg assessment.Config) *pb.AssessmentConfig {
 	if cfg.Guidance != nil {
 		out.Guidance = guidanceToProto(cfg.Guidance)
 	}
+	out.Workflow = &pb.Workflow{RequirePlanApproval: cfg.RequirePlanApproval}
 	for t, ct := range cfg.CageDefaults {
 		ctPb := &pb.CageTypeConfig{
 			Type:         cageTypeToProto(t),
@@ -319,8 +335,28 @@ func interventionTypeFromProto(t pb.InterventionType) intervention.Type {
 		return intervention.TypePolicyViolation
 	case pb.InterventionType_INTERVENTION_TYPE_AGENT_HOLD:
 		return intervention.TypeAgentHold
+	case pb.InterventionType_INTERVENTION_TYPE_PLAN_APPROVAL:
+		return intervention.TypePlanApproval
 	default:
 		return intervention.TypeTripwireEscalation
+	}
+}
+
+func planDecisionFromProto(d pb.PlanDecision) intervention.PlanDecision {
+	switch d {
+	case pb.PlanDecision_PLAN_DECISION_APPROVE:
+		return intervention.PlanApprove
+	case pb.PlanDecision_PLAN_DECISION_REJECT:
+		return intervention.PlanReject
+	case pb.PlanDecision_PLAN_DECISION_MODIFY:
+		return intervention.PlanModify
+	case pb.PlanDecision_PLAN_DECISION_TIMEOUT:
+		// Mapped so ResolvePlanApproval can reject the misuse
+		// explicitly rather than silently downgrading to Reject.
+		return intervention.PlanTimeout
+	default:
+		// Fail closed: unknown decision rejects rather than approves.
+		return intervention.PlanReject
 	}
 }
 
@@ -369,6 +405,7 @@ func interventionToProto(r *intervention.Request) *pb.InterventionInfo {
 		CageId:         r.CageID,
 		AssessmentId:   r.AssessmentID,
 		Description:    r.Description,
+		ContextData:    r.ContextData,
 		CreatedAt:      timestamppb.New(r.CreatedAt),
 	}
 	if r.Timeout > 0 {
@@ -420,6 +457,8 @@ func interventionTypeToProto(t intervention.Type) pb.InterventionType {
 		return pb.InterventionType_INTERVENTION_TYPE_POLICY_VIOLATION
 	case intervention.TypeAgentHold:
 		return pb.InterventionType_INTERVENTION_TYPE_AGENT_HOLD
+	case intervention.TypePlanApproval:
+		return pb.InterventionType_INTERVENTION_TYPE_PLAN_APPROVAL
 	default:
 		return pb.InterventionType_INTERVENTION_TYPE_UNSPECIFIED
 	}

@@ -73,6 +73,15 @@ func buildCreateAssessmentRequest(p *plan.Plan, bundleRef string) (*pb.CreateAss
 		}
 	}
 
+	// Plan-approval gates the assessment between discovery and
+	// exploitation. Default is true; the operator opts out via
+	// --auto-approve-plan or workflow.require_plan_approval: false.
+	requirePlanApproval := true
+	if p.Workflow.RequirePlanApproval != nil {
+		requirePlanApproval = *p.Workflow.RequirePlanApproval
+	}
+	cfg.Workflow = &pb.Workflow{RequirePlanApproval: requirePlanApproval}
+
 	return &pb.CreateAssessmentRequest{
 		Config:    cfg,
 		BundleRef: bundleRef,

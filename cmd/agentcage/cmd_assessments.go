@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -22,6 +23,10 @@ func cmdAssessments(args []string) {
 		cmdAssessmentsFinish(args[1:])
 		return
 	}
+	if len(args) > 0 && args[0] == "plan" {
+		cmdAssessmentsPlan(args[1:])
+		return
+	}
 
 	fs := flag.NewFlagSet("assessments", flag.ExitOnError)
 	fs.Usage = printAssessmentsUsage
@@ -29,7 +34,7 @@ func cmdAssessments(args []string) {
 	follow := fs.Bool("follow", false, "follow live progress")
 	followShort := fs.Bool("f", false, "follow live progress (short)")
 	format := fs.String("format", "", "output format: json")
-	statusFilter := fs.String("status", "", "filter by status: discovery, exploitation, validation, pending_review, approved, rejected, unreviewed, failed")
+	statusFilter := fs.String("status", "", "filter by status: discovery, awaiting_plan_approval, exploitation, validation, pending_review, approved, rejected, unreviewed, plan_unapproved, failed")
 	limit := fs.Int("limit", 50, "max results to return")
 	_ = fs.Parse(args)
 
@@ -163,10 +168,15 @@ func showAssessment(ctx context.Context, conn *grpc.ClientConn, id string) {
 		fmt.Println("  (none)")
 	}
 
-	// Interventions
+	// Interventions — fetched once and inspected twice: once to render
+	// a Plan summary if a plan_approval is pending, then again below
+	// for the full pending list.
+	iResp, iErr := iClient.ListInterventions(ctx, &pb.ListInterventionsRequest{AssessmentIdFilter: id})
+
+	printPlanSummary(iResp, iErr, id)
+
 	fmt.Println()
 	fmt.Println("Interventions:")
-	iResp, iErr := iClient.ListInterventions(ctx, &pb.ListInterventionsRequest{AssessmentIdFilter: id})
 	pending := 0
 	if iErr == nil {
 		for _, iv := range iResp.GetInterventions() {
@@ -220,7 +230,7 @@ func listAssessments(ctx context.Context, client pb.AssessmentServiceClient, sta
 	if statusFilter != "" {
 		s, ok := parseAssessmentStatusFilter(statusFilter)
 		if !ok {
-			fmt.Fprintf(os.Stderr, "error: unknown status %q (valid: discovery, exploitation, validation, pending_review, approved, rejected, unreviewed, failed)\n", statusFilter)
+			fmt.Fprintf(os.Stderr, "error: unknown status %q (valid: discovery, awaiting_plan_approval, exploitation, validation, pending_review, approved, rejected, unreviewed, plan_unapproved, failed)\n", statusFilter)
 			os.Exit(1)
 		}
 		req.StatusFilter = s
@@ -264,6 +274,8 @@ func parseAssessmentStatusFilter(s string) (pb.AssessmentStatus, bool) {
 	switch s {
 	case "discovery":
 		return pb.AssessmentStatus_ASSESSMENT_STATUS_DISCOVERY, true
+	case "awaiting_plan_approval":
+		return pb.AssessmentStatus_ASSESSMENT_STATUS_AWAITING_PLAN_APPROVAL, true
 	case "exploitation":
 		return pb.AssessmentStatus_ASSESSMENT_STATUS_EXPLOITATION, true
 	case "validation":
@@ -276,6 +288,8 @@ func parseAssessmentStatusFilter(s string) (pb.AssessmentStatus, bool) {
 		return pb.AssessmentStatus_ASSESSMENT_STATUS_REJECTED, true
 	case "unreviewed":
 		return pb.AssessmentStatus_ASSESSMENT_STATUS_UNREVIEWED, true
+	case "plan_unapproved":
+		return pb.AssessmentStatus_ASSESSMENT_STATUS_PLAN_UNAPPROVED, true
 	case "failed":
 		return pb.AssessmentStatus_ASSESSMENT_STATUS_FAILED, true
 	default:
@@ -405,6 +419,7 @@ Commands:
   cancel <id>     Kill the assessment immediately (no report generated)
   cancel --all    Kill all running assessments
   finish <id>     Stop testing, validate findings, generate report
+  plan <id>       Show the pending exploitation plan awaiting approval
 
 Examples:
   agentcage assessments
@@ -413,6 +428,7 @@ Examples:
   agentcage assessments --id <assessment-id> --follow
   agentcage assessments cancel <assessment-id>
   agentcage assessments finish <assessment-id>
+  agentcage assessments plan <assessment-id>
 
 Flags:
   --id          assessment ID to show details for
@@ -420,4 +436,167 @@ Flags:
   --status      filter by status
   --limit       max results to return (default 50)
 `)
+}
+
+// cmdAssessmentsPlan renders the orchestrator-generated exploitation
+// plan that's currently pending operator approval. Pulls the
+// plan_approval intervention's context_data, decodes the PlanProposal,
+// and pretty-prints it.
+func cmdAssessmentsPlan(args []string) {
+	if len(args) < 1 {
+		fmt.Fprintln(os.Stderr, "usage: agentcage assessments plan <id>")
+		os.Exit(1)
+	}
+	assessmentID := args[0]
+
+	cfg := config.Defaults()
+	if resolved := config.Resolve(""); resolved != "" {
+		if override, err := config.Load(resolved); err == nil {
+			cfg = config.Merge(cfg, override)
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	conn, err := dialOrchestrator(ctx, cfg)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	defer func() { _ = conn.Close() }()
+
+	iClient := pb.NewInterventionServiceClient(conn)
+	resp, err := iClient.ListInterventions(ctx, &pb.ListInterventionsRequest{
+		AssessmentIdFilter: assessmentID,
+		TypeFilter:         pb.InterventionType_INTERVENTION_TYPE_PLAN_APPROVAL,
+		StatusFilter:       pb.InterventionStatus_INTERVENTION_STATUS_PENDING,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	items := resp.GetInterventions()
+	if len(items) == 0 {
+		fmt.Fprintf(os.Stderr, "no pending plan-approval intervention for assessment %s (status may be %s, %s, or already past the gate)\n",
+			assessmentID, "discovery", "awaiting_plan_approval")
+		os.Exit(1)
+	}
+	// In practice there is only ever one pending plan_approval per
+	// assessment because the workflow regenerates on modify rather than
+	// stacking — but render whichever is most recent if more appear.
+	item := items[0]
+
+	proposal, err := decodePlanProposal(item.GetContextData())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: plan proposal payload corrupted: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Assessment: %s\n", assessmentID)
+	fmt.Printf("Intervention: %s\n", item.GetInterventionId())
+	fmt.Println()
+	fmt.Println("Goal:")
+	for _, line := range strings.Split(strings.TrimSpace(proposal.Goal), "\n") {
+		fmt.Printf("  %s\n", line)
+	}
+	if s := strings.TrimSpace(proposal.Summary); s != "" {
+		fmt.Println()
+		fmt.Println("Discovery summary:")
+		for _, line := range strings.Split(s, "\n") {
+			fmt.Printf("  %s\n", line)
+		}
+	}
+	fmt.Println()
+	fmt.Printf("Proposed actions (%d cages, ~%d tokens):\n", proposal.EstimatedCages, proposal.EstimatedTokens)
+	if len(proposal.Actions) == 0 {
+		fmt.Println("  (none — nothing actionable from discovery)")
+	}
+	for _, a := range proposal.Actions {
+		endpoint := a.Scope.Host
+		if len(a.Scope.Paths) > 0 {
+			endpoint = a.Scope.Host + a.Scope.Paths[0]
+		}
+		fmt.Printf("  %-12s  %-30s  %s\n", a.VulnClass, endpoint, a.Objective)
+	}
+	if n := strings.TrimSpace(proposal.Notes); n != "" {
+		fmt.Println()
+		fmt.Println("Notes:")
+		for _, line := range strings.Split(n, "\n") {
+			fmt.Printf("  %s\n", line)
+		}
+	}
+	fmt.Println()
+	fmt.Println("Resolve with:")
+	fmt.Printf("  agentcage interventions resolve --id %s --action approve\n", item.GetInterventionId())
+	fmt.Printf("  agentcage interventions resolve --id %s --action modify --feedback \"...\"\n", item.GetInterventionId())
+	fmt.Printf("  agentcage interventions resolve --id %s --action reject --rationale \"...\"\n", item.GetInterventionId())
+}
+
+// planProposal mirrors the assessment.PlanProposal shape written into
+// the plan_approval intervention's context_data. Kept local so cmd/
+// does not import internal/assessment.
+type planProposal struct {
+	Goal    string `json:"goal"`
+	Summary string `json:"summary"`
+	Actions []struct {
+		Type  string `json:"type"`
+		Scope struct {
+			Host  string   `json:"host"`
+			Ports []string `json:"ports,omitempty"`
+			Paths []string `json:"paths,omitempty"`
+		} `json:"scope"`
+		VulnClass string `json:"vuln_class"`
+		Objective string `json:"objective"`
+	} `json:"actions"`
+	EstimatedCages  int32  `json:"estimated_cages"`
+	EstimatedTokens int64  `json:"estimated_tokens"`
+	Notes           string `json:"notes"`
+}
+
+func decodePlanProposal(data []byte) (planProposal, error) {
+	var p planProposal
+	if err := json.Unmarshal(data, &p); err != nil {
+		return planProposal{}, err
+	}
+	return p, nil
+}
+
+// printPlanSummary renders a compact one-section view of the pending
+// plan_approval (if any) in the assessment detail page. Stays terse
+// on purpose — the full proposal lives behind `assessments plan <id>`.
+func printPlanSummary(iResp *pb.ListInterventionsResponse, iErr error, assessmentID string) {
+	if iErr != nil || iResp == nil {
+		return
+	}
+	for _, iv := range iResp.GetInterventions() {
+		if iv.GetType() != pb.InterventionType_INTERVENTION_TYPE_PLAN_APPROVAL {
+			continue
+		}
+		if !strings.Contains(iv.GetStatus().String(), "PENDING") {
+			continue
+		}
+		proposal, err := decodePlanProposal(iv.GetContextData())
+		if err != nil {
+			return
+		}
+		fmt.Println()
+		fmt.Println("Plan (awaiting approval):")
+		if goal := strings.TrimSpace(proposal.Goal); goal != "" {
+			fmt.Printf("  Goal:    %s\n", firstLineOrFull(goal, 200))
+		}
+		fmt.Printf("  Actions: %d cages, ~%d tokens\n", proposal.EstimatedCages, proposal.EstimatedTokens)
+		fmt.Printf("  View:    agentcage assessments plan %s\n", assessmentID)
+		return
+	}
+}
+
+// firstLineOrFull collapses multi-line goal text into one line for
+// the assessment summary; falls back to the whole string when short.
+func firstLineOrFull(s string, max int) string {
+	s = strings.ReplaceAll(s, "\n", " ")
+	if len(s) > max {
+		return s[:max-1] + "…"
+	}
+	return s
 }

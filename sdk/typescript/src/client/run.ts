@@ -27,6 +27,9 @@ export interface RunConfig {
   knownWeaknesses?: string[];      // --known-weakness (repeatable)
   limitToListed?: boolean;         // --limit-to-listed
 
+  // Workflow
+  autoApprovePlan?: boolean;       // --auto-approve-plan (default false; gate ON)
+
   // Notifications
   notify?: string;                 // --notify (webhook URL)
   notifyOnFinding?: boolean;       // --notify-on-finding
@@ -55,6 +58,7 @@ const TERMINAL_STATUSES = new Set([
   AssessmentStatus.Unreviewed,
   AssessmentStatus.Failed,
   AssessmentStatus.PendingReview,
+  AssessmentStatus.PlanUnapproved,
   AssessmentStatus.Unspecified,
 ]);
 
@@ -83,6 +87,9 @@ function buildAssessmentConfig(rc: RunConfig): AssessmentConfig {
         context: rc.context,
         knownWeaknesses: rc.knownWeaknesses,
       } : undefined,
+    },
+    workflow: {
+      requirePlanApproval: rc.autoApprovePlan ? false : true,
     },
     notifications: (rc.notify || rc.notifyOnFinding || rc.notifyOnComplete) ? {
       webhook: rc.notify,

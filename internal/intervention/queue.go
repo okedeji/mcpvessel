@@ -32,7 +32,7 @@ func NewQueue(store Store, notifier Notifier, logger logr.Logger) *Queue {
 }
 
 func (q *Queue) Enqueue(ctx context.Context, reqType Type, priority Priority, cageID, assessmentID, description string, contextData []byte, timeout time.Duration) (*Request, error) {
-	if reqType < TypeTripwireEscalation || reqType > TypeAgentHold {
+	if reqType < TypeTripwireEscalation || reqType > TypePlanApproval {
 		return nil, fmt.Errorf("invalid intervention type %d", reqType)
 	}
 	req := Request{

@@ -133,11 +133,24 @@ type Plan struct {
 	Limits        Limits              `yaml:"limits"`
 	CageTypes     map[string]CageType `yaml:"cage_types"`
 	Guidance      Guidance            `yaml:"guidance"`
+	Workflow      Workflow            `yaml:"workflow"`
 	Notifications Notifications       `yaml:"notifications"`
 	Output        Output              `yaml:"output"`
 	Tags          map[string]string   `yaml:"tags"`
 	Environment   map[string]string   `yaml:"environment,omitempty"`
 	CustomerID    string              `yaml:"customer_id"`
+}
+
+// Workflow controls pipeline gates that are operator-toggleable but
+// not part of attack guidance. Pointer fields distinguish "operator
+// didn't set this" from "operator explicitly set false" during merge.
+type Workflow struct {
+	// RequirePlanApproval pauses the assessment after discovery on a
+	// plan_approval intervention. Nil = use default (true). Set false
+	// via plan YAML or the --auto-approve-plan CLI flag for autonomous
+	// runs where exploitation should follow discovery without a human
+	// gate.
+	RequirePlanApproval *bool `yaml:"require_plan_approval,omitempty"`
 }
 
 type Target struct {
@@ -332,6 +345,10 @@ func Merge(base, override *Plan) *Plan {
 	}
 	if override.Output.Follow != nil {
 		out.Output.Follow = override.Output.Follow
+	}
+
+	if override.Workflow.RequirePlanApproval != nil {
+		out.Workflow.RequirePlanApproval = override.Workflow.RequirePlanApproval
 	}
 
 	if len(override.Tags) > 0 {
@@ -601,6 +618,7 @@ type RawFlags struct {
 	APISpecs         []string
 	KnownWeaknesses  []string
 	LimitToListed    bool
+	AutoApprovePlan  bool
 	Notify           string
 	NotifyOnFinding  bool
 	NotifyOnComplete bool
@@ -663,6 +681,12 @@ func FlagsToOverride(explicit map[string]bool, f RawFlags) (*Plan, error) {
 	}
 	if explicit["limit-to-listed"] {
 		p.Guidance.AttackSurface.LimitToListed = boolPtr(f.LimitToListed)
+	}
+	if explicit["auto-approve-plan"] {
+		// CLI semantic: presence of --auto-approve-plan means
+		// require_plan_approval=false. The bool always carries true when
+		// the flag is set (it's a switch, not a value), so we invert.
+		p.Workflow.RequirePlanApproval = boolPtr(!f.AutoApprovePlan)
 	}
 	if explicit["notify"] {
 		p.Notifications.Webhook = f.Notify

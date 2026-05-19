@@ -33,6 +33,13 @@ type CoordinatorState struct {
 	// to only those). AttackStrategy carries free-text context and
 	// known-weakness hints. Weight planning toward these.
 	Guidance *Guidance `json:"guidance,omitempty"`
+	// Goal is the assessment-wide commitment the orchestrator
+	// generated before discovery from the operator's guidance + target.
+	// Treat as a guardrail: don't propose actions whose intent falls
+	// outside it. Empty during the auto-approve path's first iteration
+	// only if goal generation failed; the workflow refuses to start
+	// exploitation without a goal.
+	Goal string `json:"goal,omitempty"`
 }
 
 // FindingSummary is a compact representation of a finding for the

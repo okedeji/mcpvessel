@@ -24,7 +24,7 @@ export { AccessClient } from './client/access';
 
 // Shared types.
 export * from './types/enums';
-export type { AssessmentInfo, AssessmentConfig, Report, CreateAssessmentRequest, ListAssessmentsRequest } from './types/assessment';
+export type { AssessmentInfo, AssessmentConfig, Report, CreateAssessmentRequest, ListAssessmentsRequest, Workflow, PlanProposal, PlanProposalAction } from './types/assessment';
 export type { Finding, Evidence, ValidationProof, ListFindingsRequest } from './types/findings';
 export { FindingKind } from './types/findings';
 export type { Intervention, ListInterventionsRequest, ResolveCageRequest, ResolveReviewRequest } from './types/intervention';

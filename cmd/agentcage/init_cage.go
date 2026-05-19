@@ -58,7 +58,7 @@ func setupCageRuntime(ctx context.Context, cfg *config.Config, db *sql.DB, log l
 		return nil, err
 	}
 
-	falcoReader, err := openFalcoReader(ctx, cfg, log)
+	falcoReader, err := openFalcoReader(log)
 	if err != nil {
 		return nil, err
 	}
@@ -109,7 +109,7 @@ func writeFalcoRules(cfg *config.Config, log logr.Logger) (cage.AlertHandler, er
 
 // Falco is the only behavioral tripwire, so missing Falco is
 // fatal in strict posture.
-func openFalcoReader(ctx context.Context, cfg *config.Config, log logr.Logger) (*cage.FalcoAlertReader, error) {
+func openFalcoReader(log logr.Logger) (*cage.FalcoAlertReader, error) {
 	alertFile := filepath.Join(embedded.RunDir(), "falco", "alerts.jsonl")
 
 	// Falco was just started by the embedded manager. Give it up to
@@ -149,6 +149,17 @@ func (a *interventionQueueAdapter) Enqueue(ctx context.Context, reqType cage.Int
 // queue, different signature (no cageID, fixed type/priority).
 func (a *interventionQueueAdapter) EnqueueReportReview(ctx context.Context, assessmentID, description string, contextData []byte, timeout time.Duration) (string, error) {
 	req, err := a.q.Enqueue(ctx, intervention.TypeReportReview, intervention.PriorityHigh, "", assessmentID, description, contextData, timeout)
+	if err != nil {
+		return "", err
+	}
+	return req.ID, nil
+}
+
+// EnqueuePlanApproval satisfies assessment.InterventionEnqueuer for
+// the post-discovery plan-approval gate. PlanProposal JSON arrives in
+// contextData so `agentcage assessments plan <id>` can render it.
+func (a *interventionQueueAdapter) EnqueuePlanApproval(ctx context.Context, assessmentID, description string, contextData []byte, timeout time.Duration) (string, error) {
+	req, err := a.q.Enqueue(ctx, intervention.TypePlanApproval, intervention.PriorityHigh, "", assessmentID, description, contextData, timeout)
 	if err != nil {
 		return "", err
 	}

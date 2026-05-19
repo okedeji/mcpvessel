@@ -136,6 +136,14 @@ func (e *TimeoutEnforcer) signalTimeout(ctx context.Context, req *Request) error
 			SignalReportReview,
 			ReportReviewSignal{Decision: ReviewTimeout, Rationale: "intervention timeout"},
 		)
+	case TypePlanApproval:
+		return e.signaler.SignalWorkflow(
+			ctx,
+			req.AssessmentID,
+			"",
+			SignalPlanApproval,
+			PlanApprovalSignal{Decision: PlanTimeout, Rationale: "plan approval deadline exceeded"},
+		)
 	default:
 		return fmt.Errorf("unknown intervention type %d for timeout signaling", req.Type)
 	}

@@ -10,6 +10,7 @@ const (
 	TypeReportReview
 	TypePolicyViolation
 	TypeAgentHold
+	TypePlanApproval
 )
 
 func (t Type) String() string {
@@ -24,6 +25,8 @@ func (t Type) String() string {
 		return "policy_violation"
 	case TypeAgentHold:
 		return "agent_hold"
+	case TypePlanApproval:
+		return "plan_approval"
 	default:
 		return "unknown"
 	}
@@ -122,6 +125,33 @@ func (d ReviewDecision) String() string {
 	case ReviewReject:
 		return "reject"
 	case ReviewTimeout:
+		return "timeout"
+	default:
+		return "unknown"
+	}
+}
+
+type PlanDecision int
+
+const (
+	PlanApprove PlanDecision = iota + 1
+	PlanReject
+	PlanModify
+	// Emitted only by the deadline enforcer when the approval window
+	// expires without an operator response. Not a valid operator-driven
+	// decision: ResolvePlanApproval rejects it at the gRPC boundary.
+	PlanTimeout
+)
+
+func (d PlanDecision) String() string {
+	switch d {
+	case PlanApprove:
+		return "approve"
+	case PlanReject:
+		return "reject"
+	case PlanModify:
+		return "modify"
+	case PlanTimeout:
 		return "timeout"
 	default:
 		return "unknown"

@@ -26,6 +26,8 @@ enum AssessmentStatus {
   ASSESSMENT_STATUS_REJECTED = 6;
   ASSESSMENT_STATUS_FAILED = 7;
   ASSESSMENT_STATUS_UNREVIEWED = 8;
+  ASSESSMENT_STATUS_AWAITING_PLAN_APPROVAL = 9;
+  ASSESSMENT_STATUS_PLAN_UNAPPROVED = 10;
 }
 
 message CageTypeConfig {
@@ -49,6 +51,36 @@ message AssessmentConfig {
   int32 max_total_cages = 14;
   int32 max_iterations = 17;
   map<string, string> environment = 18;
+  Workflow workflow = 19;
+}
+
+// Workflow controls pipeline gates that are operator-toggleable but
+// not part of attack guidance. Wrapped (not flat bools on
+// AssessmentConfig) so future gates can be added without proto field
+// churn.
+message Workflow {
+  // require_plan_approval=true (default) pauses the assessment after
+  // discovery on a plan_approval intervention; false runs the
+  // generated plan immediately.
+  bool require_plan_approval = 1;
+}
+
+// PlanProposal is the orchestrator-generated exploitation plan
+// surfaced on a plan_approval intervention. Serialized as the
+// intervention's context_data.
+message PlanProposal {
+  string goal = 1;
+  string summary = 2;
+  repeated PlanAction actions = 3;
+  int32 estimated_cages = 4;
+  int64 estimated_tokens = 5;
+  string notes = 6;
+}
+
+message PlanAction {
+  string endpoint = 1;
+  string vuln_class = 2;
+  string objective = 3;
 }
 
 message NotificationConfig {

@@ -25,6 +25,32 @@ export interface NotificationConfig {
   onComplete?: boolean;
 }
 
+export interface Workflow {
+  /**
+   * Pause the assessment after discovery on a plan_approval intervention.
+   * Default true. Set false (or pass --auto-approve-plan) for autonomous
+   * runs where exploitation should follow discovery without a human gate.
+   */
+  requirePlanApproval?: boolean;
+}
+
+export interface PlanProposalAction {
+  type: string;
+  scope: TargetScope;
+  vulnClass: string;
+  objective: string;
+  priority?: number;
+}
+
+export interface PlanProposal {
+  goal: string;
+  summary: string;
+  actions: PlanProposalAction[];
+  estimatedCages: number;
+  estimatedTokens: number;
+  notes?: string;
+}
+
 export interface CageTypeConfig {
   vcpus?: number;
   memoryMb?: number;
@@ -42,6 +68,7 @@ export interface AssessmentConfig {
   maxIterations?: number;
   cageTypes?: Record<string, CageTypeConfig>;
   guidance?: Guidance;
+  workflow?: Workflow;
   notifications?: NotificationConfig;
   tags?: Record<string, string>;
 }

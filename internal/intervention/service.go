@@ -181,3 +181,62 @@ func (s *Service) ResolveAssessmentReview(ctx context.Context, interventionID st
 
 	return nil
 }
+
+func (s *Service) ResolvePlanApproval(ctx context.Context, interventionID string, decision PlanDecision, rationale, feedback, operatorID string) error {
+	// PlanTimeout is reserved for the deadline enforcer. Operators who
+	// want the same effect should use PlanReject with a rationale.
+	if decision == PlanTimeout {
+		return fmt.Errorf("plan decision %q is reserved for the deadline enforcer", decision)
+	}
+	// Modify must carry feedback or the planner has nothing to revise on.
+	if decision == PlanModify && feedback == "" {
+		return fmt.Errorf("plan decision %q requires feedback", decision)
+	}
+
+	req, err := s.queue.store.GetIntervention(ctx, interventionID)
+	if err != nil {
+		return fmt.Errorf("getting intervention %s for plan approval: %w", interventionID, err)
+	}
+	if req == nil {
+		return fmt.Errorf("intervention %s not found", interventionID)
+	}
+	if req.Type != TypePlanApproval {
+		return fmt.Errorf("intervention %s is type %s, not plan_approval", interventionID, req.Type)
+	}
+
+	// Modify leaves the intervention pending — the workflow re-generates
+	// the proposal and re-enqueues. Approve/Reject are terminal.
+	if decision != PlanModify {
+		if err := s.queue.Resolve(ctx, interventionID, Decision{
+			InterventionID: interventionID,
+			Rationale:      rationale,
+			OperatorID:     operatorID,
+			DecidedAt:      time.Now(),
+		}); err != nil {
+			return fmt.Errorf("resolving plan approval %s: %w", interventionID, err)
+		}
+	}
+
+	if err := s.signaler.SignalWorkflow(
+		ctx,
+		req.AssessmentID,
+		"",
+		SignalPlanApproval,
+		PlanApprovalSignal{
+			Decision:  decision,
+			Rationale: rationale,
+			Feedback:  feedback,
+		},
+	); err != nil {
+		return fmt.Errorf("signaling assessment workflow for plan approval %s: %w", interventionID, err)
+	}
+
+	s.logger.Info("plan approval resolved",
+		"intervention_id", interventionID,
+		"assessment_id", req.AssessmentID,
+		"decision", decision.String(),
+		"operator_id", operatorID,
+	)
+
+	return nil
+}

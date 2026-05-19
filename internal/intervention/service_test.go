@@ -127,6 +127,109 @@ func TestResolveNonexistentIntervention(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestResolvePlanApprovalApprove(t *testing.T) {
+	srv, q, sig := newTestServer()
+	ctx := context.Background()
+
+	req, err := q.Enqueue(ctx, TypePlanApproval, PriorityHigh, "", "a-1", "plan ready", nil, 24*time.Hour)
+	require.NoError(t, err)
+
+	err = srv.ResolvePlanApproval(ctx, req.ID, PlanApprove, "looks good", "", "op-1")
+	require.NoError(t, err)
+
+	stored, err := q.store.GetIntervention(ctx, req.ID)
+	require.NoError(t, err)
+	assert.Equal(t, StatusResolved, stored.Status)
+
+	signals := sig.getSignals()
+	require.Len(t, signals, 1)
+	assert.Equal(t, "a-1", signals[0].WorkflowID)
+	assert.Equal(t, SignalPlanApproval, signals[0].SignalName)
+
+	sig0, ok := signals[0].Arg.(PlanApprovalSignal)
+	require.True(t, ok)
+	assert.Equal(t, PlanApprove, sig0.Decision)
+}
+
+func TestResolvePlanApprovalRejectFinalizes(t *testing.T) {
+	srv, q, sig := newTestServer()
+	ctx := context.Background()
+
+	req, err := q.Enqueue(ctx, TypePlanApproval, PriorityHigh, "", "a-1", "plan ready", nil, 24*time.Hour)
+	require.NoError(t, err)
+
+	err = srv.ResolvePlanApproval(ctx, req.ID, PlanReject, "scope too broad", "", "op-1")
+	require.NoError(t, err)
+
+	stored, err := q.store.GetIntervention(ctx, req.ID)
+	require.NoError(t, err)
+	assert.Equal(t, StatusResolved, stored.Status)
+
+	signals := sig.getSignals()
+	require.Len(t, signals, 1)
+	sig0, ok := signals[0].Arg.(PlanApprovalSignal)
+	require.True(t, ok)
+	assert.Equal(t, PlanReject, sig0.Decision)
+}
+
+func TestResolvePlanApprovalModifyKeepsPending(t *testing.T) {
+	srv, q, sig := newTestServer()
+	ctx := context.Background()
+
+	req, err := q.Enqueue(ctx, TypePlanApproval, PriorityHigh, "", "a-1", "plan ready", nil, 24*time.Hour)
+	require.NoError(t, err)
+
+	err = srv.ResolvePlanApproval(ctx, req.ID, PlanModify, "scope wider", "drop the marketing routes", "op-1")
+	require.NoError(t, err)
+
+	stored, err := q.store.GetIntervention(ctx, req.ID)
+	require.NoError(t, err)
+	assert.Equal(t, StatusPending, stored.Status, "modify must leave intervention pending so the workflow can re-enqueue or retire after re-generation")
+
+	signals := sig.getSignals()
+	require.Len(t, signals, 1)
+	sig0, ok := signals[0].Arg.(PlanApprovalSignal)
+	require.True(t, ok)
+	assert.Equal(t, PlanModify, sig0.Decision)
+	assert.Equal(t, "drop the marketing routes", sig0.Feedback)
+}
+
+func TestResolvePlanApprovalModifyRequiresFeedback(t *testing.T) {
+	srv, q, sig := newTestServer()
+	ctx := context.Background()
+
+	req, err := q.Enqueue(ctx, TypePlanApproval, PriorityHigh, "", "a-1", "plan ready", nil, 24*time.Hour)
+	require.NoError(t, err)
+
+	err = srv.ResolvePlanApproval(ctx, req.ID, PlanModify, "no detail", "", "op-1")
+	require.Error(t, err)
+	assert.Empty(t, sig.getSignals())
+}
+
+func TestResolvePlanApprovalRejectsTimeoutDecision(t *testing.T) {
+	srv, q, sig := newTestServer()
+	ctx := context.Background()
+
+	req, err := q.Enqueue(ctx, TypePlanApproval, PriorityHigh, "", "a-1", "plan ready", nil, 24*time.Hour)
+	require.NoError(t, err)
+
+	err = srv.ResolvePlanApproval(ctx, req.ID, PlanTimeout, "trying to fake a timeout", "", "op-1")
+	require.Error(t, err)
+	assert.Empty(t, sig.getSignals())
+}
+
+func TestResolvePlanApprovalWrongType(t *testing.T) {
+	srv, q, sig := newTestServer()
+	ctx := context.Background()
+
+	req, err := q.Enqueue(ctx, TypeReportReview, PriorityHigh, "", "a-1", "report ready", nil, 1*time.Hour)
+	require.NoError(t, err)
+
+	err = srv.ResolvePlanApproval(ctx, req.ID, PlanApprove, "wrong target", "", "op-1")
+	require.Error(t, err)
+	assert.Empty(t, sig.getSignals())
+}
+
 func TestListInterventionsFiltered(t *testing.T) {
 	srv, q, _ := newTestServer()
 	ctx := context.Background()

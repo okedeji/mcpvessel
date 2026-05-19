@@ -238,6 +238,9 @@ func printInterventionCommand(iv *pb.InterventionInfo) {
 		fmt.Printf("           Run: agentcage interventions resolve --id %s --action resume  (or --action kill)\n", id)
 	case strings.Contains(iv.GetType().String(), "REPORT_REVIEW"):
 		fmt.Printf("           Run: agentcage interventions resolve --id %s --action approve\n", id)
+	case strings.Contains(iv.GetType().String(), "PLAN_APPROVAL"):
+		fmt.Printf("           View: agentcage assessments plan %s\n", iv.GetAssessmentId())
+		fmt.Printf("           Then: agentcage interventions resolve --id %s --action approve  (or reject / modify --feedback ...)\n", id)
 	default:
 		fmt.Printf("           Run: agentcage interventions\n")
 	}
@@ -249,7 +252,9 @@ func isTerminal(status pb.AssessmentStatus) bool {
 		pb.AssessmentStatus_ASSESSMENT_STATUS_REJECTED,
 		pb.AssessmentStatus_ASSESSMENT_STATUS_UNREVIEWED,
 		pb.AssessmentStatus_ASSESSMENT_STATUS_FAILED,
-		pb.AssessmentStatus_ASSESSMENT_STATUS_PENDING_REVIEW:
+		pb.AssessmentStatus_ASSESSMENT_STATUS_PENDING_REVIEW,
+		pb.AssessmentStatus_ASSESSMENT_STATUS_AWAITING_PLAN_APPROVAL,
+		pb.AssessmentStatus_ASSESSMENT_STATUS_PLAN_UNAPPROVED:
 		return true
 	}
 	return false
@@ -272,6 +277,10 @@ func printTerminalSummary(info *pb.AssessmentInfo, s *followState, assessmentID 
 		fmt.Println("Assessment failed.")
 	case pb.AssessmentStatus_ASSESSMENT_STATUS_PENDING_REVIEW:
 		fmt.Println("Assessment awaiting review.")
+	case pb.AssessmentStatus_ASSESSMENT_STATUS_AWAITING_PLAN_APPROVAL:
+		fmt.Println("Discovery complete. Exploitation plan awaiting approval.")
+	case pb.AssessmentStatus_ASSESSMENT_STATUS_PLAN_UNAPPROVED:
+		fmt.Println("Exploitation plan was not approved; discovery-only report generated.")
 	}
 
 	if stats != nil {
@@ -288,6 +297,8 @@ func printTerminalSummary(info *pb.AssessmentInfo, s *followState, assessmentID 
 	switch status {
 	case pb.AssessmentStatus_ASSESSMENT_STATUS_PENDING_REVIEW:
 		fmt.Printf("Run: agentcage interventions\n")
+	case pb.AssessmentStatus_ASSESSMENT_STATUS_AWAITING_PLAN_APPROVAL:
+		fmt.Printf("View: agentcage assessments plan %s\n", assessmentID)
 	default:
 		fmt.Printf("Run: agentcage report --assessment %s\n", assessmentID)
 	}

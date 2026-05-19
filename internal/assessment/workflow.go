@@ -102,11 +102,32 @@ func AssessmentWorkflow(ctx workflow.Context, input AssessmentWorkflowInput) (As
 	var cagesCompleted []CageSummary
 	var budgetDrained bool
 
+	// Phase A: orchestrator-generated goal. Anchors the discovery
+	// cage's objective and is referenced as a guardrail by the
+	// coordinator on every exploitation iteration. Always runs — the
+	// human gate (Phase B) is what's operator-toggleable, the goal is
+	// not.
+	//
+	// Versioned so workflows that started before this commit (none
+	// today, but the gate costs nothing) replay through the
+	// no-goal path instead of waiting on an activity that wasn't
+	// registered when they began.
+	goalVersion := workflow.GetVersion(ctx, "add-goal-generation", workflow.DefaultVersion, 1)
+	var goal string
+	if goalVersion == 1 {
+		var goalErr error
+		goal, goalErr = runGoalGeneration(ctx, input.AssessmentID, cfg)
+		if goalErr != nil {
+			return failResult(ctx, input.AssessmentID, result, "generating assessment goal: %v", goalErr), nil
+		}
+		logger.Info("assessment goal generated", "assessment_id", input.AssessmentID, "goal_len", len(goal))
+	}
+
 	if err := updateStatus(ctx, input.AssessmentID, StatusDiscovery); err != nil {
 		return failResult(ctx, input.AssessmentID, result, "updating status to mapping: %v", err), nil
 	}
 
-	discoveryCageID, err := createDiscoveryCage(ctx, input.AssessmentID, cfg)
+	discoveryCageID, err := createDiscoveryCage(ctx, input.AssessmentID, cfg, goal)
 	if err != nil {
 		return failResult(ctx, input.AssessmentID, result, "creating discovery cage for surface mapping: %v", err), nil
 	}
@@ -126,13 +147,44 @@ func AssessmentWorkflow(ctx workflow.Context, input AssessmentWorkflowInput) (As
 	}
 
 	// Skip exploitation if agent has no exploitation capabilities.
+	// Plan-approval is skipped too — no point gating a no-op.
 	if len(cfg.Capabilities.Exploitation) == 0 {
-		logger.Info("agent has no exploitation capabilities, skipping to validation", "assessment_id", input.AssessmentID)
+		logger.Info("agent has no exploitation capabilities, skipping plan-approval and exploitation", "assessment_id", input.AssessmentID)
 		maxIterations = 0
 	}
 
-	if err := updateStatus(ctx, input.AssessmentID, StatusExploitation); err != nil {
-		return failResult(ctx, input.AssessmentID, result, "updating status to testing: %v", err), nil
+	// Phase B: plan-approval gate. Generate an exploitation plan from
+	// goal + guidance + discovery findings + capabilities. When
+	// require_plan_approval is true (default), pause on a plan_approval
+	// intervention; otherwise log and proceed.
+	//
+	// Versioned so older workflows (none today) skip the gate entirely
+	// rather than block forever waiting on a signal channel that was
+	// never registered.
+	planVersion := workflow.GetVersion(ctx, "add-plan-approval-phase", workflow.DefaultVersion, 1)
+	planApproved := true
+	if planVersion == 1 && maxIterations > 0 {
+		var planErr error
+		planApproved, planErr = runPlanApprovalGate(ctx, input.AssessmentID, cfg, goal, logger)
+		if planErr != nil {
+			return failResult(ctx, input.AssessmentID, result, "plan-approval gate: %v", planErr), nil
+		}
+	}
+
+	if !planApproved {
+		// Reject or timeout. Skip exploitation+validation; jump to
+		// report generation with discovery-only findings so the
+		// operator still gets an artifact.
+		if err := updateStatus(ctx, input.AssessmentID, StatusPlanUnapproved); err != nil {
+			return failResult(ctx, input.AssessmentID, result, "updating status to plan_unapproved: %v", err), nil
+		}
+		maxIterations = 0
+	}
+
+	if planApproved {
+		if err := updateStatus(ctx, input.AssessmentID, StatusExploitation); err != nil {
+			return failResult(ctx, input.AssessmentID, result, "updating status to testing: %v", err), nil
+		}
 	}
 
 	startTime := workflow.Now(ctx)
@@ -203,6 +255,7 @@ func AssessmentWorkflow(ctx workflow.Context, input AssessmentWorkflowInput) (As
 			TimeLimit:         cfg.MaxDuration,
 			AgentCapabilities: cfg.Capabilities,
 			Guidance:          cfg.Guidance,
+			Goal:              goal,
 		}
 
 		decision, err := planNextActions(ctx, state)
@@ -263,36 +316,44 @@ func AssessmentWorkflow(ctx workflow.Context, input AssessmentWorkflowInput) (As
 		return result, nil
 	}
 
-	if err := updateStatus(ctx, input.AssessmentID, StatusValidation); err != nil {
-		return failResult(ctx, input.AssessmentID, result, "updating status to validating: %v", err), nil
-	}
+	// Skip validation when the plan was unapproved. PlanUnapproved is
+	// not a valid source for the Validation transition (and there's
+	// nothing to validate without exploitation findings anyway). Jump
+	// to report generation directly so the operator still gets a
+	// discovery-only artifact.
+	var validated []findings.Finding
+	if planApproved {
+		if err := updateStatus(ctx, input.AssessmentID, StatusValidation); err != nil {
+			return failResult(ctx, input.AssessmentID, result, "updating status to validating: %v", err), nil
+		}
 
-	candidates, err := getCandidateFindings(ctx, input.AssessmentID)
-	if err != nil {
-		return failResult(ctx, input.AssessmentID, result, "fetching candidate findings for validation: %v", err), nil
-	}
+		candidates, err := getCandidateFindings(ctx, input.AssessmentID)
+		if err != nil {
+			return failResult(ctx, input.AssessmentID, result, "fetching candidate findings for validation: %v", err), nil
+		}
 
-	_, validatorCages, err := validateFindings(ctx, input.AssessmentID, cfg, candidates, result.TotalCages)
-	if err != nil {
-		return failResult(ctx, input.AssessmentID, result, "validating findings: %v", err), nil
-	}
-	result.TotalCages += validatorCages
+		_, validatorCages, err := validateFindings(ctx, input.AssessmentID, cfg, candidates, result.TotalCages)
+		if err != nil {
+			return failResult(ctx, input.AssessmentID, result, "validating findings: %v", err), nil
+		}
+		result.TotalCages += validatorCages
 
-	validated, err := getValidatedFindings(ctx, input.AssessmentID)
-	if err != nil {
-		return failResult(ctx, input.AssessmentID, result, "fetching validated findings for report: %v", err), nil
-	}
-	result.Findings = int32(len(validated))
+		validated, err = getValidatedFindings(ctx, input.AssessmentID)
+		if err != nil {
+			return failResult(ctx, input.AssessmentID, result, "fetching validated findings for report: %v", err), nil
+		}
+		result.Findings = int32(len(validated))
 
-	enrichFindings(ctx, input.AssessmentID, validated)
+		enrichFindings(ctx, input.AssessmentID, validated)
 
-	validated, err = getValidatedFindings(ctx, input.AssessmentID)
-	if err != nil {
-		return failResult(ctx, input.AssessmentID, result, "fetching enriched findings for report: %v", err), nil
+		validated, err = getValidatedFindings(ctx, input.AssessmentID)
+		if err != nil {
+			return failResult(ctx, input.AssessmentID, result, "fetching enriched findings for report: %v", err), nil
+		}
 	}
 	// Include candidates so discovery-only runs (and any unvalidated
 	// surface findings) still surface in the report.
-	candidates, err = getCandidateFindings(ctx, input.AssessmentID)
+	candidates, err := getCandidateFindings(ctx, input.AssessmentID)
 	if err != nil {
 		return failResult(ctx, input.AssessmentID, result, "fetching candidate findings for report: %v", err), nil
 	}
@@ -455,7 +516,133 @@ func applyCageDefaults(cageCfg *cage.Config, cfg Config) {
 	applyGuidance(cageCfg, cfg.Guidance)
 }
 
-func createDiscoveryCage(ctx workflow.Context, assessmentID string, cfg Config) (string, error) {
+// runGoalGeneration calls the LLM to produce the assessment-wide
+// goal that anchors discovery and exploitation. Returns an error if
+// the LLM call fails — the workflow refuses to start a cage without
+// a goal because the goal IS the safety frame.
+func runGoalGeneration(ctx workflow.Context, assessmentID string, cfg Config) (string, error) {
+	actCtx := withActivityTimeout(ctx, TimeoutPlanNextActions)
+	var goal string
+	err := workflow.ExecuteActivity(actCtx, "GenerateGoal", assessmentID, cfg.Target.Host, cfg.Guidance, cfg.TokenBudget).Get(ctx, &goal)
+	return goal, err
+}
+
+// runPlanApprovalGate generates the exploitation PlanProposal,
+// optionally enqueues a human-review intervention, and loops on
+// operator feedback. Returns true when the workflow may proceed to
+// exploitation; false when the operator rejected or the deadline
+// expired.
+func runPlanApprovalGate(ctx workflow.Context, assessmentID string, cfg Config, goal string, logger LogLike) (bool, error) {
+	findingsList, err := getAllFindings(ctx, assessmentID)
+	if err != nil {
+		return false, fmt.Errorf("fetching findings for plan generation: %w", err)
+	}
+
+	var feedback string
+	for attempt := 0; attempt < 5; attempt++ {
+		proposal, err := generateExploitationPlan(ctx, PlanProposalInput{
+			AssessmentID:     assessmentID,
+			Goal:             goal,
+			Guidance:         cfg.Guidance,
+			Findings:         SummarizeFindings(findingsList),
+			Capabilities:     cfg.Capabilities,
+			OperatorFeedback: feedback,
+			TokenBudget:      cfg.TokenBudget,
+		})
+		if err != nil {
+			return false, fmt.Errorf("generating exploitation plan: %w", err)
+		}
+
+		if !cfg.RequirePlanApproval {
+			logger.Info("plan auto-approved (workflow.require_plan_approval=false)",
+				"assessment_id", assessmentID,
+				"estimated_cages", proposal.EstimatedCages,
+				"estimated_tokens", proposal.EstimatedTokens,
+			)
+			return true, nil
+		}
+
+		if err := updateStatus(ctx, assessmentID, StatusAwaitingPlanApproval); err != nil {
+			return false, fmt.Errorf("updating status to awaiting_plan_approval: %w", err)
+		}
+
+		proposalJSON, marshalErr := json.Marshal(proposal)
+		if marshalErr != nil {
+			return false, fmt.Errorf("marshaling plan proposal: %w", marshalErr)
+		}
+
+		enqueueCtx := withActivityTimeout(ctx, TimeoutUpdateStatus)
+		if err := workflow.ExecuteActivity(enqueueCtx, "EnqueuePlanApproval", assessmentID, cfg.CustomerID, proposalJSON).Get(ctx, nil); err != nil {
+			return false, fmt.Errorf("enqueuing plan approval intervention: %w", err)
+		}
+
+		signal, err := waitForPlanApproval(ctx)
+		if err != nil {
+			return false, err
+		}
+
+		switch signal.Decision {
+		case intervention.PlanApprove:
+			logger.Info("plan approved", "assessment_id", assessmentID)
+			return true, nil
+		case intervention.PlanModify:
+			logger.Info("plan modify requested, regenerating",
+				"assessment_id", assessmentID, "feedback_len", len(signal.Feedback))
+			feedback = signal.Feedback
+			continue
+		case intervention.PlanReject, intervention.PlanTimeout:
+			logger.Info("plan not approved, skipping exploitation",
+				"assessment_id", assessmentID, "decision", signal.Decision.String())
+			return false, nil
+		default:
+			return false, fmt.Errorf("unknown plan decision %q", signal.Decision)
+		}
+	}
+	return false, fmt.Errorf("plan approval did not converge after 5 modify rounds")
+}
+
+// LogLike is the subset of workflow.Logger used by helpers. Local
+// alias because workflow.Logger's interface is unexported in the
+// SDK's type system at this call site.
+type LogLike interface {
+	Info(msg string, keyvals ...interface{})
+}
+
+func generateExploitationPlan(ctx workflow.Context, in PlanProposalInput) (PlanProposal, error) {
+	actCtx := withActivityTimeout(ctx, TimeoutPlanNextActions)
+	var proposal PlanProposal
+	err := workflow.ExecuteActivity(actCtx, "GenerateExploitationPlan", in).Get(ctx, &proposal)
+	return proposal, err
+}
+
+func waitForPlanApproval(ctx workflow.Context) (*intervention.PlanApprovalSignal, error) {
+	signalCh := workflow.GetSignalChannel(ctx, intervention.SignalPlanApproval)
+	timer := workflow.NewTimer(ctx, TimeoutReviewDeadline)
+
+	sel := workflow.NewSelector(ctx)
+	var signal intervention.PlanApprovalSignal
+	var timedOut bool
+
+	sel.AddReceive(signalCh, func(ch workflow.ReceiveChannel, more bool) {
+		ch.Receive(ctx, &signal)
+	})
+	sel.AddFuture(timer, func(f workflow.Future) {
+		_ = f.Get(ctx, nil)
+		timedOut = true
+	})
+	sel.Select(ctx)
+
+	if timedOut {
+		return &intervention.PlanApprovalSignal{
+			Decision:  intervention.PlanTimeout,
+			Rationale: "plan approval deadline exceeded",
+		}, nil
+	}
+
+	return &signal, nil
+}
+
+func createDiscoveryCage(ctx workflow.Context, assessmentID string, cfg Config, goal string) (string, error) {
 	actCtx := withActivityTimeout(ctx, TimeoutCreateCage)
 	cageCfg := cage.Config{
 		AssessmentID: assessmentID,
@@ -463,6 +650,7 @@ func createDiscoveryCage(ctx workflow.Context, assessmentID string, cfg Config) 
 		BundleRef:    cfg.BundleRef,
 		Scope:        cfg.Target,
 		SkipPaths:    cfg.SkipPaths,
+		InputContext: []byte(goal),
 	}
 	applyCageDefaults(&cageCfg, cfg)
 

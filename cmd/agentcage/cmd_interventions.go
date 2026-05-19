@@ -142,6 +142,8 @@ func interventionTypeLabel(t pb.InterventionType) string {
 		return "policy_violation"
 	case pb.InterventionType_INTERVENTION_TYPE_AGENT_HOLD:
 		return "agent_hold"
+	case pb.InterventionType_INTERVENTION_TYPE_PLAN_APPROVAL:
+		return "plan_approval"
 	default:
 		return "unknown"
 	}
@@ -150,15 +152,17 @@ func interventionTypeLabel(t pb.InterventionType) string {
 func cmdInterventionsResolve(args []string) {
 	fs := flag.NewFlagSet("interventions resolve", flag.ExitOnError)
 	id := fs.String("id", "", "intervention ID (required)")
-	action := fs.String("action", "", "action: resume, kill, allow, block, retry, skip, approve, reject, retest")
+	action := fs.String("action", "", "action: resume, kill, allow, block, retry, skip, approve, reject, retest, modify")
 	rationale := fs.String("rationale", "", "reason for the decision")
+	feedback := fs.String("feedback", "", "operator revisions for plan_approval modify action")
 	_ = fs.Parse(args)
 
 	if *id == "" || *action == "" {
-		fmt.Fprintln(os.Stderr, "usage: agentcage interventions resolve --id <id> --action <action> [--rationale reason]")
+		fmt.Fprintln(os.Stderr, "usage: agentcage interventions resolve --id <id> --action <action> [--rationale reason] [--feedback revisions]")
 		fmt.Fprintln(os.Stderr, "\nActions:")
 		fmt.Fprintln(os.Stderr, "  resume, kill, allow, block     cage and budget interventions")
 		fmt.Fprintln(os.Stderr, "  approve, reject, retest        report review interventions")
+		fmt.Fprintln(os.Stderr, "  approve, reject, modify        plan approval interventions (modify needs --feedback)")
 		os.Exit(1)
 	}
 
@@ -184,15 +188,59 @@ func cmdInterventionsResolve(args []string) {
 
 	client := pb.NewInterventionServiceClient(conn)
 
-	switch *action {
-	case "approve", "reject", "retest":
-		resolveReview(ctx, client, *id, *action, *rationale)
-	case "resume", "kill", "allow", "block":
-		resolveCage(ctx, client, *id, *action, *rationale)
-	default:
-		fmt.Fprintf(os.Stderr, "error: unknown action %q\n", *action)
+	// Same action verbs map to different RPCs depending on intervention
+	// type ("approve" means review-approve for report_review and
+	// plan-approve for plan_approval). Fetch the intervention first so
+	// we can dispatch correctly.
+	info, err := client.GetIntervention(ctx, &pb.GetInterventionRequest{InterventionId: *id})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
+	switch info.GetIntervention().GetType() {
+	case pb.InterventionType_INTERVENTION_TYPE_PLAN_APPROVAL:
+		resolvePlan(ctx, client, *id, *action, *rationale, *feedback)
+	case pb.InterventionType_INTERVENTION_TYPE_REPORT_REVIEW:
+		resolveReview(ctx, client, *id, *action, *rationale)
+	default:
+		switch *action {
+		case "resume", "kill", "allow", "block":
+			resolveCage(ctx, client, *id, *action, *rationale)
+		default:
+			fmt.Fprintf(os.Stderr, "error: unknown action %q for intervention type %s\n", *action, interventionTypeLabel(info.GetIntervention().GetType()))
+			os.Exit(1)
+		}
+	}
+}
+
+func resolvePlan(ctx context.Context, client pb.InterventionServiceClient, id, action, rationale, feedback string) {
+	var decision pb.PlanDecision
+	switch action {
+	case "approve":
+		decision = pb.PlanDecision_PLAN_DECISION_APPROVE
+	case "reject":
+		decision = pb.PlanDecision_PLAN_DECISION_REJECT
+	case "modify":
+		decision = pb.PlanDecision_PLAN_DECISION_MODIFY
+		if feedback == "" {
+			fmt.Fprintln(os.Stderr, "error: --feedback is required for plan modify")
+			os.Exit(1)
+		}
+	default:
+		fmt.Fprintf(os.Stderr, "error: invalid plan-approval action %q (expected approve, reject, or modify)\n", action)
+		os.Exit(1)
+	}
+
+	if _, err := client.ResolvePlanApproval(ctx, &pb.ResolvePlanApprovalRequest{
+		InterventionId: id,
+		Decision:       decision,
+		Rationale:      rationale,
+		Feedback:       feedback,
+	}); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("Plan-approval intervention %s resolved with decision=%s\n", id, action)
 }
 
 func resolveCage(ctx context.Context, client pb.InterventionServiceClient, id, action, rationale string) {

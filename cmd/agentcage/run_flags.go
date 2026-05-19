@@ -28,6 +28,7 @@ type runFlags struct {
 	apiSpecs         stringSliceFlag
 	knownWeaknesses  stringSliceFlag
 	limitToListed    bool
+	autoApprovePlan  bool
 	notify           string
 	notifyOnFinding  bool
 	notifyOnComplete bool
@@ -58,6 +59,7 @@ func parseRunFlags(args []string) (*runFlags, *flag.FlagSet) {
 	fs.Var(&rf.apiSpecs, "api-spec", "OpenAPI/GraphQL spec URL (repeatable)")
 	fs.Var(&rf.knownWeaknesses, "known-weakness", "known weakness hint (repeatable)")
 	fs.BoolVar(&rf.limitToListed, "limit-to-listed", false, "test only the listed endpoints; ignore other discovery findings")
+	fs.BoolVar(&rf.autoApprovePlan, "auto-approve-plan", false, "skip the human plan-approval gate after discovery (autonomous runs)")
 	fs.StringVar(&rf.notify, "notify", "", "webhook URL for notifications")
 	fs.BoolVar(&rf.notifyOnFinding, "notify-on-finding", false, "notify per validated finding")
 	fs.BoolVar(&rf.notifyOnComplete, "notify-on-complete", false, "notify when assessment finishes")
@@ -113,6 +115,9 @@ Guidance:
   --api-spec           OpenAPI/GraphQL spec URL (repeatable)
   --known-weakness     known weakness hint (repeatable)
   --limit-to-listed    test only the listed endpoints; ignore other discovery findings
+
+Workflow:
+  --auto-approve-plan  skip the human plan-approval gate after discovery (autonomous runs)
 
 Notifications:
   --notify             webhook URL for notifications

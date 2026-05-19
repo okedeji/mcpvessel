@@ -84,16 +84,30 @@ func (assessmentActivityStub) EnrichFinding(_ context.Context, _ string, _ findi
 func (assessmentActivityStub) StoreValidationProof(_ context.Context, _ string, _ findings.Proof) error {
 	return nil
 }
+func (assessmentActivityStub) GenerateGoal(_ context.Context, _, _ string, _ *Guidance, _ int64) (string, error) {
+	return "Test the authorized scope for OWASP top-10 issues using the agent's loaded tools. Read-only probes only.", nil
+}
+func (assessmentActivityStub) GenerateExploitationPlan(_ context.Context, in PlanProposalInput) (PlanProposal, error) {
+	return PlanProposal{
+		Goal:    in.Goal,
+		Summary: "stub plan",
+		Actions: []CoordinatorAction{{Type: "exploitation", Scope: cage.Scope{Host: "target.example.com"}, VulnClass: "sqli", Objective: "stub"}},
+	}, nil
+}
+func (assessmentActivityStub) EnqueuePlanApproval(_ context.Context, _, _ string, _ []byte) (string, error) {
+	return "ivn_plan_stub", nil
+}
 
 func testInput() AssessmentWorkflowInput {
 	return AssessmentWorkflowInput{
 		AssessmentID: "test-assessment-1",
 		Config: Config{
-			CustomerID:    "customer-1",
-			Target:        cage.Scope{Host: "target.example.com"},
-			TokenBudget:   1000000,
-			MaxIterations: 5,
-			Capabilities:  cagefile.AgentCapabilities{Discovery: true, Exploitation: []string{"sqli", "xss"}},
+			CustomerID:          "customer-1",
+			Target:              cage.Scope{Host: "target.example.com"},
+			TokenBudget:         1000000,
+			MaxIterations:       5,
+			Capabilities:        cagefile.AgentCapabilities{Discovery: true, Exploitation: []string{"sqli", "xss"}},
+			RequirePlanApproval: false,
 		},
 	}
 }
@@ -171,6 +185,105 @@ func TestAssessmentWorkflow_HappyPath(t *testing.T) {
 	assert.Greater(t, result.TotalCages, int32(0))
 	assert.Greater(t, result.Iterations, int32(0))
 	assert.Empty(t, result.Error)
+}
+
+func TestAssessmentWorkflow_PlanApproved(t *testing.T) {
+	env := newAssessmentTestEnv(t)
+	registerAssessmentHappyPathMocks(env)
+
+	// Signal plan approval first, then report review later.
+	env.RegisterDelayedCallback(func() {
+		env.SignalWorkflow(intervention.SignalPlanApproval, intervention.PlanApprovalSignal{
+			Decision: intervention.PlanApprove,
+		})
+	}, TimeoutWaitForCage+1*time.Second)
+	env.RegisterDelayedCallback(func() {
+		env.SignalWorkflow(intervention.SignalReportReview, intervention.ReportReviewSignal{
+			Decision: intervention.ReviewApprove,
+		})
+	}, TimeoutWaitForCage*4+1*time.Second)
+
+	in := testInput()
+	in.Config.RequirePlanApproval = true
+	env.ExecuteWorkflow(AssessmentWorkflow, in)
+	require.True(t, env.IsWorkflowCompleted())
+	require.NoError(t, env.GetWorkflowError())
+
+	var result AssessmentWorkflowResult
+	require.NoError(t, env.GetWorkflowResult(&result))
+	assert.Equal(t, StatusApproved, result.FinalStatus)
+}
+
+func TestAssessmentWorkflow_PlanRejectedSkipsExploitation(t *testing.T) {
+	env := newAssessmentTestEnv(t)
+
+	env.OnActivity("UpdateAssessmentStatus", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	env.OnActivity("CreateDiscoveryCage", mock.Anything, mock.Anything, mock.Anything).Return("cage-1", nil)
+	env.OnActivity("GetCandidateFindings", mock.Anything, mock.Anything).Return([]findings.Finding{}, nil)
+	env.OnActivity("GetValidatedFindings", mock.Anything, mock.Anything).Return([]findings.Finding{}, nil)
+	env.OnActivity("GenerateReport", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return([]byte("report"), nil)
+
+	// PlanNextActions must not be called once we reject.
+	planNextCalled := false
+	env.OnActivity("PlanNextActions", mock.Anything, mock.Anything).Return(
+		func(_ context.Context, _ CoordinatorState) (CoordinatorDecision, error) {
+			planNextCalled = true
+			return CoordinatorDecision{Done: true}, nil
+		},
+	)
+
+	env.RegisterDelayedCallback(func() {
+		env.SignalWorkflow(intervention.SignalPlanApproval, intervention.PlanApprovalSignal{
+			Decision:  intervention.PlanReject,
+			Rationale: "scope too broad",
+		})
+	}, TimeoutWaitForCage+1*time.Second)
+	// Report-review is still required after the discovery-only report.
+	env.RegisterDelayedCallback(func() {
+		env.SignalWorkflow(intervention.SignalReportReview, intervention.ReportReviewSignal{
+			Decision: intervention.ReviewApprove,
+		})
+	}, TimeoutWaitForCage*3+1*time.Second)
+
+	in := testInput()
+	in.Config.RequirePlanApproval = true
+	env.ExecuteWorkflow(AssessmentWorkflow, in)
+	require.True(t, env.IsWorkflowCompleted())
+	require.NoError(t, env.GetWorkflowError())
+
+	assert.False(t, planNextCalled, "rejected plan must not enter exploitation loop")
+}
+
+func TestAssessmentWorkflow_PlanModifyThenApprove(t *testing.T) {
+	env := newAssessmentTestEnv(t)
+	registerAssessmentHappyPathMocks(env)
+
+	env.RegisterDelayedCallback(func() {
+		env.SignalWorkflow(intervention.SignalPlanApproval, intervention.PlanApprovalSignal{
+			Decision: intervention.PlanModify,
+			Feedback: "drop the marketing routes",
+		})
+	}, TimeoutWaitForCage+1*time.Second)
+	env.RegisterDelayedCallback(func() {
+		env.SignalWorkflow(intervention.SignalPlanApproval, intervention.PlanApprovalSignal{
+			Decision: intervention.PlanApprove,
+		})
+	}, TimeoutWaitForCage+2*time.Second)
+	env.RegisterDelayedCallback(func() {
+		env.SignalWorkflow(intervention.SignalReportReview, intervention.ReportReviewSignal{
+			Decision: intervention.ReviewApprove,
+		})
+	}, TimeoutWaitForCage*4+2*time.Second)
+
+	in := testInput()
+	in.Config.RequirePlanApproval = true
+	env.ExecuteWorkflow(AssessmentWorkflow, in)
+	require.True(t, env.IsWorkflowCompleted())
+	require.NoError(t, env.GetWorkflowError())
+
+	var result AssessmentWorkflowResult
+	require.NoError(t, env.GetWorkflowResult(&result))
+	assert.Equal(t, StatusApproved, result.FinalStatus)
 }
 
 func TestAssessmentWorkflow_CoordinatorSpawnsCages(t *testing.T) {

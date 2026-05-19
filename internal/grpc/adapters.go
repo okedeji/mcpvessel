@@ -627,6 +627,14 @@ func (a *interventionAdapter) ResolveAssessmentReview(ctx context.Context, req *
 	return &pb.ResolveAssessmentReviewResponse{}, nil
 }
 
+func (a *interventionAdapter) ResolvePlanApproval(ctx context.Context, req *pb.ResolvePlanApprovalRequest) (*pb.ResolvePlanApprovalResponse, error) {
+	decision := planDecisionFromProto(req.GetDecision())
+	if err := a.server.ResolvePlanApproval(ctx, req.GetInterventionId(), decision, req.GetRationale(), req.GetFeedback(), "operator"); err != nil {
+		return nil, toGRPCError(err)
+	}
+	return &pb.ResolvePlanApprovalResponse{}, nil
+}
+
 type fleetAdapter struct {
 	pb.UnimplementedFleetServiceServer
 	server *fleet.Service
