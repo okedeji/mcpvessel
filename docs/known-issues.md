@@ -41,6 +41,20 @@ The `@agentcage/sdk` TypeScript package is not published to the npm registry. np
 
 agentcage requires Linux with `/dev/kvm`. The macOS support layer (Apple Virtualization.framework with nested KVM) was removed because Apple VZ does not expose VHE to the guest CPU, preventing Firecracker guests from booting. CLI commands (`run`, `logs`, `findings`) work from macOS against a remote Linux orchestrator.
 
+## Screenshots stored inline in Postgres JSONB
+
+**Status:** open
+**Severity:** low (today), medium (at scale)
+**Affects:** `internal/findings/types.go`, `internal/findings/pgstore.go`, `internal/findings/validate.go`
+
+Finding screenshots are stored as `bytes` inside the `evidence` JSONB column on the `findings` table. JSON-encoded byte arrays inflate ~33% via base64, screenshots compete with row-size limits, and TOAST handles only the long-tail compression. The `SanitizeFinding` step caps each screenshot at 5MB (`DefaultMaxScreenshotSize`) precisely because there's no object storage option.
+
+**Acceptable for:** assessments producing tens of findings with small PNGs (typical SPA login pages, single-component screenshots).
+
+**Not acceptable for:** assessments producing hundreds of findings with full-page captures, or any workflow that needs to retain the visual evidence trail long-term. The 5MB cap drops oversized screenshots silently (with a note in the description) — agent authors should compress before submitting.
+
+**Fix:** introduce an object store (S3 / MinIO / GCS) for evidence blobs. The `findings` row stores a reference (`screenshot_url string`) instead of bytes. `GetFinding` resolves the URL on read, `ListFindings` keeps the existing `has_screenshot` boolean so the list view stays cheap. Migration path: add the column, dual-write for one release, then drop the inline bytes.
+
 ## Non-descriptive agent capability tool names degrade silently
 
 **Status:** open (convention-only enforcement)
