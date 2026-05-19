@@ -31,6 +31,7 @@ type Env struct {
 	Objective         string                     `json:"objective,omitempty"`
 	LLMEndpoint       string                     `json:"llm_endpoint,omitempty"`
 	LLMAPIKey         string                     `json:"llm_api_key,omitempty"`
+	JudgeAPIKey       string                     `json:"judge_api_key,omitempty"`
 	NATSAddr          string                     `json:"nats_addr,omitempty"`
 	ScopeHost         string                     `json:"scope_host"`
 	ScopePorts        []string                   `json:"scope_ports,omitempty"`

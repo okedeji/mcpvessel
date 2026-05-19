@@ -6,8 +6,12 @@ export { generateJoinScript, type JoinOptions } from './client/join';
 // Agent SDK — for TypeScript agents running inside cages.
 export { AgentSDK, type AgentConfig, newFindingId, fetch, type FetchOptions } from './agent';
 
-// Judge server — HTTP framework for payload safety classification.
-export { createJudgeServer, type EvaluateFn, type JudgeServerConfig } from './judge';
+// Judge: building blocks for writing a payload-safety classifier
+// service. Types describe the wire format; validators parse and check
+// incoming requests / outgoing responses. The customer brings their
+// own HTTP framework, auth, observability, and LLM logic.
+export { validatePayloads, validateResults } from './judge';
+export type { JudgePayload, JudgeResult } from './judge';
 
 // Provisioner server — HTTP framework for bare-metal host management.
 export { createProvisionerServer, type ProvisionerHandler, type ProvisionerServerConfig } from './provisioner';
@@ -28,5 +32,4 @@ export type { FleetStatus, HostInfo, Capacity, DrainHostRequest } from './types/
 export type { CageInfo, CageLogs } from './types/cage';
 export type { AuditEntry, AuditDigest, ChainStatus, VerifyResult } from './types/audit';
 export type { AgentFinding, Directive, DirectiveInstruction, HoldRequest, HoldResponse } from './types/agent';
-export type { JudgePayload, JudgeResult } from './types/judge';
 export type { ProvisionResult, StatusResult } from './types/provisioner';

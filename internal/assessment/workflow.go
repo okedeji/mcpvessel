@@ -449,8 +449,6 @@ func applyCageDefaults(cageCfg *cage.Config, cfg Config) {
 	if cfg.TokenBudget > 0 {
 		cageCfg.LLM = &cage.LLMGatewayConfig{TokenBudget: cfg.TokenBudget}
 	}
-	cageCfg.ProxyConfig.ExtraBlock = cfg.ExtraBlock
-	cageCfg.ProxyConfig.ExtraFlag = cfg.ExtraFlag
 	cageCfg.Credentials = cfg.Credentials
 	cageCfg.ProofThreshold = cfg.ProofThreshold
 	cageCfg.Environment = cfg.Environment

@@ -14,13 +14,13 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/go-logr/logr"
 	"github.com/okedeji/agentcage/internal/ids"
 
-	"github.com/okedeji/agentcage/internal/config"
 	"github.com/okedeji/agentcage/internal/enforcement"
 	"github.com/okedeji/agentcage/internal/gateway"
 	proxylog "github.com/okedeji/agentcage/internal/log"
@@ -31,7 +31,7 @@ func main() {
 	targetAddr := flag.String("target", "", "upstream target address")
 	caCertPath := flag.String("ca-cert", "", "path to CA certificate for TLS interception")
 	caKeyPath := flag.String("ca-key", "", "path to CA private key for TLS interception")
-	vulnClass := flag.String("vuln-class", "", "vulnerability class for blocklist selection")
+	vulnClass := flag.String("vuln-class", "", "vulnerability class label for logging and judge context (no longer selects content patterns)")
 	llmEndpoint := flag.String("llm-endpoint", "", "external LLM endpoint URL. Requests to this host are metered, not inspected.")
 	holdsEnabled := flag.Bool("holds-enabled", false, "enable payload-hold flow over vsock (cage→host notify + host→cage release)")
 	holdTimeoutSec := flag.Int("hold-timeout", 300, "seconds to wait for a hold decision before fail-closed block")
@@ -42,6 +42,7 @@ func main() {
 	judgeEndpoint := flag.String("judge-endpoint", "", "LLM-as-a-Judge classification endpoint")
 	judgeConfidence := flag.Float64("judge-confidence", 0.7, "confidence threshold for judge decisions")
 	judgeTimeout := flag.Int("judge-timeout", 10, "judge endpoint timeout in seconds")
+	objective := flag.String("objective", "", "per-cage objective forwarded to the judge for context")
 	tokenBudget := flag.Int64("token-budget", -1, "max tokens for this cage. -1 means unlimited.")
 	flag.Parse()
 
@@ -53,29 +54,6 @@ func main() {
 	target, err := url.Parse(*targetAddr)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: invalid target URL: %v\n", err)
-		os.Exit(1)
-	}
-
-	cfg := config.Defaults()
-
-	blockEntries := cfg.BlocklistPatterns()[*vulnClass]
-	blockPatterns := make(map[string]string, len(blockEntries))
-	for _, e := range blockEntries {
-		blockPatterns[e.Pattern] = e.Reason
-	}
-
-	flagEntries := cfg.FlagPatterns()[*vulnClass]
-	var flagPatterns map[string]string
-	if len(flagEntries) > 0 {
-		flagPatterns = make(map[string]string, len(flagEntries))
-		for _, e := range flagEntries {
-			flagPatterns[e.Pattern] = e.Reason
-		}
-	}
-
-	engine, err := enforcement.NewProxyEngine(*vulnClass, blockPatterns, flagPatterns)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: compiling proxy patterns: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -249,23 +227,37 @@ func main() {
 			return
 		}
 
-		// Pipeline: block patterns → flag patterns → judge → allow
-		decision, reason := engine.Inspect(r.Method, r.URL.String(), bodyBytes)
-
-		switch decision {
-		case enforcement.PayloadBlock:
-			logger.Info("payload blocked", "method", r.Method, "url", r.URL.String(), "reason", reason)
-			http.Error(w, fmt.Sprintf("blocked by payload proxy: %s", reason), http.StatusForbidden)
-			return
-
-		case enforcement.PayloadHold:
-			if handlePayloadHold(w, r, holdMgr, holdTimeout, *cageID, reason, logger) {
-				return
+		// Content safety: agent opts in per-request via the X-Agentcage-Judge
+		// header. The proxy strips agentcage-internal headers before
+		// forwarding so the target never sees them. Scope enforcement at the
+		// network layer is the actual perimeter — judge is a second opinion
+		// the agent author chose to consult for specific requests.
+		needsJudge := r.Header.Get("X-Agentcage-Judge") == "required"
+		agentReason := r.Header.Get("X-Agentcage-Judge-Reason")
+		for k := range r.Header {
+			if strings.HasPrefix(strings.ToLower(k), "x-agentcage-") {
+				r.Header.Del(k)
 			}
-
-		case enforcement.PayloadAllow:
+		}
+		if needsJudge {
 			if judge != nil {
-				jDecision, jReason, jErr := judge.Evaluate(*cageType, *vulnClass, *assessmentID, r.Method, r.URL.String(), bodyBytes)
+				headerMap := make(map[string]string, len(r.Header))
+				for k, v := range r.Header {
+					if len(v) > 0 {
+						headerMap[k] = v[0]
+					}
+				}
+				jDecision, jReason, jErr := judge.Evaluate(enforcement.EvaluateInput{
+					CageType:     *cageType,
+					VulnClass:    *vulnClass,
+					AssessmentID: *assessmentID,
+					Method:       r.Method,
+					URL:          r.URL.String(),
+					Headers:      headerMap,
+					Body:         bodyBytes,
+					Objective:    *objective,
+					AgentReason:  agentReason,
+				})
 				if jErr != nil {
 					logger.Error(jErr, "judge evaluation failed, blocking (fail-closed)", "method", r.Method, "url", r.URL.String())
 					http.Error(w, "blocked by payload proxy: judge unreachable", http.StatusForbidden)
@@ -280,6 +272,13 @@ func main() {
 					if handlePayloadHold(w, r, holdMgr, holdTimeout, *cageID, jReason, logger) {
 						return
 					}
+				}
+			} else {
+				// Agent asked for a second opinion but no judge is wired
+				// up. Fail-closed via human intervention: hold the request
+				// and surface it as a payload-review intervention.
+				if handlePayloadHold(w, r, holdMgr, holdTimeout, *cageID, "agent requested judge but none configured", logger) {
+					return
 				}
 			}
 		}

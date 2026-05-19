@@ -17,10 +17,6 @@ func GenerateRegoModules(cfg *config.Config) map[string]string {
 	modules["scope.rego"] = generateScopeRego(cfg)
 	modules["cage_types.rego"] = generateCageTypesRego(cfg.Cages)
 
-	for class, pc := range cfg.Payload {
-		modules[fmt.Sprintf("payload/%s_safe.rego", class)] = generatePayloadRego(class, pc)
-	}
-
 	return modules
 }
 
@@ -107,17 +103,6 @@ func generateCageTypesRego(cages map[string]config.CageTypeConfig) string {
 			fmt.Fprintf(&b, "deny contains msg if {\n\tinput.cage_type == %q\n\tinput.rate_limit_rps > %d\n\tmsg := sprintf(\"%s cage rate limit cannot exceed %d req/s, got %%d\", [input.rate_limit_rps])\n}\n\n",
 				name, ct.RateLimit, name, ct.RateLimit)
 		}
-	}
-
-	return b.String()
-}
-
-func generatePayloadRego(class string, pc config.PayloadConfig) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "package agentcage.payload.%s\n\n", class)
-
-	for _, entry := range pc.Block {
-		fmt.Fprintf(&b, "deny contains msg if {\n\tregex.match(`%s`, input.payload)\n\tmsg := %q\n}\n\n", entry.Pattern, entry.Reason)
 	}
 
 	return b.String()

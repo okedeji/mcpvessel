@@ -92,8 +92,6 @@ type Config struct {
 	Guidance        *Guidance
 	Tags            map[string]string
 	Notifications   NotificationConfig
-	ExtraBlock      []cage.ProxyPatternEntry
-	ExtraFlag       []cage.ProxyPatternEntry
 	Credentials     string
 	Environment     map[string]string
 	Capabilities    cagefile.AgentCapabilities

@@ -23,6 +23,7 @@ type CageEnv struct {
 	Objective         string            `json:"objective,omitempty"`
 	LLMEndpoint       string            `json:"llm_endpoint,omitempty"`
 	LLMAPIKey         string            `json:"llm_api_key,omitempty"`
+	JudgeAPIKey       string            `json:"judge_api_key,omitempty"`
 	NATSAddr          string            `json:"nats_addr,omitempty"`
 	ScopeHost         string            `json:"scope_host"`
 	ScopePorts        []string          `json:"scope_ports,omitempty"`
@@ -138,6 +139,9 @@ func main() {
 				proxyArgs = append(proxyArgs, "-judge-timeout", fmt.Sprintf("%d", env.JudgeTimeoutSec))
 			}
 		}
+		if env.Objective != "" {
+			proxyArgs = append(proxyArgs, "-objective", env.Objective)
+		}
 		// CA for TLS interception. Generated per-cage during rootfs assembly.
 		caCert := "/etc/agentcage/ca.pem"
 		caKey := "/etc/agentcage/ca-key.pem"
@@ -165,6 +169,9 @@ func main() {
 	if env.LLMAPIKey != "" {
 		setEnv("AGENTCAGE_LLM_API_KEY", env.LLMAPIKey)
 	}
+	if env.JudgeAPIKey != "" {
+		setEnv("AGENTCAGE_JUDGE_API_KEY", env.JudgeAPIKey)
+	}
 	if env.TokenBudget > 0 {
 		setEnv("AGENTCAGE_TOKEN_BUDGET", fmt.Sprintf("%d", env.TokenBudget))
 	}
@@ -176,6 +183,9 @@ func main() {
 	}
 	if env.ProofThreshold > 0 {
 		setEnv("AGENTCAGE_PROOF_THRESHOLD", fmt.Sprintf("%.2f", env.ProofThreshold))
+	}
+	if env.JudgeEndpoint != "" {
+		setEnv("AGENTCAGE_JUDGE_AVAILABLE", "true")
 	}
 	setEnv("AGENTCAGE_DIRECTIVES_FILE", socketDir+"/directives.json")
 	setEnv("AGENTCAGE_HOLD_SOCKET", socketDir+"/hold.sock")

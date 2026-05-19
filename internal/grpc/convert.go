@@ -36,33 +36,9 @@ func cageConfigFromProto(p *pb.CageConfig) cage.Config {
 			JudgeEndpoint:   pc.GetJudgeEndpoint(),
 			JudgeConfidence: pc.GetJudgeConfidence(),
 			JudgeTimeoutSec: int(pc.GetJudgeTimeoutSeconds()),
-			ExtraBlock:      patternEntriesFromProto(pc.GetExtraBlock()),
-			ExtraFlag:       patternEntriesFromProto(pc.GetExtraFlag()),
 		}
 	}
 	return cfg
-}
-
-func patternEntriesFromProto(entries []*pb.PatternEntry) []cage.ProxyPatternEntry {
-	if len(entries) == 0 {
-		return nil
-	}
-	out := make([]cage.ProxyPatternEntry, len(entries))
-	for i, e := range entries {
-		out[i] = cage.ProxyPatternEntry{Pattern: e.GetPattern(), Reason: e.GetReason()}
-	}
-	return out
-}
-
-func patternEntriesToProto(entries []cage.ProxyPatternEntry) []*pb.PatternEntry {
-	if len(entries) == 0 {
-		return nil
-	}
-	out := make([]*pb.PatternEntry, len(entries))
-	for i, e := range entries {
-		out[i] = &pb.PatternEntry{Pattern: e.Pattern, Reason: e.Reason}
-	}
-	return out
 }
 
 func cageTypeFromProto(t pb.CageType) cage.Type {
@@ -144,8 +120,6 @@ func assessmentConfigFromProto(p *pb.AssessmentConfig) assessment.Config {
 	}
 	cfg.SkipPaths = p.GetSkipPaths()
 	cfg.Environment = p.GetEnvironment()
-	cfg.ExtraBlock = patternEntriesFromProto(p.GetExtraBlock())
-	cfg.ExtraFlag = patternEntriesFromProto(p.GetExtraFlag())
 	if n := p.GetNotifications(); n != nil {
 		cfg.Notifications = assessment.NotificationConfig{
 			Webhook:    n.GetWebhook(),
@@ -278,8 +252,6 @@ func assessmentConfigToProto(cfg assessment.Config) *pb.AssessmentConfig {
 	if cfg.MaxDuration > 0 {
 		out.MaxDuration = durationpb.New(cfg.MaxDuration)
 	}
-	out.ExtraBlock = patternEntriesToProto(cfg.ExtraBlock)
-	out.ExtraFlag = patternEntriesToProto(cfg.ExtraFlag)
 	if cfg.Notifications.Webhook != "" || cfg.Notifications.OnFinding || cfg.Notifications.OnComplete {
 		out.Notifications = &pb.NotificationConfig{
 			Webhook:    cfg.Notifications.Webhook,

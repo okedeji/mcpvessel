@@ -27,6 +27,7 @@ type Service struct {
 	db                  *sql.DB
 	llmEndpointFn       func() string
 	llmAPIKey           string
+	judgeAPIKey         string
 	natsAddr            string
 	holdsEnabled        bool
 	timeouts            Timeouts
@@ -35,13 +36,14 @@ type Service struct {
 	cages               map[string]*Info
 }
 
-func NewService(temporal client.Client, validate ConfigValidator, db *sql.DB, llmEndpointFn func() string, llmAPIKey, natsAddr string, holdsEnabled bool, timeouts Timeouts, interventionTimeout time.Duration) *Service {
+func NewService(temporal client.Client, validate ConfigValidator, db *sql.DB, llmEndpointFn func() string, llmAPIKey, judgeAPIKey, natsAddr string, holdsEnabled bool, timeouts Timeouts, interventionTimeout time.Duration) *Service {
 	return &Service{
 		temporal:            temporal,
 		validate:            validate,
 		db:                  db,
 		llmEndpointFn:       llmEndpointFn,
 		llmAPIKey:           llmAPIKey,
+		judgeAPIKey:         judgeAPIKey,
 		natsAddr:            natsAddr,
 		holdsEnabled:        holdsEnabled,
 		timeouts:            timeouts,
@@ -84,6 +86,7 @@ func (s *Service) CreateCage(ctx context.Context, config Config) (*Info, error) 
 		Config:              config,
 		LLMEndpoint:         s.llmEndpointFn(),
 		LLMAPIKey:           s.llmAPIKey,
+		JudgeAPIKey:         s.judgeAPIKey,
 		NATSAddr:            s.natsAddr,
 		HoldsEnabled:        s.holdsEnabled,
 		Timeouts:            s.timeouts,

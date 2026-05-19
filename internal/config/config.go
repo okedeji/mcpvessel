@@ -55,7 +55,6 @@ type Config struct {
 	Cages          map[string]CageTypeConfig   `yaml:"cages"`
 	Assessment     AssessmentConfig            `yaml:"assessment"`
 	Scope          ScopeConfig                 `yaml:"scope"`
-	Payload        map[string]PayloadConfig    `yaml:"payload"`
 	Monitoring     map[string]MonitoringConfig `yaml:"monitoring"`
 	Notifications  NotificationsConfig         `yaml:"notifications"`
 	Timeouts       ActivityTimeoutsConfig      `yaml:"timeouts"`
@@ -496,20 +495,6 @@ type ScopeConfig struct {
 	DenyLocalhost *bool    `yaml:"deny_localhost,omitempty"`
 }
 
-// PayloadConfig defines blocklist and flag patterns for a vulnerability
-// class. Block patterns reject the request. Flag patterns trigger a
-// human-review hold when the proxy runs in flag mode.
-type PayloadConfig struct {
-	Block []PatternEntry `yaml:"block"`
-	Flag  []PatternEntry `yaml:"flag,omitempty"`
-}
-
-// PatternEntry is a single regex pattern with a human-readable reason.
-type PatternEntry struct {
-	Pattern string `yaml:"pattern"`
-	Reason  string `yaml:"reason"`
-}
-
 // MonitoringConfig defines behavioral monitoring rules for a cage type.
 // Rule keys must match predefined detection conditions in the enforcement
 // package. Users set the action (log, human_review, kill) per rule.
@@ -543,11 +528,12 @@ type InterventionConfig struct {
 	HoldsEnabled *bool `yaml:"holds_enabled,omitempty"`
 }
 
-// JudgeConfig configures the external LLM-as-a-Judge endpoint that
-// evaluates payload safety. When configured, every request that passes
-// block and flag patterns is sent to this endpoint for classification.
-// Nil means the judge is disabled and only regex patterns are used.
-// The API key is read from AGENTCAGE_JUDGE_API_KEY at runtime.
+// JudgeConfig configures the external LLM-as-a-Judge endpoint the
+// payload proxy consults when an agent opts in per-request via the
+// X-Agentcage-Judge header. Nil means no judge is wired up; the proxy
+// then holds opt-in requests for human review instead of dropping
+// them. The API key is loaded from Vault at orchestrator startup and
+// injected into each cage as AGENTCAGE_JUDGE_API_KEY.
 type JudgeConfig struct {
 	Endpoint            string        `yaml:"endpoint"`
 	ConfidenceThreshold float64       `yaml:"confidence_threshold"`
@@ -771,7 +757,6 @@ func Defaults() *Config {
 			// posture default applies (strict=true, dev=false). Operators
 			// can still set them explicitly to override.
 		},
-		Payload: defaultPayload(),
 		Monitoring: map[string]MonitoringConfig{
 			"discovery": {
 				Rules: map[string]string{
@@ -849,72 +834,6 @@ func defaultTimeouts() ActivityTimeoutsConfig {
 		ResumeAgent:          10 * time.Second,
 		WriteDirective:       15 * time.Second,
 		EnqueueIntervention:  10 * time.Second,
-	}
-}
-
-func defaultPayload() map[string]PayloadConfig {
-	return map[string]PayloadConfig{
-		"sqli": {Block: []PatternEntry{
-			{Pattern: `(?i)\bDROP\s+(TABLE|DATABASE|INDEX|VIEW)`, Reason: "destructive SQL: DROP"},
-			{Pattern: `(?i)\bDELETE\s+FROM\b`, Reason: "destructive SQL: DELETE"},
-			{Pattern: `(?i)\bTRUNCATE\s+`, Reason: "destructive SQL: TRUNCATE"},
-			{Pattern: `(?i)\bUPDATE\s+\w+\s+SET\b`, Reason: "destructive SQL: UPDATE"},
-			{Pattern: `(?i)\bALTER\s+(TABLE|DATABASE|USER)`, Reason: "destructive SQL: ALTER"},
-			{Pattern: `(?i)\bGRANT\s+`, Reason: "privilege escalation: GRANT"},
-			{Pattern: `(?i)\bCREATE\s+(USER|ROLE)`, Reason: "privilege escalation: CREATE USER/ROLE"},
-			{Pattern: `(?i)\bINSERT\s+INTO\b`, Reason: "destructive SQL: INSERT"},
-			{Pattern: `(?i)\b(EXEC|EXECUTE)\s+`, Reason: "stored procedure execution"},
-			{Pattern: `(?i)\bxp_cmdshell\b`, Reason: "SQL Server command execution"},
-			{Pattern: `(?i)\bLOAD_FILE\s*\(`, Reason: "MySQL file read via LOAD_FILE"},
-			{Pattern: `(?i)\bINTO\s+(OUT|DUMP)FILE\b`, Reason: "MySQL file write via INTO OUTFILE"},
-		}},
-		"rce": {Block: []PatternEntry{
-			{Pattern: `(?i)\brm\s+-rf\b`, Reason: "destructive: rm -rf"},
-			{Pattern: `(?i)\bmkfs\b`, Reason: "destructive: mkfs"},
-			{Pattern: `(?i)\bdd\s+`, Reason: "destructive: dd"},
-			{Pattern: `(?i)\bshutdown\b`, Reason: "destructive: shutdown"},
-			{Pattern: `(?i)\breboot\b`, Reason: "destructive: reboot"},
-			{Pattern: `(?i):\(\)\s*\{\s*:\|\s*:&\s*\}\s*;`, Reason: "fork bomb"},
-			{Pattern: `(?i)>\s*/etc/(passwd|shadow|sudoers)`, Reason: "write to sensitive system file"},
-			{Pattern: `(?i)\b(curl|wget)\s+.*\|\s*(bash|sh)`, Reason: "remote code download and execute"},
-			{Pattern: `(?i)\bchmod\s+(777|\+s)\b`, Reason: "permission escalation: chmod"},
-			{Pattern: `(?i)\biptables\s+-F\b`, Reason: "flush firewall rules"},
-			{Pattern: `(?i)\bkill\s+-9\b`, Reason: "force kill process"},
-			{Pattern: `(?i)\bpython[23]?\s+-c\b`, Reason: "inline Python execution"},
-			{Pattern: `(?i)\bperl\s+-e\b`, Reason: "inline Perl execution"},
-		}},
-		"ssrf": {Block: []PatternEntry{
-			{Pattern: `(?i)(^|=)https?://(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.)`, Reason: "SSRF to private IP"},
-			{Pattern: `(?i)(^|=)https?://127\.`, Reason: "SSRF to loopback"},
-			{Pattern: `(?i)(^|=)https?://\[?::1\]?`, Reason: "SSRF to IPv6 loopback"},
-			{Pattern: `(?i)(^|=)https?://0\.0\.0\.0`, Reason: "SSRF to all-interfaces address"},
-			{Pattern: `(?i)(^|=)https?://localhost`, Reason: "SSRF to localhost"},
-			{Pattern: `(?i)(^|=)https?://169\.254\.`, Reason: "SSRF to link-local/cloud metadata"},
-			{Pattern: `(?i)(^|=)https?://fd00:ec2::254`, Reason: "SSRF to AWS IPv6 metadata"},
-			{Pattern: `(?i)(^|=)file://`, Reason: "SSRF via file:// protocol"},
-		}},
-		"xss": {Block: []PatternEntry{
-			{Pattern: `(?i)\bDROP\s+(TABLE|DATABASE)`, Reason: "destructive SQL in XSS context"},
-			{Pattern: `(?i)<script[^>]*>.*?(document\.cookie|document\.location|window\.location)`, Reason: "cookie/session theft or redirect via script tag"},
-			{Pattern: `(?i)\bon\w+\s*=\s*["']?.*?(document\.cookie|fetch\s*\(|XMLHttpRequest)`, Reason: "data exfiltration via event handler"},
-			{Pattern: `(?i)<iframe[^>]+src\s*=\s*["']?https?://`, Reason: "external iframe injection"},
-			{Pattern: `(?i)<form[^>]+action\s*=\s*["']?https?://`, Reason: "phishing form with external action"},
-			{Pattern: `(?i)<meta[^>]+http-equiv\s*=\s*["']?refresh[^>]+url\s*=`, Reason: "meta refresh redirect"},
-		}},
-		"path_traversal": {Block: []PatternEntry{
-			{Pattern: `(?i)(\.\.[\\/]){2,}`, Reason: "path traversal: directory traversal sequence"},
-			{Pattern: `(?i)(\.\.[\\/])+(etc/(passwd|shadow|hosts)|windows[\\/]system32)`, Reason: "path traversal: sensitive system file"},
-			{Pattern: `(?i)%2e%2e[%2f/\\]`, Reason: "path traversal: URL-encoded traversal"},
-		}},
-		"xxe": {Block: []PatternEntry{
-			{Pattern: `(?i)<!DOCTYPE\s+[^>]*\[.*<!ENTITY`, Reason: "XXE: external entity declaration"},
-			{Pattern: `(?i)<!ENTITY\s+\S+\s+SYSTEM\s+`, Reason: "XXE: SYSTEM entity"},
-			{Pattern: `(?i)<!ENTITY\s+\S+\s+PUBLIC\s+`, Reason: "XXE: PUBLIC entity"},
-		}},
-		"ldap_injection": {Block: []PatternEntry{
-			{Pattern: `(?i)\)\s*\(\s*[&|!]`, Reason: "LDAP injection: filter manipulation"},
-			{Pattern: `(?i)\)\s*\(\s*\w+=\*\)`, Reason: "LDAP injection: wildcard enumeration"},
-		}},
 	}
 }
 
@@ -1106,16 +1025,6 @@ func Merge(base, override *Config) *Config {
 		result.Scope.DenyLocalhost = override.Scope.DenyLocalhost
 	}
 
-	// Payload
-	if override.Payload != nil {
-		result.Payload = copyPayload(base.Payload)
-		for k, v := range override.Payload {
-			result.Payload[k] = v
-		}
-	} else {
-		result.Payload = copyPayload(base.Payload)
-	}
-
 	// Monitoring
 	if override.Monitoring != nil {
 		result.Monitoring = copyMonitoring(base.Monitoring)
@@ -1180,18 +1089,6 @@ func copyCageTypes(m map[string]CageTypeConfig) map[string]CageTypeConfig {
 	return out
 }
 
-func copyPayload(m map[string]PayloadConfig) map[string]PayloadConfig {
-	out := make(map[string]PayloadConfig, len(m))
-	for k, v := range m {
-		block := make([]PatternEntry, len(v.Block))
-		copy(block, v.Block)
-		flag := make([]PatternEntry, len(v.Flag))
-		copy(flag, v.Flag)
-		out[k] = PayloadConfig{Block: block, Flag: flag}
-	}
-	return out
-}
-
 func copyMonitoring(m map[string]MonitoringConfig) map[string]MonitoringConfig {
 	out := make(map[string]MonitoringConfig, len(m))
 	for k, v := range m {
@@ -1237,27 +1134,6 @@ func (c *InfrastructureConfig) IsExternalNomad() bool {
 
 func (c *InfrastructureConfig) IsExternalOTel() bool {
 	return c.OTel != nil && c.OTel.Endpoint != ""
-}
-
-// BlocklistPatterns returns payload patterns in the format the proxy engine expects.
-// Maps from the new config format (payload.sqli.block) to pattern+message pairs.
-func (c *Config) BlocklistPatterns() map[string][]PatternEntry {
-	out := make(map[string][]PatternEntry, len(c.Payload))
-	for class, pc := range c.Payload {
-		out[class] = pc.Block
-	}
-	return out
-}
-
-// FlagPatterns returns payload flag patterns for the proxy engine.
-func (c *Config) FlagPatterns() map[string][]PatternEntry {
-	out := make(map[string][]PatternEntry, len(c.Payload))
-	for class, pc := range c.Payload {
-		if len(pc.Flag) > 0 {
-			out[class] = pc.Flag
-		}
-	}
-	return out
 }
 
 // RateLimit returns the rate limit for a given cage type, or 0 if not set.

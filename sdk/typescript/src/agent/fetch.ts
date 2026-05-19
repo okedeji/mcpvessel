@@ -10,6 +10,27 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 export interface FetchOptions extends RequestInit {
   /** Per-request timeout in milliseconds. Default: 30000. */
   timeoutMs?: number;
+  /**
+   * Ask the payload proxy to consult the LLM-as-a-judge before
+   * forwarding this request. Set true on requests that could be
+   * state-changing or destructive (POST/PUT/DELETE, SQL injection
+   * probes that might modify data, etc.). Leave undefined for
+   * read-only probes — judge calls cost LLM tokens.
+   *
+   * If a judge endpoint is configured, the proxy invokes it. If not,
+   * the proxy holds the request and surfaces it as a payload-review
+   * intervention so a human can decide. Check
+   * process.env.AGENTCAGE_JUDGE_AVAILABLE to know which it'll be.
+   */
+  needsJudge?: boolean;
+  /**
+   * Short explanation of WHY this request needs review — what the agent
+   * is trying to achieve with it. Forwarded to the judge LLM (and to
+   * the human if the request is held). Examples: "enumerating UUIDs
+   * 1-1000 to test IDOR", "demonstrating SQL injection via error-based
+   * extraction on id parameter". Only sent when needsJudge is true.
+   */
+  judgeReason?: string;
 }
 
 /**
@@ -19,10 +40,21 @@ export interface FetchOptions extends RequestInit {
  * without each agent reinventing timeout handling.
  */
 export async function fetch(url: string | URL, init: FetchOptions = {}): Promise<Response> {
-  const { timeoutMs = DEFAULT_TIMEOUT_MS, signal, ...rest } = init;
+  const { timeoutMs = DEFAULT_TIMEOUT_MS, signal, needsJudge, judgeReason, headers, ...rest } = init;
   const timeoutSignal = AbortSignal.timeout(timeoutMs);
   // Compose with any caller-provided signal so external cancellation
   // still works alongside the timeout.
   const combined = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
-  return globalThis.fetch(url, { ...rest, signal: combined });
+
+  const finalHeaders = new Headers(headers);
+  if (needsJudge) {
+    // The payload proxy strips X-Agentcage-* headers before forwarding
+    // to the target, so the target never sees agentcage internals.
+    finalHeaders.set('X-Agentcage-Judge', 'required');
+    if (judgeReason) {
+      finalHeaders.set('X-Agentcage-Judge-Reason', judgeReason);
+    }
+  }
+
+  return globalThis.fetch(url, { ...rest, signal: combined, headers: finalHeaders });
 }

@@ -32,11 +32,6 @@ enum CageState {
   CAGE_STATE_FAILED = 7;
 }
 
-message PatternEntry {
-  string pattern = 1;
-  string reason = 2;
-}
-
 message TargetScope {
   string host = 1;
   repeated string ports = 2;
@@ -73,8 +68,6 @@ message PayloadProxyConfig {
   string judge_endpoint = 1;
   double judge_confidence = 2;
   int32 judge_timeout_seconds = 3;
-  repeated PatternEntry extra_block = 4;
-  repeated PatternEntry extra_flag = 5;
 }
 
 message CageConfig {

@@ -15,7 +15,6 @@ func TestDefaults_ReturnsPopulatedConfig(t *testing.T) {
 	require.NotNil(t, cfg)
 	assert.NotEmpty(t, cfg.Cages)
 	assert.NotEmpty(t, cfg.Monitoring)
-	assert.NotEmpty(t, cfg.Payload)
 	assert.NotEmpty(t, cfg.Scope.Deny)
 }
 
@@ -98,18 +97,6 @@ func TestDefaults_HasThreeMonitoringSets(t *testing.T) {
 	assert.Contains(t, cfg.Monitoring, "discovery")
 	assert.Contains(t, cfg.Monitoring, "validator")
 	assert.Contains(t, cfg.Monitoring, "exploitation")
-}
-
-func TestDefaults_HasPayloadSets(t *testing.T) {
-	cfg := Defaults()
-	require.Len(t, cfg.Payload, 7)
-	assert.Contains(t, cfg.Payload, "sqli")
-	assert.Contains(t, cfg.Payload, "rce")
-	assert.Contains(t, cfg.Payload, "ssrf")
-	assert.Contains(t, cfg.Payload, "xss")
-	assert.Contains(t, cfg.Payload, "path_traversal")
-	assert.Contains(t, cfg.Payload, "xxe")
-	assert.Contains(t, cfg.Payload, "ldap_injection")
 }
 
 func TestDefaults_ScopeDenyIncludesPrivateRanges(t *testing.T) {
@@ -264,7 +251,6 @@ func TestMerge_EmptyOverride(t *testing.T) {
 	assert.Equal(t, base.Timeouts, result.Timeouts)
 	assert.Len(t, result.Cages, 3)
 	assert.Len(t, result.Monitoring, 3)
-	assert.Len(t, result.Payload, 7)
 }
 
 func TestMerge_DoesNotMutateBase(t *testing.T) {
@@ -305,19 +291,6 @@ func TestMerge_LLMOverride(t *testing.T) {
 	result := Merge(base, override)
 	assert.Equal(t, "https://llm.example.com/v1", result.LLM.Endpoint)
 	assert.Equal(t, 30*time.Second, result.LLM.Timeout, "default timeout preserved")
-}
-
-func TestBlocklistPatterns(t *testing.T) {
-	cfg := Defaults()
-	patterns := cfg.BlocklistPatterns()
-	require.Len(t, patterns, 7)
-	assert.NotEmpty(t, patterns["sqli"])
-	assert.NotEmpty(t, patterns["rce"])
-	assert.NotEmpty(t, patterns["ssrf"])
-	assert.NotEmpty(t, patterns["xss"])
-	assert.NotEmpty(t, patterns["path_traversal"])
-	assert.NotEmpty(t, patterns["xxe"])
-	assert.NotEmpty(t, patterns["ldap_injection"])
 }
 
 func TestRateLimit(t *testing.T) {

@@ -22,6 +22,7 @@ type CageWorkflowInput struct {
 	CageID              string
 	LLMEndpoint         string
 	LLMAPIKey           string
+	JudgeAPIKey         string
 	NATSAddr            string
 	HoldsEnabled        bool
 	Timeouts            Timeouts
@@ -73,6 +74,7 @@ func CageWorkflow(ctx workflow.Context, input CageWorkflowInput) (CageWorkflowRe
 		VulnClass:       cfg.VulnClass,
 		LLMEndpoint:     input.LLMEndpoint,
 		LLMAPIKey:       input.LLMAPIKey,
+		JudgeAPIKey:     input.JudgeAPIKey,
 		NATSAddr:        input.NATSAddr,
 		ScopeHost:       cfg.Scope.Host,
 		ScopePorts:      cfg.Scope.Ports,

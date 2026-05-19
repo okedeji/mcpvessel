@@ -16,13 +16,11 @@ import (
 type PolicyEngine interface {
 	EvaluateScope(ctx context.Context, scope cage.Scope, denyList []string) (PolicyDecision, error)
 	EvaluateCageConfig(ctx context.Context, config cage.Config) (PolicyDecision, error)
-	EvaluatePayload(ctx context.Context, vulnClass string, payload string) (PayloadDecision, string, error)
 }
 
 type OPAEngine struct {
-	scopeQuery     rego.PreparedEvalQuery
-	cageTypeQuery  rego.PreparedEvalQuery
-	payloadQueries map[string]rego.PreparedEvalQuery
+	scopeQuery    rego.PreparedEvalQuery
+	cageTypeQuery rego.PreparedEvalQuery
 }
 
 // NewOPAEngine loads Rego policy files from a directory on disk.
@@ -40,9 +38,7 @@ func NewOPAEngine(policyDir string) (*OPAEngine, error) {
 // virtual-filename to Rego source. Use GenerateRegoModules to produce the map
 // from the unified config.
 func NewOPAEngineFromModules(modules map[string]string) (*OPAEngine, error) {
-	e := &OPAEngine{
-		payloadQueries: make(map[string]rego.PreparedEvalQuery),
-	}
+	e := &OPAEngine{}
 
 	scopeQuery, err := prepareQuery("data.agentcage.scope.deny", modules)
 	if err != nil {
@@ -55,17 +51,6 @@ func NewOPAEngineFromModules(modules map[string]string) (*OPAEngine, error) {
 		return nil, fmt.Errorf("compiling cage_types policy: %w", err)
 	}
 	e.cageTypeQuery = cageTypeQuery
-
-	for name, content := range modules {
-		if parts := extractPolicyKey(name, "payload"); parts != "" {
-			query, err := prepareQuery(fmt.Sprintf("data.agentcage.payload.%s.deny", parts), modules)
-			if err != nil {
-				return nil, fmt.Errorf("compiling payload policy %s: %w", parts, err)
-			}
-			e.payloadQueries[parts] = query
-		}
-		_ = content
-	}
 
 	return e, nil
 }
@@ -126,27 +111,6 @@ func (e *OPAEngine) EvaluateCageConfig(ctx context.Context, config cage.Config) 
 	}
 
 	return policyDecisionFromViolations(violations), nil
-}
-
-func (e *OPAEngine) EvaluatePayload(ctx context.Context, vulnClass string, payload string) (PayloadDecision, string, error) {
-	q, ok := e.payloadQueries[vulnClass]
-	if !ok {
-		return PayloadBlock, fmt.Sprintf("no payload policy for vulnerability class %q", vulnClass), nil
-	}
-
-	input := map[string]any{
-		"payload": payload,
-	}
-
-	violations, err := evaluate(ctx, q, input)
-	if err != nil {
-		return PayloadBlock, "", fmt.Errorf("evaluating payload policy for %s: %w", vulnClass, err)
-	}
-
-	if len(violations) > 0 {
-		return PayloadBlock, violations[0], nil
-	}
-	return PayloadAllow, "", nil
 }
 
 func loadRegoFiles(dir string) (map[string]string, error) {
@@ -227,17 +191,4 @@ func policyDecisionFromViolations(violations []string) PolicyDecision {
 		Reason:     violations[0],
 		Violations: violations,
 	}
-}
-
-// extractPolicyKey returns the OPA package leaf name for a rego file under a
-// given subdirectory (e.g. "payload"). Returns empty string if
-// the file does not live under that subdirectory.
-func extractPolicyKey(filename, subdir string) string {
-	parts := strings.Split(filepath.ToSlash(filename), "/")
-	if len(parts) < 2 || parts[0] != subdir {
-		return ""
-	}
-	base := strings.TrimSuffix(parts[1], ".rego")
-	base = strings.TrimSuffix(base, "_safe")
-	return base
 }

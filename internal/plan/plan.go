@@ -7,7 +7,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -25,11 +24,8 @@ const (
 	maxTagKeyLen       = 128
 	maxTagValueLen     = 1024
 	maxTags            = 50
-	maxHosts           = 100
 	maxPorts           = 100
 	maxPaths           = 500
-	maxExtraPatterns   = 100
-	maxPatternLen      = 1024
 	maxKnownWeaknesses = 50
 	maxEndpoints       = 200
 	maxAPISpecs        = 50
@@ -136,23 +132,12 @@ type Plan struct {
 	Budget        Budget              `yaml:"budget"`
 	Limits        Limits              `yaml:"limits"`
 	CageTypes     map[string]CageType `yaml:"cage_types"`
-	Payload       PlanPayload         `yaml:"payload"`
 	Guidance      Guidance            `yaml:"guidance"`
 	Notifications Notifications       `yaml:"notifications"`
 	Output        Output              `yaml:"output"`
 	Tags          map[string]string   `yaml:"tags"`
 	Environment   map[string]string   `yaml:"environment,omitempty"`
 	CustomerID    string              `yaml:"customer_id"`
-}
-
-type PlanPayload struct {
-	ExtraBlock []PlanPattern `yaml:"extra_block"`
-	ExtraFlag  []PlanPattern `yaml:"extra_flag"`
-}
-
-type PlanPattern struct {
-	Pattern string `yaml:"pattern"`
-	Reason  string `yaml:"reason"`
 }
 
 type Target struct {
@@ -247,8 +232,6 @@ func Merge(base, override *Plan) *Plan {
 			out.Tags[k] = v
 		}
 	}
-	out.Payload.ExtraBlock = copyPatterns(base.Payload.ExtraBlock)
-	out.Payload.ExtraFlag = copyPatterns(base.Payload.ExtraFlag)
 	out.Guidance.AttackSurface.Endpoints = copyStrings(base.Guidance.AttackSurface.Endpoints)
 	out.Guidance.AttackSurface.APISpecs = copyStrings(base.Guidance.AttackSurface.APISpecs)
 	out.Guidance.Strategy.KnownWeaknesses = copyStrings(base.Guidance.Strategy.KnownWeaknesses)
@@ -349,13 +332,6 @@ func Merge(base, override *Plan) *Plan {
 	}
 	if override.Output.Follow != nil {
 		out.Output.Follow = override.Output.Follow
-	}
-
-	if len(override.Payload.ExtraBlock) > 0 {
-		out.Payload.ExtraBlock = copyPatterns(override.Payload.ExtraBlock)
-	}
-	if len(override.Payload.ExtraFlag) > 0 {
-		out.Payload.ExtraFlag = copyPatterns(override.Payload.ExtraFlag)
 	}
 
 	if len(override.Tags) > 0 {
@@ -511,24 +487,6 @@ func Validate(p *Plan) error {
 		}
 	}
 
-	// Payload patterns: must compile, bounded count.
-	if len(p.Payload.ExtraBlock) > maxExtraPatterns {
-		return fmt.Errorf("payload.extra_block has %d entries, max %d", len(p.Payload.ExtraBlock), maxExtraPatterns)
-	}
-	for i, pat := range p.Payload.ExtraBlock {
-		if err := validatePattern(pat, fmt.Sprintf("payload.extra_block[%d]", i)); err != nil {
-			return err
-		}
-	}
-	if len(p.Payload.ExtraFlag) > maxExtraPatterns {
-		return fmt.Errorf("payload.extra_flag has %d entries, max %d", len(p.Payload.ExtraFlag), maxExtraPatterns)
-	}
-	for i, pat := range p.Payload.ExtraFlag {
-		if err := validatePattern(pat, fmt.Sprintf("payload.extra_flag[%d]", i)); err != nil {
-			return err
-		}
-	}
-
 	switch p.Output.Format {
 	case "text", "json", "":
 	default:
@@ -624,19 +582,6 @@ func validateWebhook(webhook string) error {
 		if v4 := ip.To4(); v4 != nil && isPrivateOrLoopback(net.IP(v4)) {
 			return fmt.Errorf("notifications.webhook %q targets a private/loopback IP address (IPv4-mapped)", webhook)
 		}
-	}
-	return nil
-}
-
-func validatePattern(pat PlanPattern, location string) error {
-	if pat.Pattern == "" {
-		return fmt.Errorf("%s: pattern cannot be empty", location)
-	}
-	if len(pat.Pattern) > maxPatternLen {
-		return fmt.Errorf("%s: pattern exceeds %d characters", location, maxPatternLen)
-	}
-	if _, err := regexp.Compile(pat.Pattern); err != nil {
-		return fmt.Errorf("%s: invalid regex %q: %w", location, pat.Pattern, err)
 	}
 	return nil
 }
@@ -774,15 +719,6 @@ func copyStrings(s []string) []string {
 	}
 	out := make([]string, len(s))
 	copy(out, s)
-	return out
-}
-
-func copyPatterns(p []PlanPattern) []PlanPattern {
-	if p == nil {
-		return nil
-	}
-	out := make([]PlanPattern, len(p))
-	copy(out, p)
 	return out
 }
 

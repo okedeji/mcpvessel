@@ -198,7 +198,15 @@ func runInit(configFile, grpcAddr, secretsFile string, debug bool) (initErr erro
 		return err
 	}
 
-	cageSvc := cage.NewService(temporalClient, cageValidator, db, func() string { return configServer.GetConfig(ctx).LLM.Endpoint }, llmAPIKey, natsURL, cfg.InterventionHoldsEnabled(), cage.TimeoutsFromConfig(cfg.Timeouts), cfg.InterventionTimeout())
+	var judgeAPIKey string
+	if secretReader != nil && cfg.JudgeEndpoint() != "" {
+		judgeAPIKey, err = identity.ReadSecretValue(ctx, secretReader, identity.PathJudgeKey)
+		if err != nil {
+			return fmt.Errorf("reading judge API key from Vault: %w", err)
+		}
+	}
+
+	cageSvc := cage.NewService(temporalClient, cageValidator, db, func() string { return configServer.GetConfig(ctx).LLM.Endpoint }, llmAPIKey, judgeAPIKey, natsURL, cfg.InterventionHoldsEnabled(), cage.TimeoutsFromConfig(cfg.Timeouts), cfg.InterventionTimeout())
 	fleetSvc := fleet.NewService(fleetSetup.pool, fleetSetup.demand, fleetSetup.provisioner, log.WithValues("component", "fleet"))
 	var fleetSignaler assessment.FleetSignaler
 	if fleetSetup.autoscaler != nil {
@@ -467,6 +475,7 @@ func validateRequiredSecrets(ctx context.Context, reader identity.SecretReader, 
 	b.WriteString("\nSeed on boot: agentcage init --secrets secrets.env\n")
 	b.WriteString("\nExample secrets.env:\n")
 	b.WriteString("  AGENTCAGE_LLM_API_KEY=sk-...\n")
+	b.WriteString("  AGENTCAGE_JUDGE_API_KEY=sk-... # only if config.judge.endpoint is set\n")
 	return errors.New(b.String())
 }
 

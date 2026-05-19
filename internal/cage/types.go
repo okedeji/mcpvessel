@@ -136,19 +136,10 @@ type LLMGatewayConfig struct {
 	RoutingStrategy string
 }
 
-// ProxyPatternEntry is a regex pattern with a human-readable reason.
-// Used for per-run extra block and flag patterns from the plan file.
-type ProxyPatternEntry struct {
-	Pattern string
-	Reason  string
-}
-
 type ProxyConfig struct {
 	JudgeEndpoint   string
 	JudgeConfidence float64
 	JudgeTimeoutSec int
-	ExtraBlock      []ProxyPatternEntry
-	ExtraFlag       []ProxyPatternEntry
 }
 
 type Info struct {

@@ -32,16 +32,6 @@ export interface CageTypeConfig {
   maxDuration?: string;
 }
 
-export interface PayloadPattern {
-  pattern: string;
-  reason: string;
-}
-
-export interface PayloadConfig {
-  extraBlock?: PayloadPattern[];
-  extraFlag?: PayloadPattern[];
-}
-
 export interface AssessmentConfig {
   name?: string;
   customerId: string;
@@ -51,7 +41,6 @@ export interface AssessmentConfig {
   maxTotalCages?: number;
   maxIterations?: number;
   cageTypes?: Record<string, CageTypeConfig>;
-  payload?: PayloadConfig;
   guidance?: Guidance;
   notifications?: NotificationConfig;
   tags?: Record<string, string>;

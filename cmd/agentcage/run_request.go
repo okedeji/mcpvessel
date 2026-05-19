@@ -73,13 +73,6 @@ func buildCreateAssessmentRequest(p *plan.Plan, bundleRef string) (*pb.CreateAss
 		}
 	}
 
-	for _, pat := range p.Payload.ExtraBlock {
-		cfg.ExtraBlock = append(cfg.ExtraBlock, &pb.PatternEntry{Pattern: pat.Pattern, Reason: pat.Reason})
-	}
-	for _, pat := range p.Payload.ExtraFlag {
-		cfg.ExtraFlag = append(cfg.ExtraFlag, &pb.PatternEntry{Pattern: pat.Pattern, Reason: pat.Reason})
-	}
-
 	return &pb.CreateAssessmentRequest{
 		Config:    cfg,
 		BundleRef: bundleRef,

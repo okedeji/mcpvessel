@@ -15,10 +15,6 @@ func TestGenerateRegoModules_ProducesAllModules(t *testing.T) {
 
 	assert.Contains(t, modules, "scope.rego")
 	assert.Contains(t, modules, "cage_types.rego")
-	assert.Contains(t, modules, "payload/sqli_safe.rego")
-	assert.Contains(t, modules, "payload/rce_safe.rego")
-	assert.Contains(t, modules, "payload/ssrf_safe.rego")
-	assert.Contains(t, modules, "payload/xss_safe.rego")
 }
 
 func TestGenerateScopeRego_ContainsExpectedRules(t *testing.T) {
@@ -71,18 +67,6 @@ func TestGenerateCageTypesRego_DiscoveryConstraints(t *testing.T) {
 	assert.Contains(t, rego, "1800 seconds")
 	assert.Contains(t, rego, "4 vCPU")
 	assert.Contains(t, rego, "8192 MB RAM")
-}
-
-func TestGeneratePayloadRego_SQLi(t *testing.T) {
-	cfg := config.Defaults()
-	modules := GenerateRegoModules(cfg)
-	rego := modules["payload/sqli_safe.rego"]
-
-	assert.Contains(t, rego, "package agentcage.payload.sqli")
-	assert.Contains(t, rego, "DROP")
-	assert.Contains(t, rego, "DELETE")
-	assert.Contains(t, rego, "TRUNCATE")
-	assert.Contains(t, rego, "regex.match")
 }
 
 func TestGeneratedModules_CompileWithOPA(t *testing.T) {

@@ -1,2 +1,2 @@
-export { createJudgeServer, type EvaluateFn, type JudgeServerConfig } from './server';
-export type { JudgePayload, JudgeResult, JudgeRequest, JudgeResponse } from '../types/judge';
+export { validatePayloads, validateResults } from './validation';
+export type { JudgePayload, JudgeResult } from '../types/judge';

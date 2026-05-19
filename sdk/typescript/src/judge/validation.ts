@@ -17,7 +17,10 @@ export function validatePayloads(body: any): JudgePayload[] {
     assessmentId: p.assessment_id ?? '',
     method: p.method,
     url: p.url,
+    headers: (p.headers && typeof p.headers === 'object') ? p.headers : undefined,
     body: p.body ?? '',
+    objective: typeof p.objective === 'string' ? p.objective : undefined,
+    agentReason: typeof p.agent_reason === 'string' ? p.agent_reason : undefined,
   }));
 }
 

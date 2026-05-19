@@ -45,7 +45,6 @@ func testBaseConfig() *Config {
 			MaxIterations: 10,
 			ReviewTimeout: 24 * time.Hour,
 		},
-		Payload:    defaultPayload(),
 		Monitoring: map[string]MonitoringConfig{},
 	}
 }
