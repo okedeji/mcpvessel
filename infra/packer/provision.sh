@@ -16,24 +16,38 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -qq
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
   curl jq unzip \
   e2fsprogs \
-  postgresql-common postgresql \
   nodejs npm \
   python3 python3-pip python3-venv \
   golang-go \
   bash iptables iproute2
 
 # ---------------------------------------------------------------
-# TimescaleDB
+# PostgreSQL 16 + TimescaleDB (both from PGDG)
 # ---------------------------------------------------------------
+# Ubuntu noble's archive lags PostgreSQL upstream by ~quarters
+# (currently 16.13). TimescaleDB tracks the latest patch (≥ 16.14
+# since 2.27.1), so noble's archive can't satisfy current TS
+# packages. PGDG (apt.postgresql.org) is PostgreSQL's own apt repo,
+# always carries the current patch, and is what TimescaleDB's own
+# install docs recommend. Drop-in: same package names, paths,
+# systemd units, and postgresql-common tooling as Ubuntu's build.
+echo "Installing PostgreSQL from PGDG..."
+sudo install -d /usr/share/postgresql-common/pgdg
+sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+  https://www.postgresql.org/media/keys/ACCC4CF8.asc
+echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt/ $(lsb_release -cs)-pgdg main" | \
+  sudo tee /etc/apt/sources.list.d/pgdg.list
+
 echo "Installing TimescaleDB..."
 echo "deb https://packagecloud.io/timescale/timescaledb/ubuntu/ $(lsb_release -cs) main" | \
   sudo tee /etc/apt/sources.list.d/timescaledb.list
 curl -fsSL https://packagecloud.io/timescale/timescaledb/gpgkey | \
   sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/timescaledb.gpg
+
 sudo apt-get update -qq
-# Single -q (not -qq) so the broken-package dependency tree is logged
-# when install fails, instead of just the "held broken" summary.
-sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q timescaledb-2-postgresql-16
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q \
+  postgresql-16 postgresql-client-16 \
+  timescaledb-2-postgresql-16
 
 # ---------------------------------------------------------------
 # Disable system PostgreSQL (agentcage manages its own)
