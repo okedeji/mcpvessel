@@ -99,6 +99,15 @@ func (s *Service) CreateAssessment(ctx context.Context, cfg Config) (*Info, erro
 	cfg.MaxTotalCages = p.Limits.MaxTotalCages
 	cfg.TokenBudget = p.Budget.Tokens
 
+	// Pipe orchestrator's judge config into the assessment so
+	// workflow-spawned cages can wire judge into their payload-proxy.
+	// Skipped when the operator opted out via --no-judge.
+	if s.operatorCfg != nil && !cfg.NoJudge {
+		cfg.JudgeEndpoint = s.operatorCfg.JudgeEndpoint()
+		cfg.JudgeConfidence = s.operatorCfg.JudgeConfidenceThreshold()
+		cfg.JudgeTimeoutSec = int(s.operatorCfg.JudgeTimeout().Seconds())
+	}
+
 	// Fill rate limits from operator config into CageDefaults.
 	if s.operatorCfg != nil {
 		if cfg.CageDefaults == nil {

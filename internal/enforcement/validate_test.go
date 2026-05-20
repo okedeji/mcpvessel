@@ -38,7 +38,7 @@ func validDiscoveryConfig() cage.Config {
 func validValidatorConfig() cage.Config {
 	return cage.Config{
 		AssessmentID:    "assess-1",
-		Type:            cage.TypeValidator,
+		Type:            cage.TypeValidation,
 		BundleRef:       "abc123",
 		Scope:           cage.Scope{Host: "target.example.com", Ports: []string{"80"}},
 		Resources:       cage.ResourceLimits{VCPUs: 1, MemoryMB: 512},
@@ -78,7 +78,7 @@ func TestValidateCageConfig(t *testing.T) {
 	}{
 		// Happy paths.
 		{name: "valid discovery config", baseType: "discovery"},
-		{name: "valid validator config", baseType: "validator"},
+		{name: "valid validation config", baseType: "validation"},
 		{name: "valid exploitation config", baseType: "exploitation"},
 
 		// Scope rules.
@@ -183,8 +183,8 @@ func TestValidateCageConfig(t *testing.T) {
 			errSubstr: "50",
 		},
 		{
-			name:      "rate limit exceeds validator cap 10",
-			baseType:  "validator",
+			name:      "rate limit exceeds validation cap 10",
+			baseType:  "validation",
 			modify:    func(cfg *cage.Config) { cfg.RateLimits.RequestsPerSecond = 11 },
 			wantErr:   true,
 			errSubstr: "10",
@@ -199,8 +199,8 @@ func TestValidateCageConfig(t *testing.T) {
 			errSubstr: "positive",
 		},
 		{
-			name:      "validator 120s exceeds 60s cap",
-			baseType:  "validator",
+			name:      "validation 120s exceeds 60s cap",
+			baseType:  "validation",
 			modify:    func(cfg *cage.Config) { cfg.TimeLimits.MaxDuration = 120 * time.Second },
 			wantErr:   true,
 			errSubstr: "1m0s",
@@ -215,15 +215,15 @@ func TestValidateCageConfig(t *testing.T) {
 
 		// Resource cap rules.
 		{
-			name:      "validator with 2 vCPUs (cap 1)",
-			baseType:  "validator",
+			name:      "validation with 2 vCPUs (cap 1)",
+			baseType:  "validation",
 			modify:    func(cfg *cage.Config) { cfg.Resources.VCPUs = 2 },
 			wantErr:   true,
 			errSubstr: "1 vCPU",
 		},
 		{
-			name:      "validator with 2048 MB (cap 1024)",
-			baseType:  "validator",
+			name:      "validation with 2048 MB (cap 1024)",
+			baseType:  "validation",
 			modify:    func(cfg *cage.Config) { cfg.Resources.MemoryMB = 2048 },
 			wantErr:   true,
 			errSubstr: "1024",
@@ -245,15 +245,15 @@ func TestValidateCageConfig(t *testing.T) {
 
 		// Intrinsic per-type required fields.
 		{
-			name:      "validator missing ParentFindingID",
-			baseType:  "validator",
+			name:      "validation missing ParentFindingID",
+			baseType:  "validation",
 			modify:    func(cfg *cage.Config) { cfg.ParentFindingID = "" },
 			wantErr:   true,
 			errSubstr: "ParentFindingID",
 		},
 		{
-			name:     "validator with LLM access",
-			baseType: "validator",
+			name:     "validation with LLM access",
+			baseType: "validation",
 			modify: func(cfg *cage.Config) {
 				cfg.LLM = &cage.LLMGatewayConfig{TokenBudget: 100, RoutingStrategy: "round_robin"}
 			},
@@ -334,7 +334,7 @@ func TestValidateCageConfig(t *testing.T) {
 			switch tt.baseType {
 			case "discovery":
 				cfg = validDiscoveryConfig()
-			case "validator":
+			case "validation":
 				cfg = validValidatorConfig()
 			case "exploitation":
 				cfg = validExploitationConfig()

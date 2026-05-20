@@ -6,7 +6,7 @@
 // hammering Postgres, the validation rules that reject malformed
 // findings at ingestion, and the Postgres-backed store.
 //
-// A finding moves from candidate to validated when a validator cage
+// A finding moves from candidate to validated when a validation cage
 // independently confirms the agent's proof, or to rejected if validation
 // fails. The status transitions are owned by the assessment package;
 // this package owns the data and the ingestion path.

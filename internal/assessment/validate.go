@@ -56,6 +56,8 @@ func configToPlan(cfg Config) *plan.Plan {
 	p.Workflow.RequirePlanApproval = &require
 	identify := cfg.IdentifyInRequests
 	p.Workflow.IdentifyInRequests = &identify
+	noJudge := cfg.NoJudge
+	p.Workflow.NoJudge = &noJudge
 
 	return p
 }

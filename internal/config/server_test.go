@@ -19,7 +19,7 @@ func testBaseConfig() *Config {
 				MaxMemoryMB: 512,
 				RateLimit:   100,
 			},
-			"validator": {
+			"validation": {
 				MaxDuration: 30 * time.Minute,
 				MaxVCPUs:    4,
 				MaxMemoryMB: 1024,
@@ -60,7 +60,7 @@ func TestGetConfig(t *testing.T) {
 func TestGetValue_KnownPath(t *testing.T) {
 	srv := NewServer(testBaseConfig())
 
-	val, err := srv.GetValue(context.Background(), "cages.validator.max_vcpus")
+	val, err := srv.GetValue(context.Background(), "cages.validation.max_vcpus")
 	require.NoError(t, err)
 	assert.Equal(t, "4", val)
 }

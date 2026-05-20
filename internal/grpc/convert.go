@@ -33,9 +33,10 @@ func cageConfigFromProto(p *pb.CageConfig) cage.Config {
 	}
 	if pc := p.GetProxyConfig(); pc != nil {
 		cfg.ProxyConfig = cage.ProxyConfig{
-			JudgeEndpoint:   pc.GetJudgeEndpoint(),
-			JudgeConfidence: pc.GetJudgeConfidence(),
-			JudgeTimeoutSec: int(pc.GetJudgeTimeoutSeconds()),
+			JudgeEndpoint:              pc.GetJudgeEndpoint(),
+			JudgeConfidence:            pc.GetJudgeConfidence(),
+			JudgeTimeoutSec:            int(pc.GetJudgeTimeoutSeconds()),
+			RequireJudgeForAllOutbound: pc.GetRequireJudgeForAllOutbound(),
 		}
 	}
 	return cfg
@@ -45,8 +46,8 @@ func cageTypeFromProto(t pb.CageType) cage.Type {
 	switch t {
 	case pb.CageType_CAGE_TYPE_DISCOVERY:
 		return cage.TypeDiscovery
-	case pb.CageType_CAGE_TYPE_VALIDATOR:
-		return cage.TypeValidator
+	case pb.CageType_CAGE_TYPE_VALIDATION:
+		return cage.TypeValidation
 	case pb.CageType_CAGE_TYPE_EXPLOITATION:
 		return cage.TypeExploitation
 	default:
@@ -58,8 +59,8 @@ func cageTypeToProto(t cage.Type) pb.CageType {
 	switch t {
 	case cage.TypeDiscovery:
 		return pb.CageType_CAGE_TYPE_DISCOVERY
-	case cage.TypeValidator:
-		return pb.CageType_CAGE_TYPE_VALIDATOR
+	case cage.TypeValidation:
+		return pb.CageType_CAGE_TYPE_VALIDATION
 	case cage.TypeExploitation:
 		return pb.CageType_CAGE_TYPE_EXPLOITATION
 	default:
@@ -133,6 +134,7 @@ func assessmentConfigFromProto(p *pb.AssessmentConfig) assessment.Config {
 	if w := p.GetWorkflow(); w != nil {
 		cfg.RequirePlanApproval = w.GetRequirePlanApproval()
 		cfg.IdentifyInRequests = w.GetIdentifyInRequests()
+		cfg.NoJudge = w.GetNoJudge()
 	} else {
 		// Missing workflow message = client didn't send one. Default to
 		// safe: require approval before exploitation, and identify our
@@ -283,6 +285,7 @@ func assessmentConfigToProto(cfg assessment.Config) *pb.AssessmentConfig {
 	out.Workflow = &pb.Workflow{
 		RequirePlanApproval: cfg.RequirePlanApproval,
 		IdentifyInRequests:  cfg.IdentifyInRequests,
+		NoJudge:             cfg.NoJudge,
 	}
 	for t, ct := range cfg.CageDefaults {
 		ctPb := &pb.CageTypeConfig{

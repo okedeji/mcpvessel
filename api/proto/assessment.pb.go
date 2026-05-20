@@ -328,6 +328,7 @@ type Workflow struct {
 	// adversarial-simulation engagements that deliberately test the
 	// target's detection capability.
 	IdentifyInRequests bool `protobuf:"varint,2,opt,name=identify_in_requests,json=identifyInRequests,proto3" json:"identify_in_requests,omitempty"`
+	NoJudge            bool `protobuf:"varint,3,opt,name=no_judge,json=noJudge,proto3" json:"no_judge,omitempty"`
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -372,6 +373,13 @@ func (x *Workflow) GetRequirePlanApproval() bool {
 func (x *Workflow) GetIdentifyInRequests() bool {
 	if x != nil {
 		return x.IdentifyInRequests
+	}
+	return false
+}
+
+func (x *Workflow) GetNoJudge() bool {
+	if x != nil {
+		return x.NoJudge
 	}
 	return false
 }
@@ -1507,10 +1515,11 @@ const file_api_proto_assessment_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a>\n" +
 	"\x10EnvironmentEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"p\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x8b\x01\n" +
 	"\bWorkflow\x122\n" +
 	"\x15require_plan_approval\x18\x01 \x01(\bR\x13requirePlanApproval\x120\n" +
-	"\x14identify_in_requests\x18\x02 \x01(\bR\x12identifyInRequests\"\xe5\x01\n" +
+	"\x14identify_in_requests\x18\x02 \x01(\bR\x12identifyInRequests\x12\x19\n" +
+	"\bno_judge\x18\x03 \x01(\bR\anoJudge\"\xe5\x01\n" +
 	"\fPlanProposal\x12\x12\n" +
 	"\x04goal\x18\x01 \x01(\tR\x04goal\x12\x18\n" +
 	"\asummary\x18\x02 \x01(\tR\asummary\x12=\n" +

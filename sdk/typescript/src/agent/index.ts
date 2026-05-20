@@ -40,3 +40,4 @@ export type { AgentFinding, HoldRequest, HoldResponse, DirectiveInstruction, Dir
 export type { DirectiveCallback } from './directive-watcher';
 export { newFindingId } from './ids';
 export { fetch, type FetchOptions } from './fetch';
+export { readCageEnv, type CageEnv, type CageType } from './env';

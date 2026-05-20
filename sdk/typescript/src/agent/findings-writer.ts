@@ -29,8 +29,8 @@ export class FindingsWriter {
 
   async submit(finding: AgentFinding): Promise<void> {
     // Vulnerability findings must include reproduction steps so the
-    // validator cage can confirm them independently. Discovery findings
-    // don't need a proof and must not carry a vuln_class.
+    // validation cage can confirm them independently. Discovery
+    // findings don't need a proof and must not carry a vuln_class.
     if (finding.kind === 'vulnerability') {
       if (!finding.vulnClass) {
         throw new Error(`finding ${finding.id}: vulnClass is required for kind=vulnerability`);

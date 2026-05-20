@@ -77,6 +77,7 @@ func cmdRun(args []string) {
 		LimitToListed:    rf.limitToListed,
 		AutoApprovePlan:  rf.autoApprovePlan,
 		NoPentestHeader:  rf.noPentestHeader,
+		NoJudge:          rf.noJudge,
 		Notify:           rf.notify,
 		NotifyOnFinding:  rf.notifyOnFinding,
 		NotifyOnComplete: rf.notifyOnComplete,

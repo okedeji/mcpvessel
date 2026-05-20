@@ -42,6 +42,7 @@ func main() {
 	judgeEndpoint := flag.String("judge-endpoint", "", "LLM-as-a-Judge classification endpoint")
 	judgeConfidence := flag.Float64("judge-confidence", 0.7, "confidence threshold for judge decisions")
 	judgeTimeout := flag.Int("judge-timeout", 10, "judge endpoint timeout in seconds")
+	judgeAllOutbound := flag.Bool("judge-all-outbound", false, "route every outbound request through the judge regardless of X-Agentcage-Judge header (for CLI-tool traffic the agent can't tag per-request)")
 	objective := flag.String("objective", "", "per-cage objective forwarded to the judge for context")
 	tokenBudget := flag.Int64("token-budget", -1, "max tokens for this cage. -1 means unlimited.")
 	customerID := flag.String("customer-id", "", "customer ID injected into X-Agentcage-Pentest for attribution")
@@ -248,7 +249,7 @@ func main() {
 		// forwarding so the target never sees them. Scope enforcement at the
 		// network layer is the actual perimeter — judge is a second opinion
 		// the agent author chose to consult for specific requests.
-		needsJudge := r.Header.Get("X-Agentcage-Judge") == "required"
+		needsJudge := r.Header.Get("X-Agentcage-Judge") == "required" || *judgeAllOutbound
 		agentReason := r.Header.Get("X-Agentcage-Judge-Reason")
 		for k := range r.Header {
 			if strings.HasPrefix(strings.ToLower(k), "x-agentcage-") {

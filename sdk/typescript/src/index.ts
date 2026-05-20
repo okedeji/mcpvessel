@@ -4,7 +4,10 @@ export type { VaultConfig, RunConfig, RunEvent, ApiKeyInfo, PackOptions, PackRes
 export { generateJoinScript, type JoinOptions } from './client/join';
 
 // Agent SDK — for TypeScript agents running inside cages.
-export { AgentSDK, type AgentConfig, newFindingId, fetch, type FetchOptions } from './agent';
+export { AgentSDK, type AgentConfig, newFindingId, fetch, type FetchOptions, readCageEnv, type CageEnv } from './agent';
+// Note: CageType is re-exported below from types/enums (the orchestrator-side enum).
+// The agent-side CageType from readCageEnv is a string-literal union and is
+// referenced via the CageEnv shape.
 
 // Judge: building blocks for writing a payload-safety classifier
 // service. Types describe the wire format; validators parse and check

@@ -42,24 +42,27 @@ RESPONSE FORMAT (JSON only):
       "type": "exploitation",
       "scope": {"host": "target.example.com", "ports": ["443"], "paths": ["/api"]},
       "vuln_class": "sqli",
-      "objective": "test /api/users endpoint for SQL injection via the id parameter",
-      "priority": 1
+      "objective": "focus sqlmap on the user_id query parameter (the /api/users response leaks SQL error strings, suggesting error-based injection will work); prefer error-based over time-based",
+      "priority": 1,
+      "recommended_judge": true
     }
   ]
 }
 
 CAGE TYPES:
 - exploitation: tests one endpoint for one vuln class. Also use for deeper testing on existing findings (e.g. SQLi found on /api, now try data extraction or privilege escalation). Set finding_id when going deeper on a specific finding.
-- validator: independently confirms a finding is real. Requires finding_id. Do NOT use for testing new endpoints.
+- validation: independently confirms a finding is real. Requires finding_id. Do NOT use for testing new endpoints.
 
 RULES:
 1. If agent_capabilities.exploitation is empty, the agent has no exploitation tools loaded — set done=true immediately.
 2. Check coverage before planning. If coverage[host] already includes a vuln class, skip it.
 3. Prioritize: auth endpoints, admin panels, API routes, file upload, anything accepting user input.
-4. Each action needs a specific objective the agent can act on. "test for SQLi" is too vague. "test /api/users?id= for error-based SQL injection" is actionable.
+4. The objective is HOW to test, not WHAT. vuln_class and scope.paths already tell the agent the target and the class — do NOT repeat them. Use objective to add what the agent can't infer from the structural fields: parameter names to focus on (e.g. "the user_id query param"), preferred attack technique (e.g. "error-based, not time-based"), hints from prior findings (e.g. "the verbose stack trace on /api suggests this app is Rails"), or auth context the agent must use. "test for SQLi" is too vague; "test /api/users?id= for SQL injection" still just restates the action. "focus sqlmap on the id query param, prefer error-based since /api leaked exception strings" is actionable guidance.
 5. If a cage failed (outcome=failed, error set), decide whether to retry with a different approach or move on.
 6. Maximum 10 actions per response.
-7. Set done=true when coverage is sufficient, budget is low, or time is short.`
+7. Set done=true when coverage is sufficient, budget is low, or time is short.
+8. Set recommended_judge=true when the action submits state-changing or destructive payloads the target could act on: sqli (any non-read template), auth_bypass with credential stuffing, broken_auth weak-password attempts, idor against paths with verbs like delete/update, real CSRF POSTs. Leave false for purely read-only probes (headers, cors, csrf-form-inspection, info_disclosure, rate_limit with GETs).
+9. Every exploitation action targets exactly ONE path. If you want to test two paths for the same vuln_class, emit two separate actions — do not put multiple entries in scope.paths.`
 
 // PlanNextActions sends the coordinator state to the LLM and returns
 // structured decisions about what cages to spawn.
@@ -111,7 +114,7 @@ func validateDecision(d CoordinatorDecision) error {
 
 	for i, a := range d.Actions {
 		switch a.Type {
-		case "exploitation", "validator":
+		case "exploitation", "validation":
 		default:
 			return fmt.Errorf("action %d: invalid type %q", i, a.Type)
 		}
@@ -124,8 +127,8 @@ func validateDecision(d CoordinatorDecision) error {
 			return fmt.Errorf("action %d: objective is required", i)
 		}
 
-		if a.Type == "validator" && a.FindingID == "" {
-			return fmt.Errorf("action %d: validator cages require a finding_id", i)
+		if a.Type == "validation" && a.FindingID == "" {
+			return fmt.Errorf("action %d: validation cages require a finding_id", i)
 		}
 	}
 

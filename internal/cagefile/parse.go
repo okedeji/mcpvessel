@@ -24,13 +24,13 @@ var SupportedTools = func() map[string]bool {
 	return m
 }()
 
-// AgentCapabilities declares what the agent can do. The Discovery and
-// Validation booleans gate workflow phase participation. Exploitation
-// is a free-text list of tools/modules the agent has loaded for the
-// exploitation phase — not validated against any taxonomy. The
-// orchestrator LLM reads the tool names as a resume and decides what
-// to ask the agent to do; the agent dispatches incoming actions to
-// whatever it registered locally.
+// AgentCapabilities declares which assessment phases the agent
+// participates in. Discovery and Validation are booleans (the agent
+// either runs that phase or it doesn't). Exploitation is a free-text
+// list of tools/modules the agent has loaded — not validated against
+// any taxonomy. The orchestrator LLM reads the tool names as a resume
+// and decides what to ask the agent to do; the agent dispatches
+// incoming actions to whatever it registered locally.
 type AgentCapabilities struct {
 	Discovery    bool     `json:"discovery,omitempty"`
 	Exploitation []string `json:"exploitation,omitempty"`
@@ -64,12 +64,21 @@ func Parse(r io.Reader) (*Manifest, error) {
 		}
 
 		parts := strings.SplitN(line, " ", 2)
-		if len(parts) < 2 {
-			return nil, fmt.Errorf("line %d: directive %q requires a value", lineNum, parts[0])
+		directive := strings.ToLower(parts[0])
+		var value string
+		if len(parts) == 2 {
+			value = strings.TrimSpace(parts[1])
 		}
 
-		directive := strings.ToLower(parts[0])
-		value := strings.TrimSpace(parts[1])
+		// Directives that stand alone (no value). All others below
+		// require a value and error if value is empty.
+		switch directive {
+		case "discovery", "validation":
+		default:
+			if value == "" {
+				return nil, fmt.Errorf("line %d: directive %q requires a value", lineNum, parts[0])
+			}
+		}
 
 		switch directive {
 		case "runtime":
@@ -134,24 +143,18 @@ func Parse(r io.Reader) (*Manifest, error) {
 			}
 			m.EnvVars[key] = val
 
-		case "capability":
-			parts := strings.Fields(value)
-			if len(parts) == 0 {
-				return nil, fmt.Errorf("line %d: capability directive requires a type", lineNum)
+		case "discovery":
+			m.Capabilities.Discovery = true
+
+		case "exploitation":
+			tools := strings.Fields(value)
+			if len(tools) == 0 {
+				return nil, fmt.Errorf("line %d: exploitation directive requires at least one tool name", lineNum)
 			}
-			switch parts[0] {
-			case "discovery":
-				m.Capabilities.Discovery = true
-			case "exploitation":
-				if len(parts) < 2 {
-					return nil, fmt.Errorf("line %d: capability exploitation requires at least one tool name", lineNum)
-				}
-				m.Capabilities.Exploitation = append(m.Capabilities.Exploitation, parts[1:]...)
-			case "validation":
-				m.Capabilities.Validation = true
-			default:
-				return nil, fmt.Errorf("line %d: unknown capability %q (supported: discovery, exploitation, validation)", lineNum, parts[0])
-			}
+			m.Capabilities.Exploitation = append(m.Capabilities.Exploitation, tools...)
+
+		case "validation":
+			m.Capabilities.Validation = true
 
 		default:
 			return nil, fmt.Errorf("line %d: unknown directive %q", lineNum, directive)
@@ -177,7 +180,7 @@ func (m *Manifest) validate() error {
 		return fmt.Errorf("cagefile: entrypoint is required")
 	}
 	if !m.Capabilities.Discovery && len(m.Capabilities.Exploitation) == 0 && !m.Capabilities.Validation {
-		return fmt.Errorf("cagefile: at least one capability directive is required (discovery, exploitation, validation)")
+		return fmt.Errorf("cagefile: at least one of discovery, exploitation, validation is required")
 	}
 
 	switch m.Runtime {

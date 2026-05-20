@@ -30,6 +30,7 @@ type runFlags struct {
 	limitToListed    bool
 	autoApprovePlan  bool
 	noPentestHeader  bool
+	noJudge          bool
 	notify           string
 	notifyOnFinding  bool
 	notifyOnComplete bool
@@ -62,6 +63,7 @@ func parseRunFlags(args []string) (*runFlags, *flag.FlagSet) {
 	fs.BoolVar(&rf.limitToListed, "limit-to-listed", false, "test only the listed endpoints; ignore other discovery findings")
 	fs.BoolVar(&rf.autoApprovePlan, "auto-approve-plan", false, "skip the human plan-approval gate after discovery (autonomous runs)")
 	fs.BoolVar(&rf.noPentestHeader, "no-pentest-header", false, "skip the X-Agentcage-Pentest header on outbound requests (adversarial-simulation engagements)")
+	fs.BoolVar(&rf.noJudge, "no-judge", false, "disable LLM judge for this run (per-request and cage-level triggers fall through to payload-review interventions)")
 	fs.StringVar(&rf.notify, "notify", "", "webhook URL for notifications")
 	fs.BoolVar(&rf.notifyOnFinding, "notify-on-finding", false, "notify per validated finding")
 	fs.BoolVar(&rf.notifyOnComplete, "notify-on-complete", false, "notify when assessment finishes")
@@ -121,6 +123,7 @@ Guidance:
 Workflow:
   --auto-approve-plan  skip the human plan-approval gate after discovery (autonomous runs)
   --no-pentest-header  skip the X-Agentcage-Pentest header on outbound requests (adversarial-simulation engagements)
+  --no-judge           disable LLM judge for this run (per-request and cage-level triggers fall through to payload-review interventions)
 
 Notifications:
   --notify             webhook URL for notifications

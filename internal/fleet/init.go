@@ -11,7 +11,7 @@ import (
 // InitPool populates a PoolManager with hosts from config. If no hosts are
 // configured (local/single-machine mode), a single local host is added with
 // auto-detected system resources.
-func InitPool(pool *PoolManager, hosts []config.HostConfig, validatorRes, discoveryRes, exploitationRes CageResources) error {
+func InitPool(pool *PoolManager, hosts []config.HostConfig, validationRes, discoveryRes, exploitationRes CageResources) error {
 	if len(hosts) > 0 {
 		for _, hc := range hosts {
 			// Config hosts are always pinned. Static infrastructure
@@ -28,7 +28,7 @@ func InitPool(pool *PoolManager, hosts []config.HostConfig, validatorRes, discov
 			if hc.CageSlots > 0 {
 				h.CageSlotsTotal = hc.CageSlots
 			} else {
-				h.CageSlotsTotal = CalculateMixedSlots(h, validatorRes, discoveryRes, exploitationRes)
+				h.CageSlotsTotal = CalculateMixedSlots(h, validationRes, discoveryRes, exploitationRes)
 			}
 			if h.CageSlotsTotal <= 0 {
 				return fmt.Errorf("host %s has zero cage slots (vcpus=%d, mem=%dMB)", h.ID, h.VCPUsTotal, h.MemoryMBTotal)
@@ -65,7 +65,7 @@ func InitPool(pool *PoolManager, hosts []config.HostConfig, validatorRes, discov
 		VCPUsTotal:    availCPUs,
 		MemoryMBTotal: availMemMB,
 	}
-	h.CageSlotsTotal = CalculateMixedSlots(h, validatorRes, discoveryRes, exploitationRes)
+	h.CageSlotsTotal = CalculateMixedSlots(h, validationRes, discoveryRes, exploitationRes)
 	if h.CageSlotsTotal <= 0 {
 		h.CageSlotsTotal = 1
 	}

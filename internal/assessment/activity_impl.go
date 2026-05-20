@@ -244,7 +244,7 @@ func (a *ActivityImpl) CreateExploitationCage(ctx context.Context, assessmentID 
 	return info.ID, nil
 }
 
-func (a *ActivityImpl) CreateValidatorCage(ctx context.Context, assessmentID, customerID string, identifyInRequests bool, finding findings.Finding, proof *Proof, bundleRef string) (string, error) {
+func (a *ActivityImpl) CreateValidatorCage(ctx context.Context, assessmentID, customerID string, identifyInRequests bool, finding findings.Finding, proof *Proof, bundleRef string, proxyCfg cage.ProxyConfig) (string, error) {
 	if proof != nil && proof.Safety.Destructive {
 		a.log.Info("skipping destructive proof",
 			"assessment_id", assessmentID,
@@ -258,15 +258,16 @@ func (a *ActivityImpl) CreateValidatorCage(ctx context.Context, assessmentID, cu
 	config := cage.Config{
 		AssessmentID:       assessmentID,
 		CustomerID:         customerID,
-		Type:               cage.TypeValidator,
+		Type:               cage.TypeValidation,
 		BundleRef:          bundleRef,
 		Scope:              cage.Scope{Host: finding.Endpoint},
 		ParentFindingID:    finding.ID,
 		VulnClass:          finding.VulnClass,
 		IdentifyInRequests: identifyInRequests,
+		ProxyConfig:        proxyCfg,
 	}
 	if proof != nil {
-		// Serialize the full structured proof so the validator cage receives
+		// Serialize the full structured proof so the validation cage receives
 		// the deterministic plan (payload, confirmation, safety, bounds), not
 		// just the human-readable description.
 		data, err := json.Marshal(proof)
@@ -277,9 +278,9 @@ func (a *ActivityImpl) CreateValidatorCage(ctx context.Context, assessmentID, cu
 	}
 	info, err := a.cages.CreateCage(ctx, config)
 	if err != nil {
-		return "", fmt.Errorf("creating validator cage for finding %s: %w", finding.ID, err)
+		return "", fmt.Errorf("creating validation cage for finding %s: %w", finding.ID, err)
 	}
-	a.log.Info("validator cage created", "assessment_id", assessmentID, "cage_id", info.ID, "finding_id", finding.ID)
+	a.log.Info("validation cage created", "assessment_id", assessmentID, "cage_id", info.ID, "finding_id", finding.ID)
 	return info.ID, nil
 }
 

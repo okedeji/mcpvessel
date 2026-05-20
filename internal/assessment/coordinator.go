@@ -79,12 +79,13 @@ type CoordinatorDecision struct {
 
 // CoordinatorAction describes a single cage to spawn.
 type CoordinatorAction struct {
-	Type      string     `json:"type"`
-	Scope     cage.Scope `json:"scope"`
-	VulnClass string     `json:"vuln_class"`
-	FindingID string     `json:"finding_id,omitempty"`
-	Objective string     `json:"objective"`
-	Priority  int        `json:"priority"`
+	Type             string     `json:"type"`
+	Scope            cage.Scope `json:"scope"`
+	VulnClass        string     `json:"vuln_class"`
+	FindingID        string     `json:"finding_id,omitempty"`
+	Objective        string     `json:"objective"`
+	Priority         int        `json:"priority"`
+	RecommendedJudge bool       `json:"recommended_judge,omitempty"`
 }
 
 // SummarizeFindings converts full findings to coordinator-friendly summaries.

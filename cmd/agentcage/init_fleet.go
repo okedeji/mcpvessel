@@ -17,12 +17,12 @@ import (
 )
 
 type fleetSetup struct {
-	pool         *fleet.PoolManager
-	demand       *fleet.DemandLedger
-	provisioner  fleet.HostProvisioner
-	autoscaler   *fleet.Autoscaler
-	scheduler    fleet.Scheduler
-	validatorRes fleet.CageResources
+	pool          *fleet.PoolManager
+	demand        *fleet.DemandLedger
+	provisioner   fleet.HostProvisioner
+	autoscaler    *fleet.Autoscaler
+	scheduler     fleet.Scheduler
+	validationRes fleet.CageResources
 }
 
 // Autoscaler is constructed here but started in runInit so its
@@ -36,11 +36,11 @@ func setupFleet(ctx context.Context, cfg *config.Config, embeddedMgr *embedded.M
 		c := cfg.Cages[name]
 		return fleet.CageResources{VCPUs: c.MaxVCPUs, MemoryMB: c.MaxMemoryMB}
 	}
-	validatorRes := cageRes("validator")
+	validationRes := cageRes("validation")
 	discoveryRes := cageRes("discovery")
 	exploitationRes := cageRes("exploitation")
 
-	if err := fleet.InitPool(pool, cfg.Fleet.Hosts, validatorRes, discoveryRes, exploitationRes); err != nil {
+	if err := fleet.InitPool(pool, cfg.Fleet.Hosts, validationRes, discoveryRes, exploitationRes); err != nil {
 		return nil, fmt.Errorf("initializing fleet pool: %w", err)
 	}
 	status := pool.GetFleetStatus()
@@ -60,7 +60,7 @@ func setupFleet(ctx context.Context, cfg *config.Config, embeddedMgr *embedded.M
 			PollInterval:         30 * time.Second,
 			MinBuffer:            0,
 			MaxBuffer:            1,
-			DefaultCageResources: validatorRes,
+			DefaultCageResources: validationRes,
 		}
 		if cfg.Fleet.Autoscaler != nil {
 			autoscalerCfg.MinBuffer = cfg.Fleet.Autoscaler.MinWarmHosts
@@ -74,12 +74,12 @@ func setupFleet(ctx context.Context, cfg *config.Config, embeddedMgr *embedded.M
 	scheduler := buildScheduler(ctx, cfg, embeddedMgr, pool, secrets, log)
 
 	return &fleetSetup{
-		pool:         pool,
-		demand:       demand,
-		provisioner:  provisioner,
-		autoscaler:   autoscaler,
-		scheduler:    scheduler,
-		validatorRes: validatorRes,
+		pool:          pool,
+		demand:        demand,
+		provisioner:   provisioner,
+		autoscaler:    autoscaler,
+		scheduler:     scheduler,
+		validationRes: validationRes,
 	}, nil
 }
 

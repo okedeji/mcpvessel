@@ -69,6 +69,7 @@ message Workflow {
   // adversarial-simulation engagements that deliberately test the
   // target's detection capability.
   bool identify_in_requests = 2;
+  bool no_judge = 3;
 }
 
 // PlanProposal is the orchestrator-generated exploitation plan

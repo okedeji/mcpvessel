@@ -146,8 +146,8 @@ func TestMerge_BooleanOverrideBothDirections(t *testing.T) {
 func TestMerge_CageTypesOverridePerKey(t *testing.T) {
 	base := &Plan{
 		CageTypes: map[string]CageType{
-			"discovery": {VCPUs: 4, MemoryMB: 8192},
-			"validator": {VCPUs: 1, MemoryMB: 1024},
+			"discovery":  {VCPUs: 4, MemoryMB: 8192},
+			"validation": {VCPUs: 1, MemoryMB: 1024},
 		},
 	}
 	override := &Plan{
@@ -159,7 +159,7 @@ func TestMerge_CageTypesOverridePerKey(t *testing.T) {
 	result := Merge(base, override)
 
 	assert.Equal(t, int32(8), result.CageTypes["discovery"].VCPUs)
-	assert.Equal(t, int32(1), result.CageTypes["validator"].VCPUs)
+	assert.Equal(t, int32(1), result.CageTypes["validation"].VCPUs)
 }
 
 func TestValidate_MissingCustomerID(t *testing.T) {
@@ -267,6 +267,26 @@ func TestFlagsToOverride_OnlyExplicitFlags(t *testing.T) {
 	assert.Equal(t, "a.com", p.Target.Host)
 	assert.Equal(t, []string{"/api/auth", "/api/admin"}, p.Guidance.AttackSurface.Endpoints)
 	assert.Equal(t, int64(0), p.Budget.Tokens)
+}
+
+func TestFlagsToOverride_NoJudge(t *testing.T) {
+	t.Run("flag set true", func(t *testing.T) {
+		p, err := FlagsToOverride(map[string]bool{"no-judge": true}, RawFlags{NoJudge: true})
+		require.NoError(t, err)
+		require.NotNil(t, p.Workflow.NoJudge)
+		assert.True(t, *p.Workflow.NoJudge)
+	})
+	t.Run("flag set false", func(t *testing.T) {
+		p, err := FlagsToOverride(map[string]bool{"no-judge": true}, RawFlags{NoJudge: false})
+		require.NoError(t, err)
+		require.NotNil(t, p.Workflow.NoJudge)
+		assert.False(t, *p.Workflow.NoJudge)
+	})
+	t.Run("flag absent", func(t *testing.T) {
+		p, err := FlagsToOverride(map[string]bool{}, RawFlags{NoJudge: true})
+		require.NoError(t, err)
+		assert.Nil(t, p.Workflow.NoJudge, "absent flag must not pin a value (nil = use default)")
+	})
 }
 
 func TestParseTags_Valid(t *testing.T) {

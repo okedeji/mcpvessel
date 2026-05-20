@@ -20,10 +20,10 @@ func CalculateSlots(host Host, res CageResources) int32 {
 }
 
 // CalculateMixedSlots estimates total cage slots for a typical workload mix.
-// Uses a default ratio of 60% validators, 25% discovery, 15% exploitation.
-func CalculateMixedSlots(host Host, validatorRes, discoveryRes, exploitationRes CageResources) int32 {
-	validatorSlots := CalculateSlots(host, validatorRes)
+// Uses a default ratio of 60% validation, 25% discovery, 15% exploitation.
+func CalculateMixedSlots(host Host, validationRes, discoveryRes, exploitationRes CageResources) int32 {
+	validationSlots := CalculateSlots(host, validationRes)
 	discoverySlots := CalculateSlots(host, discoveryRes)
 	exploitationSlots := CalculateSlots(host, exploitationRes)
-	return int32(math.Round(float64(validatorSlots)*0.60 + float64(discoverySlots)*0.25 + float64(exploitationSlots)*0.15))
+	return int32(math.Round(float64(validationSlots)*0.60 + float64(discoverySlots)*0.25 + float64(exploitationSlots)*0.15))
 }

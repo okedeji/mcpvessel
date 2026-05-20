@@ -55,14 +55,40 @@ Finding screenshots are stored as `bytes` inside the `evidence` JSONB column on 
 
 **Fix:** introduce an object store (S3 / MinIO / GCS) for evidence blobs. The `findings` row stores a reference (`screenshot_url string`) instead of bytes. `GetFinding` resolves the URL on read, `ListFindings` keeps the existing `has_screenshot` boolean so the list view stays cheap. Migration path: add the column, dual-write for one release, then drop the inline bytes.
 
-## Non-descriptive agent capability tool names degrade silently
+## Non-descriptive exploitation tool names degrade silently
 
 **Status:** open (convention-only enforcement)
 **Severity:** low
 **Affects:** `internal/cagefile/parse.go`, `internal/assessment/planner.go`
 
-Trailing tokens on `capability exploitation <tool ...>` are opaque free-text by design — agentcage does not validate them against any taxonomy. If an agent author writes uninformative tool names (`capability exploitation thing1 asdf`), the orchestrator LLM cannot reason about them, produces poor exploitation plans (or sets `done=true` early), and the agent receives actions whose `vuln_class` does not match its dispatcher, returning empty findings and wasting cages.
+Trailing tokens on `EXPLOITATION <tool ...>` are opaque free-text by design — agentcage does not validate them against any taxonomy. If an agent author writes uninformative tool names (`EXPLOITATION thing1 asdf`), the orchestrator LLM cannot reason about them, produces poor exploitation plans (or sets `done=true` early), and the agent receives actions whose `vuln_class` does not match its dispatcher, returning empty findings and wasting cages.
 
 **Mitigated by:** convention. Agent authors should pick descriptive tool names (e.g. `sqli`, `xss-mutator`, `idor-fuzzer`) that reflect what each tool tests for. Cost falls on the agent author through their own empty reports — self-correcting feedback loop.
 
-**Fix:** add an optional `tool <name> "description"` Cagefile directive. The orchestrator would pass descriptions alongside tool names in `CoordinatorState`, giving the LLM real context for tools whose names are not obvious. Additive change; deferred until real agents in the wild show what shape descriptions take.
+**Fix:** add an optional `TOOL <name> "description"` Cagefile directive. The orchestrator would pass descriptions alongside tool names in `CoordinatorState`, giving the LLM real context for tools whose names are not obvious. Additive change; deferred until real agents in the wild show what shape descriptions take.
+
+## Cage rootfs uses Alpine Linux (musl libc), not glibc
+
+**Status:** open (intentional design, documented constraint)
+**Severity:** low (most use cases), medium (ML-heavy agents, glibc-only commercial tools)
+**Affects:** `scripts/build-cage-rootfs.sh`, agent authors
+
+The cage rootfs is Alpine Linux, which uses musl libc instead of glibc. Chosen for size (~5MB base vs ~30MB for Debian-slim), faster apk installs, smaller attack surface, and container-native maturity. Agentcage's bounded-lifetime cage model is a good fit for Alpine's strengths.
+
+Agent authors should know:
+
+- **glibc-only binaries do not run.** Affects npm packages with native postinstalls (full `puppeteer` bundles a glibc Chromium that fails on Alpine — use `puppeteer-core` + `DEPS chromium` instead), some Go binaries with CGO enabled, Burp Suite Pro CLI, Frida, and other proprietary tools.
+- **Python wheels: musllinux only.** Many ML libraries (PyTorch, sentence-transformers, NumPy with native ops) ship manylinux (glibc) wheels but not musllinux. Pip falls back to building from source — agent authors need `apk add python3-dev gcc musl-dev build-base` in their Cagefile, and pack time grows from seconds to minutes.
+- **Smaller default stack size** (128KB vs 8MB). Deeply-recursive parsers and regex engines occasionally blow the stack on Alpine.
+- **DNS resolver behavior** differs from glibc. The cage rootfs already applies `options single-request timeout:5 attempts:3` in resolv.conf for Go's pure resolver.
+
+**Acceptable for:** typical web pentest agents using HTTP probing, the pre-installed CLI tools (sqlmap, nuclei, ffuf, chromium), and standard node/python/go runtime deps.
+
+**Not acceptable for:** ML-heavy agents (slow installs, broken wheels), agents needing glibc-only commercial tools, agents that depend on npm packages with native postinstall scripts.
+
+**Fix:** add opt-in rootfs variants. New Cagefile directive `BASE debian` selects a glibc rootfs; default `BASE alpine` stays the lean option. Orchestrator builds both ext4 images at release time; cage assembler picks per-cage based on the manifest. Cage-internal binaries already build with `CGO_ENABLED=0` and run on either base.
+
+**Trigger conditions for shipping the debian variant:**
+- Two or more external agent authors hit musl issues within a month
+- A specific glibc-only tool integration is requested (Burp Suite Pro CLI is the most common in pentest-as-a-service)
+- We add agentcage features that need PyTorch / transformers

@@ -16,30 +16,31 @@ import (
 // CageEnv mirrors cage.Env. The config injected by the rootfs
 // assembler at /etc/agentcage/cage.json.
 type CageEnv struct {
-	CageID             string            `json:"cage_id"`
-	AssessmentID       string            `json:"assessment_id"`
-	CustomerID         string            `json:"customer_id,omitempty"`
-	CageType           string            `json:"cage_type"`
-	Entrypoint         string            `json:"entrypoint"`
-	Objective          string            `json:"objective,omitempty"`
-	LLMEndpoint        string            `json:"llm_endpoint,omitempty"`
-	LLMAPIKey          string            `json:"llm_api_key,omitempty"`
-	JudgeAPIKey        string            `json:"judge_api_key,omitempty"`
-	NATSAddr           string            `json:"nats_addr,omitempty"`
-	ScopeHost          string            `json:"scope_host"`
-	ScopePorts         []string          `json:"scope_ports,omitempty"`
-	ScopePaths         []string          `json:"scope_paths,omitempty"`
-	TokenBudget        int64             `json:"token_budget,omitempty"`
-	VulnClass          string            `json:"vuln_class,omitempty"`
-	HoldsEnabled       bool              `json:"holds_enabled,omitempty"`
-	HoldTimeoutSec     int               `json:"hold_timeout_sec,omitempty"`
-	TargetCredentials  json.RawMessage   `json:"target_credentials,omitempty"`
-	JudgeEndpoint      string            `json:"judge_endpoint,omitempty"`
-	JudgeConfidence    float64           `json:"judge_confidence,omitempty"`
-	JudgeTimeoutSec    int               `json:"judge_timeout_sec,omitempty"`
-	ProofThreshold     float64           `json:"proof_threshold,omitempty"`
-	IdentifyInRequests bool              `json:"identify_in_requests,omitempty"`
-	CustomEnv          map[string]string `json:"custom_env,omitempty"`
+	CageID                     string            `json:"cage_id"`
+	AssessmentID               string            `json:"assessment_id"`
+	CustomerID                 string            `json:"customer_id,omitempty"`
+	CageType                   string            `json:"cage_type"`
+	Entrypoint                 string            `json:"entrypoint"`
+	Objective                  string            `json:"objective,omitempty"`
+	LLMEndpoint                string            `json:"llm_endpoint,omitempty"`
+	LLMAPIKey                  string            `json:"llm_api_key,omitempty"`
+	JudgeAPIKey                string            `json:"judge_api_key,omitempty"`
+	NATSAddr                   string            `json:"nats_addr,omitempty"`
+	ScopeHost                  string            `json:"scope_host"`
+	ScopePorts                 []string          `json:"scope_ports,omitempty"`
+	ScopePaths                 []string          `json:"scope_paths,omitempty"`
+	TokenBudget                int64             `json:"token_budget,omitempty"`
+	VulnClass                  string            `json:"vuln_class,omitempty"`
+	HoldsEnabled               bool              `json:"holds_enabled,omitempty"`
+	HoldTimeoutSec             int               `json:"hold_timeout_sec,omitempty"`
+	TargetCredentials          json.RawMessage   `json:"target_credentials,omitempty"`
+	JudgeEndpoint              string            `json:"judge_endpoint,omitempty"`
+	JudgeConfidence            float64           `json:"judge_confidence,omitempty"`
+	JudgeTimeoutSec            int               `json:"judge_timeout_sec,omitempty"`
+	RequireJudgeForAllOutbound bool              `json:"require_judge_for_all_outbound,omitempty"`
+	ProofThreshold             float64           `json:"proof_threshold,omitempty"`
+	IdentifyInRequests         bool              `json:"identify_in_requests,omitempty"`
+	CustomEnv                  map[string]string `json:"custom_env,omitempty"`
 }
 
 // Paths configurable via environment for unisolated mode where
@@ -140,6 +141,9 @@ func main() {
 			if env.JudgeTimeoutSec > 0 {
 				proxyArgs = append(proxyArgs, "-judge-timeout", fmt.Sprintf("%d", env.JudgeTimeoutSec))
 			}
+		}
+		if env.RequireJudgeForAllOutbound {
+			proxyArgs = append(proxyArgs, "-judge-all-outbound")
 		}
 		if env.Objective != "" {
 			proxyArgs = append(proxyArgs, "-objective", env.Objective)

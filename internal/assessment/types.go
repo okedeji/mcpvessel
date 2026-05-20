@@ -97,7 +97,7 @@ type Config struct {
 	MaxDuration   time.Duration
 	MaxTotalCages int32
 	MaxIterations int32
-	// TrustAgentProof skips spawning a validator cage when the agent
+	// TrustAgentProof skips spawning a validation cage when the agent
 	// provides a confirmed ValidationProof on the finding. The finding
 	// is marked validated directly. Set false to always re-test
 	// independently (higher confidence, more expensive).
@@ -114,11 +114,20 @@ type Config struct {
 	// as authorized pentest activity. True by default; set false for
 	// adversarial-simulation engagements.
 	IdentifyInRequests bool
-	Tags               map[string]string
-	Notifications      NotificationConfig
-	Credentials        string
-	Environment        map[string]string
-	Capabilities       cagefile.AgentCapabilities
+	// NoJudge disables LLM judge for this assessment. Cage-level and
+	// per-request judge triggers still fire, but with judge unwired
+	// they fall through to payload-review interventions (human gate)
+	// instead of the LLM judge. Operator's per-run override of the
+	// orchestrator-configured judge endpoint.
+	NoJudge         bool
+	JudgeEndpoint   string
+	JudgeConfidence float64
+	JudgeTimeoutSec int
+	Tags            map[string]string
+	Notifications   NotificationConfig
+	Credentials     string
+	Environment     map[string]string
+	Capabilities    cagefile.AgentCapabilities
 }
 
 type NotificationConfig struct {
@@ -209,7 +218,7 @@ func ValidateTransition(from, to Status) error {
 	return fmt.Errorf("%w: %s to %s", ErrInvalidTransition, from, to)
 }
 
-// Proof is the structured instruction a validator cage uses to
+// Proof is the structured instruction a validation cage uses to
 // reproduce a finding. Built from the agent's reproduction steps.
 type Proof struct {
 	VulnClass          string               `json:"vuln_class"`

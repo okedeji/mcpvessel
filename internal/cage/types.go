@@ -7,7 +7,7 @@ type Type int
 const (
 	TypeUnspecified Type = iota
 	TypeDiscovery
-	TypeValidator
+	TypeValidation
 	TypeExploitation
 )
 
@@ -15,8 +15,8 @@ func (t Type) String() string {
 	switch t {
 	case TypeDiscovery:
 		return "discovery"
-	case TypeValidator:
-		return "validator"
+	case TypeValidation:
+		return "validation"
 	case TypeExploitation:
 		return "exploitation"
 	default:
@@ -28,8 +28,8 @@ func TypeFromString(s string) Type {
 	switch s {
 	case "discovery":
 		return TypeDiscovery
-	case "validator":
-		return TypeValidator
+	case "validation":
+		return TypeValidation
 	case "exploitation":
 		return TypeExploitation
 	default:
@@ -143,9 +143,10 @@ type LLMGatewayConfig struct {
 }
 
 type ProxyConfig struct {
-	JudgeEndpoint   string
-	JudgeConfidence float64
-	JudgeTimeoutSec int
+	JudgeEndpoint              string
+	JudgeConfidence            float64
+	JudgeTimeoutSec            int
+	RequireJudgeForAllOutbound bool
 }
 
 type Info struct {

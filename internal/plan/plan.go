@@ -157,6 +157,13 @@ type Workflow struct {
 	// flag for adversarial-simulation engagements that deliberately
 	// test the target's detection capability.
 	IdentifyInRequests *bool `yaml:"identify_in_requests,omitempty"`
+	// NoJudge disables the LLM judge for this assessment. Cage-level
+	// recommendations and per-request opt-ins still trigger second-check
+	// gates, but with judge unwired they fall through to payload-review
+	// interventions (human gate). Nil = use default (false, judge enabled
+	// when orchestrator has one configured). Set true via plan YAML or
+	// the --no-judge CLI flag for cost-conscious runs.
+	NoJudge *bool `yaml:"no_judge,omitempty"`
 }
 
 type Target struct {
@@ -359,6 +366,9 @@ func Merge(base, override *Plan) *Plan {
 	if override.Workflow.IdentifyInRequests != nil {
 		out.Workflow.IdentifyInRequests = override.Workflow.IdentifyInRequests
 	}
+	if override.Workflow.NoJudge != nil {
+		out.Workflow.NoJudge = override.Workflow.NoJudge
+	}
 
 	if len(override.Tags) > 0 {
 		if out.Tags == nil {
@@ -449,9 +459,9 @@ func Validate(p *Plan) error {
 
 	for name, ct := range p.CageTypes {
 		switch name {
-		case "discovery", "validator", "exploitation":
+		case "discovery", "validation", "exploitation":
 		default:
-			return fmt.Errorf("unknown cage type %q in cage_types (supported: discovery, validator, exploitation)", name)
+			return fmt.Errorf("unknown cage type %q in cage_types (supported: discovery, validation, exploitation)", name)
 		}
 		if ct.VCPUs < 0 {
 			return fmt.Errorf("cage_types.%s.vcpus must not be negative", name)
@@ -629,6 +639,7 @@ type RawFlags struct {
 	LimitToListed    bool
 	AutoApprovePlan  bool
 	NoPentestHeader  bool
+	NoJudge          bool
 	Notify           string
 	NotifyOnFinding  bool
 	NotifyOnComplete bool
@@ -702,6 +713,9 @@ func FlagsToOverride(explicit map[string]bool, f RawFlags) (*Plan, error) {
 		// Same inversion pattern: --no-pentest-header means
 		// identify_in_requests=false.
 		p.Workflow.IdentifyInRequests = boolPtr(!f.NoPentestHeader)
+	}
+	if explicit["no-judge"] {
+		p.Workflow.NoJudge = boolPtr(f.NoJudge)
 	}
 	if explicit["notify"] {
 		p.Notifications.Webhook = f.Notify

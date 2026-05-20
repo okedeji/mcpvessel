@@ -607,7 +607,7 @@ func Resolve(explicit string) string {
 // Parse reads configuration from raw YAML bytes.
 var validCageTypes = map[string]bool{
 	"discovery":    true,
-	"validator":    true,
+	"validation":   true,
 	"exploitation": true,
 }
 
@@ -648,12 +648,12 @@ func validatePosture(cfg *Config) error {
 func validateConfigKeys(cfg *Config) error {
 	for key := range cfg.Cages {
 		if !validCageTypes[key] {
-			return fmt.Errorf("unknown cage type %q in config (valid: discovery, validator, exploitation)", key)
+			return fmt.Errorf("unknown cage type %q in config (valid: discovery, validation, exploitation)", key)
 		}
 	}
 	for key := range cfg.Monitoring {
 		if !validCageTypes[key] {
-			return fmt.Errorf("unknown cage type %q in monitoring config (valid: discovery, validator, exploitation)", key)
+			return fmt.Errorf("unknown cage type %q in monitoring config (valid: discovery, validation, exploitation)", key)
 		}
 	}
 	for i, k := range cfg.Access.APIKeys {
@@ -702,7 +702,7 @@ func Defaults() *Config {
 				MaxBatchSize:    1,
 				RateLimit:       50,
 			},
-			"validator": {
+			"validation": {
 				MaxDuration:     60 * time.Second,
 				MaxVCPUs:        1,
 				MaxMemoryMB:     1024,
@@ -759,7 +759,7 @@ func Defaults() *Config {
 				},
 				DefaultAction: "human_review",
 			},
-			"validator": {
+			"validation": {
 				Rules: map[string]string{
 					"any_shell":            "kill",
 					"any_file_write":       "human_review",

@@ -17,7 +17,7 @@ func createTestAgent(t *testing.T) string {
 deps chromium httpx
 pip requests==2.31.0 httpx==0.27.0
 entrypoint python3 solver.py
-capability discovery
+discovery
 `
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "Cagefile"), []byte(cagefile), 0644))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "solver.py"), []byte("print('hello')"), 0644))
@@ -100,7 +100,7 @@ func TestPack_InvalidCagefile(t *testing.T) {
 func TestUnpack_MissingManifest(t *testing.T) {
 	// Create a tar.gz without manifest.json
 	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "Cagefile"), []byte("runtime static\nentrypoint ./x\ncapability discovery"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "Cagefile"), []byte("runtime static\nentrypoint ./x\ndiscovery"), 0644))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "x"), []byte("bin"), 0755))
 
 	bundlePath := filepath.Join(t.TempDir(), "bad.cage")
@@ -117,7 +117,7 @@ func TestUnpack_MissingManifest(t *testing.T) {
 
 func TestPack_StaticRuntime(t *testing.T) {
 	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "Cagefile"), []byte("runtime static\nentrypoint ./scanner\ncapability discovery"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "Cagefile"), []byte("runtime static\nentrypoint ./scanner\ndiscovery"), 0644))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "scanner"), []byte("#!/bin/sh\necho scan"), 0755))
 
 	outPath := filepath.Join(t.TempDir(), "static.cage")

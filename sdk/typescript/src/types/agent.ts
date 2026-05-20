@@ -23,7 +23,7 @@ export interface AgentFinding {
   cwe?: string;
   cvssScore?: number;
   remediation?: string;
-  // Required for kind=vulnerability. The validator cage replays
+  // Required for kind=vulnerability. The validation cage replays
   // reproductionSteps to confirm the finding independently. Optional
   // (typically omitted) for kind=discovery.
   validationProof?: {

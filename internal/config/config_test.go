@@ -28,7 +28,7 @@ func TestDefaults_HasThreeCageTypes(t *testing.T) {
 	assert.Equal(t, int32(2), disc.DefaultVCPUs)
 	assert.Equal(t, int32(4096), disc.DefaultMemoryMB)
 
-	val := cfg.Cages["validator"]
+	val := cfg.Cages["validation"]
 	assert.Equal(t, 60*time.Second, val.MaxDuration)
 	assert.Equal(t, int32(1), val.MaxVCPUs)
 	assert.Equal(t, int32(1024), val.MaxMemoryMB)
@@ -92,7 +92,7 @@ func TestDefaults_HasThreeMonitoringSets(t *testing.T) {
 	cfg := Defaults()
 	require.Len(t, cfg.Monitoring, 3)
 	assert.Contains(t, cfg.Monitoring, "discovery")
-	assert.Contains(t, cfg.Monitoring, "validator")
+	assert.Contains(t, cfg.Monitoring, "validation")
 	assert.Contains(t, cfg.Monitoring, "exploitation")
 }
 
@@ -290,7 +290,7 @@ func TestMerge_LLMOverride(t *testing.T) {
 func TestRateLimit(t *testing.T) {
 	cfg := Defaults()
 	assert.Equal(t, int32(50), cfg.RateLimit("discovery"))
-	assert.Equal(t, int32(10), cfg.RateLimit("validator"))
+	assert.Equal(t, int32(10), cfg.RateLimit("validation"))
 	assert.Equal(t, int32(20), cfg.RateLimit("exploitation"))
 	assert.Equal(t, int32(0), cfg.RateLimit("nonexistent"))
 }

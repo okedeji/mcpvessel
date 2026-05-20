@@ -28,7 +28,7 @@ type CageType int32
 const (
 	CageType_CAGE_TYPE_UNSPECIFIED  CageType = 0
 	CageType_CAGE_TYPE_DISCOVERY    CageType = 1
-	CageType_CAGE_TYPE_VALIDATOR    CageType = 2
+	CageType_CAGE_TYPE_VALIDATION   CageType = 2
 	CageType_CAGE_TYPE_EXPLOITATION CageType = 4
 )
 
@@ -37,13 +37,13 @@ var (
 	CageType_name = map[int32]string{
 		0: "CAGE_TYPE_UNSPECIFIED",
 		1: "CAGE_TYPE_DISCOVERY",
-		2: "CAGE_TYPE_VALIDATOR",
+		2: "CAGE_TYPE_VALIDATION",
 		4: "CAGE_TYPE_EXPLOITATION",
 	}
 	CageType_value = map[string]int32{
 		"CAGE_TYPE_UNSPECIFIED":  0,
 		"CAGE_TYPE_DISCOVERY":    1,
-		"CAGE_TYPE_VALIDATOR":    2,
+		"CAGE_TYPE_VALIDATION":   2,
 		"CAGE_TYPE_EXPLOITATION": 4,
 	}
 )
@@ -452,12 +452,13 @@ func (x *LLMGatewayConfig) GetRoutingStrategy() RoutingStrategy {
 }
 
 type PayloadProxyConfig struct {
-	state               protoimpl.MessageState `protogen:"open.v1"`
-	JudgeEndpoint       string                 `protobuf:"bytes,1,opt,name=judge_endpoint,json=judgeEndpoint,proto3" json:"judge_endpoint,omitempty"`
-	JudgeConfidence     float64                `protobuf:"fixed64,2,opt,name=judge_confidence,json=judgeConfidence,proto3" json:"judge_confidence,omitempty"`
-	JudgeTimeoutSeconds int32                  `protobuf:"varint,3,opt,name=judge_timeout_seconds,json=judgeTimeoutSeconds,proto3" json:"judge_timeout_seconds,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	state                      protoimpl.MessageState `protogen:"open.v1"`
+	JudgeEndpoint              string                 `protobuf:"bytes,1,opt,name=judge_endpoint,json=judgeEndpoint,proto3" json:"judge_endpoint,omitempty"`
+	JudgeConfidence            float64                `protobuf:"fixed64,2,opt,name=judge_confidence,json=judgeConfidence,proto3" json:"judge_confidence,omitempty"`
+	JudgeTimeoutSeconds        int32                  `protobuf:"varint,3,opt,name=judge_timeout_seconds,json=judgeTimeoutSeconds,proto3" json:"judge_timeout_seconds,omitempty"`
+	RequireJudgeForAllOutbound bool                   `protobuf:"varint,4,opt,name=require_judge_for_all_outbound,json=requireJudgeForAllOutbound,proto3" json:"require_judge_for_all_outbound,omitempty"`
+	unknownFields              protoimpl.UnknownFields
+	sizeCache                  protoimpl.SizeCache
 }
 
 func (x *PayloadProxyConfig) Reset() {
@@ -509,6 +510,13 @@ func (x *PayloadProxyConfig) GetJudgeTimeoutSeconds() int32 {
 		return x.JudgeTimeoutSeconds
 	}
 	return 0
+}
+
+func (x *PayloadProxyConfig) GetRequireJudgeForAllOutbound() bool {
+	if x != nil {
+		return x.RequireJudgeForAllOutbound
+	}
+	return false
 }
 
 type CageConfig struct {
@@ -1324,11 +1332,12 @@ const file_api_proto_cage_proto_rawDesc = "" +
 	"\x13requests_per_second\x18\x01 \x01(\x05R\x11requestsPerSecond\"\x84\x01\n" +
 	"\x10LLMGatewayConfig\x12!\n" +
 	"\ftoken_budget\x18\x01 \x01(\x03R\vtokenBudget\x12M\n" +
-	"\x10routing_strategy\x18\x02 \x01(\x0e2\".agentcage.cage.v1.RoutingStrategyR\x0froutingStrategy\"\x9a\x01\n" +
+	"\x10routing_strategy\x18\x02 \x01(\x0e2\".agentcage.cage.v1.RoutingStrategyR\x0froutingStrategy\"\xde\x01\n" +
 	"\x12PayloadProxyConfig\x12%\n" +
 	"\x0ejudge_endpoint\x18\x01 \x01(\tR\rjudgeEndpoint\x12)\n" +
 	"\x10judge_confidence\x18\x02 \x01(\x01R\x0fjudgeConfidence\x122\n" +
-	"\x15judge_timeout_seconds\x18\x03 \x01(\x05R\x13judgeTimeoutSeconds\"\xaa\x04\n" +
+	"\x15judge_timeout_seconds\x18\x03 \x01(\x05R\x13judgeTimeoutSeconds\x12B\n" +
+	"\x1erequire_judge_for_all_outbound\x18\x04 \x01(\bR\x1arequireJudgeForAllOutbound\"\xaa\x04\n" +
 	"\n" +
 	"CageConfig\x12#\n" +
 	"\rassessment_id\x18\x01 \x01(\tR\fassessmentId\x12/\n" +
@@ -1389,11 +1398,11 @@ const file_api_proto_cage_proto_rawDesc = "" +
 	"\x12DestroyCageRequest\x12\x17\n" +
 	"\acage_id\x18\x01 \x01(\tR\x06cageId\x12\x16\n" +
 	"\x06reason\x18\x02 \x01(\tR\x06reason\"\x15\n" +
-	"\x13DestroyCageResponse*s\n" +
+	"\x13DestroyCageResponse*t\n" +
 	"\bCageType\x12\x19\n" +
 	"\x15CAGE_TYPE_UNSPECIFIED\x10\x00\x12\x17\n" +
-	"\x13CAGE_TYPE_DISCOVERY\x10\x01\x12\x17\n" +
-	"\x13CAGE_TYPE_VALIDATOR\x10\x02\x12\x1a\n" +
+	"\x13CAGE_TYPE_DISCOVERY\x10\x01\x12\x18\n" +
+	"\x14CAGE_TYPE_VALIDATION\x10\x02\x12\x1a\n" +
 	"\x16CAGE_TYPE_EXPLOITATION\x10\x04*\xd9\x01\n" +
 	"\tCageState\x12\x1a\n" +
 	"\x16CAGE_STATE_UNSPECIFIED\x10\x00\x12\x16\n" +

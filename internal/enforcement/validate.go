@@ -341,18 +341,18 @@ func (v *Validator) validateResources(t cage.Type, res cage.ResourceLimits, caps
 
 // Required-field rules are intrinsic to cage type, not operator
 // policy. A discovery or exploitation cage without an LLM is broken
-// by definition; a validator without a parent finding has nothing to
-// validate. Operators cannot legitimately override these, so the
-// rules live in code not YAML.
+// by definition; a validation cage without a parent finding has
+// nothing to validate. Operators cannot legitimately override these,
+// so the rules live in code not YAML.
 func (v *Validator) validateRequiredFields(c cage.Config) []error {
 	var errs []error
 	switch c.Type {
-	case cage.TypeValidator:
+	case cage.TypeValidation:
 		if c.ParentFindingID == "" {
-			errs = append(errs, fmt.Errorf("validator cage requires ParentFindingID"))
+			errs = append(errs, fmt.Errorf("validation cage requires ParentFindingID"))
 		}
 		if c.LLM != nil {
-			errs = append(errs, fmt.Errorf("validator cage must not have LLM access"))
+			errs = append(errs, fmt.Errorf("validation cage must not have LLM access"))
 		}
 	case cage.TypeDiscovery:
 		if c.LLM == nil {

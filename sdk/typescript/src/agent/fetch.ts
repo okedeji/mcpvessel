@@ -34,10 +34,15 @@ export interface FetchOptions extends RequestInit {
 }
 
 /**
- * fetch is a drop-in replacement for Node's global fetch with a
- * platform-aware default timeout. Agents should prefer this over the
- * global fetch so they get sensible behavior under the cage proxy
- * without each agent reinventing timeout handling.
+ * Drop-in for Node's global fetch with a 30s default timeout and the
+ * X-Agentcage-Judge opt-in for state-changing probes.
+ *
+ * Not a security boundary. Every outbound TCP from the cage is
+ * iptables-redirected to the payload-proxy regardless of which HTTP
+ * client the agent uses; this wrapper only adds convenience on top.
+ * Agents using raw fetch keep proxy interception but lose the default
+ * timeout, and must set X-Agentcage-Judge: required manually to opt
+ * into judge review for state-changing requests.
  */
 export async function fetch(url: string | URL, init: FetchOptions = {}): Promise<Response> {
   const { timeoutMs = DEFAULT_TIMEOUT_MS, signal, needsJudge, judgeReason, headers, ...rest } = init;

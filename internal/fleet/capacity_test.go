@@ -20,7 +20,7 @@ func TestCalculateSlots(t *testing.T) {
 			expected: 48,
 		},
 		{
-			name:     "validator on large host is CPU limited",
+			name:     "validation on large host is CPU limited",
 			host:     Host{VCPUsTotal: 96, MemoryMBTotal: 196608},
 			res:      CageResources{VCPUs: 1, MemoryMB: 1024},
 			expected: 96,
@@ -61,13 +61,13 @@ func TestCalculateSlots(t *testing.T) {
 
 func TestCalculateMixedSlots(t *testing.T) {
 	host := Host{VCPUsTotal: 96, MemoryMBTotal: 196608}
-	validatorRes := CageResources{VCPUs: 1, MemoryMB: 1024}
+	validationRes := CageResources{VCPUs: 1, MemoryMB: 1024}
 	discoveryRes := CageResources{VCPUs: 2, MemoryMB: 4096}
 	exploitationRes := CageResources{VCPUs: 2, MemoryMB: 4096}
 
-	got := CalculateMixedSlots(host, validatorRes, discoveryRes, exploitationRes)
+	got := CalculateMixedSlots(host, validationRes, discoveryRes, exploitationRes)
 
-	// validator: 96 slots * 0.60 = 57.6
+	// validation: 96 slots * 0.60 = 57.6
 	// discovery: 48 slots * 0.25 = 12.0
 	// exploitation: 48 slots * 0.15 = 7.2
 	// total = 76.8 → 77 (rounded)

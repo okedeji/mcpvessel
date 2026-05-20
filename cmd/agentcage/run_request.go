@@ -88,9 +88,14 @@ func buildCreateAssessmentRequest(p *plan.Plan, bundleRef string) (*pb.CreateAss
 	if p.Workflow.IdentifyInRequests != nil {
 		identifyInRequests = *p.Workflow.IdentifyInRequests
 	}
+	noJudge := false
+	if p.Workflow.NoJudge != nil {
+		noJudge = *p.Workflow.NoJudge
+	}
 	cfg.Workflow = &pb.Workflow{
 		RequirePlanApproval: requirePlanApproval,
 		IdentifyInRequests:  identifyInRequests,
+		NoJudge:             noJudge,
 	}
 
 	return &pb.CreateAssessmentRequest{
@@ -130,8 +135,8 @@ func cageTypeNameToProto(name string) (pb.CageType, error) {
 	switch name {
 	case "discovery":
 		return pb.CageType_CAGE_TYPE_DISCOVERY, nil
-	case "validator":
-		return pb.CageType_CAGE_TYPE_VALIDATOR, nil
+	case "validation":
+		return pb.CageType_CAGE_TYPE_VALIDATION, nil
 	case "exploitation":
 		return pb.CageType_CAGE_TYPE_EXPLOITATION, nil
 	default:

@@ -24,7 +24,7 @@ func (assessmentActivityStub) CreateDiscoveryCage(_ context.Context, _ string, _
 func (assessmentActivityStub) CreateExploitationCage(_ context.Context, _ string, _ cage.Config) (string, error) {
 	return "", nil
 }
-func (assessmentActivityStub) CreateValidatorCage(_ context.Context, _, _ string, _ bool, _ findings.Finding, _ *Proof, _ string) (string, error) {
+func (assessmentActivityStub) CreateValidatorCage(_ context.Context, _, _ string, _ bool, _ findings.Finding, _ *Proof, _ string, _ cage.ProxyConfig) (string, error) {
 	return "", nil
 }
 func (assessmentActivityStub) GetCandidateFindings(_ context.Context, _ string) ([]findings.Finding, error) {

@@ -38,7 +38,7 @@ const (
 	MaxFindingsPerValidationPhase = 500
 )
 
-func validatorWaitFor(proof *Proof) time.Duration {
+func validationWaitFor(proof *Proof) time.Duration {
 	if proof == nil || proof.MaxDurationSeconds <= 0 {
 		return TimeoutWaitForCage
 	}
@@ -332,11 +332,11 @@ func AssessmentWorkflow(ctx workflow.Context, input AssessmentWorkflowInput) (As
 			return failResult(ctx, input.AssessmentID, result, "fetching candidate findings for validation: %v", err), nil
 		}
 
-		_, validatorCages, err := validateFindings(ctx, input.AssessmentID, cfg, candidates, result.TotalCages)
+		_, validationCages, err := validateFindings(ctx, input.AssessmentID, cfg, candidates, result.TotalCages)
 		if err != nil {
 			return failResult(ctx, input.AssessmentID, result, "validating findings: %v", err), nil
 		}
-		result.TotalCages += validatorCages
+		result.TotalCages += validationCages
 
 		validated, err = getValidatedFindings(ctx, input.AssessmentID)
 		if err != nil {
@@ -653,6 +653,11 @@ func createDiscoveryCage(ctx workflow.Context, assessmentID string, cfg Config, 
 		SkipPaths:          cfg.SkipPaths,
 		InputContext:       []byte(goal),
 		IdentifyInRequests: cfg.IdentifyInRequests,
+		ProxyConfig: cage.ProxyConfig{
+			JudgeEndpoint:   cfg.JudgeEndpoint,
+			JudgeConfidence: cfg.JudgeConfidence,
+			JudgeTimeoutSec: cfg.JudgeTimeoutSec,
+		},
 	}
 	applyCageDefaults(&cageCfg, cfg)
 
@@ -803,6 +808,12 @@ func spawnCoordinatorActions(
 				VulnClass:          action.VulnClass,
 				InputContext:       []byte(action.Objective),
 				IdentifyInRequests: cfg.IdentifyInRequests,
+				ProxyConfig: cage.ProxyConfig{
+					JudgeEndpoint:              cfg.JudgeEndpoint,
+					JudgeConfidence:            cfg.JudgeConfidence,
+					JudgeTimeoutSec:            cfg.JudgeTimeoutSec,
+					RequireJudgeForAllOutbound: action.RecommendedJudge,
+				},
 			}
 			applyCageDefaults(&cageCfg, cfg)
 
@@ -848,7 +859,7 @@ func validateFindings(
 		candidates = candidates[:MaxFindingsPerValidationPhase]
 	}
 
-	// Also respect MaxTotalCages — each candidate spawns one validator.
+	// Also respect MaxTotalCages — each candidate spawns one validation cage.
 	if cfg.MaxTotalCages > 0 {
 		remaining := int(cfg.MaxTotalCages - totalCagesAlready)
 		if remaining <= 0 {
@@ -873,7 +884,7 @@ func validateFindings(
 	}
 
 	// TrustAgentProof: mark findings validated without spawning a
-	// validator cage. Opt-in only; default is always validate.
+	// validation cage. Opt-in only; default is always validate.
 	if cfg.TrustAgentProof {
 		for _, f := range provable {
 			actCtx := withActivityTimeout(ctx, TimeoutUpdateFinding)
@@ -889,7 +900,7 @@ func validateFindings(
 		return validatedCount, cagesSpawned, nil
 	}
 
-	// Spawn a validator cage per finding using the agent's proof.
+	// Spawn a validation cage per finding using the agent's proof.
 	for _, f := range provable {
 		proof := agentProofToValidatorProof(f)
 		v, c, err := validateFindingGroup(ctx, assessmentID, cfg, []findings.Finding{f}, proof)
@@ -904,9 +915,9 @@ func validateFindings(
 }
 
 // agentProofToValidatorProof converts the agent's reproduction steps into
-// a structured Proof the validator cage can execute. The agent provides a
+// a structured Proof the validation cage can execute. The agent provides a
 // curl-style PoC; we map that to a response_contains confirmation since
-// the validator will replay the request and check for the same indicator.
+// the validation cage will replay the request and check for the same indicator.
 func agentProofToValidatorProof(f findings.Finding) *Proof {
 	return &Proof{
 		VulnClass:      f.VulnClass,
@@ -922,12 +933,12 @@ func agentProofToValidatorProof(f findings.Finding) *Proof {
 		MaxRequests:        3,
 		MaxDurationSeconds: 60,
 		Safety: SafetyClassification{
-			Rationale: "replaying agent-provided PoC under validator isolation",
+			Rationale: "replaying agent-provided PoC under validation isolation",
 		},
 	}
 }
 
-// validateFindingGroup spawns a validator cage per finding using the
+// validateFindingGroup spawns a validation cage per finding using the
 // given proof, waits for results, and stores validation proofs.
 func validateFindingGroup(
 	ctx workflow.Context,
@@ -942,13 +953,17 @@ func validateFindingGroup(
 	for _, f := range group {
 		actCtx := withActivityTimeout(ctx, TimeoutCreateCage)
 		var cageID string
-		if err := workflow.ExecuteActivity(actCtx, "CreateValidatorCage", assessmentID, cfg.CustomerID, cfg.IdentifyInRequests, f, proof, cfg.BundleRef).Get(ctx, &cageID); err != nil {
-			return validatedCount, cagesSpawned, fmt.Errorf("creating validator cage for finding %s: %w", f.ID, err)
+		if err := workflow.ExecuteActivity(actCtx, "CreateValidatorCage", assessmentID, cfg.CustomerID, cfg.IdentifyInRequests, f, proof, cfg.BundleRef, cage.ProxyConfig{
+			JudgeEndpoint:   cfg.JudgeEndpoint,
+			JudgeConfidence: cfg.JudgeConfidence,
+			JudgeTimeoutSec: cfg.JudgeTimeoutSec,
+		}).Get(ctx, &cageID); err != nil {
+			return validatedCount, cagesSpawned, fmt.Errorf("creating validation cage for finding %s: %w", f.ID, err)
 		}
 		cagesSpawned++
 
-		if err := workflow.Sleep(ctx, validatorWaitFor(proof)); err != nil {
-			return validatedCount, cagesSpawned, fmt.Errorf("waiting for validator cage: %w", err)
+		if err := workflow.Sleep(ctx, validationWaitFor(proof)); err != nil {
+			return validatedCount, cagesSpawned, fmt.Errorf("waiting for validation cage: %w", err)
 		}
 
 		checkCtx := withActivityTimeout(ctx, TimeoutGetFindings)
@@ -1063,12 +1078,16 @@ func retestFindings(
 
 		actCtx := withActivityTimeout(ctx, TimeoutCreateCage)
 		var cageID string
-		err := workflow.ExecuteActivity(actCtx, "CreateValidatorCage", assessmentID, cfg.CustomerID, cfg.IdentifyInRequests, f, proof, cfg.BundleRef).Get(ctx, &cageID)
+		err := workflow.ExecuteActivity(actCtx, "CreateValidatorCage", assessmentID, cfg.CustomerID, cfg.IdentifyInRequests, f, proof, cfg.BundleRef, cage.ProxyConfig{
+			JudgeEndpoint:   cfg.JudgeEndpoint,
+			JudgeConfidence: cfg.JudgeConfidence,
+			JudgeTimeoutSec: cfg.JudgeTimeoutSec,
+		}).Get(ctx, &cageID)
 		if err != nil {
 			return cages, fmt.Errorf("creating retest cage for finding %s: %w", adj.FindingID, err)
 		}
 		cages++
-		if w := validatorWaitFor(proof); w > maxWait {
+		if w := validationWaitFor(proof); w > maxWait {
 			maxWait = w
 		}
 	}

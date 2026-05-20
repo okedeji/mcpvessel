@@ -14,11 +14,11 @@ func TestGenerateFalcoRules_AllCageTypes(t *testing.T) {
 	rules, tripwires := GenerateFalcoRules(cfg.Monitoring)
 
 	require.Contains(t, rules, "discovery")
-	require.Contains(t, rules, "validator")
+	require.Contains(t, rules, "validation")
 	require.Contains(t, rules, "exploitation")
 
 	require.Contains(t, tripwires, "discovery")
-	require.Contains(t, tripwires, "validator")
+	require.Contains(t, tripwires, "validation")
 	require.Contains(t, tripwires, "exploitation")
 }
 
@@ -41,17 +41,16 @@ func TestGenerateFalcoRules_DiscoveryRules(t *testing.T) {
 	assert.Equal(t, TripwireHumanReview, tripwires["discovery"].DefaultAction)
 }
 
-func TestGenerateFalcoRules_ValidatorStrict(t *testing.T) {
+func TestGenerateFalcoRules_ValidationStrict(t *testing.T) {
 	cfg := config.Defaults()
 	rules, tripwires := GenerateFalcoRules(cfg.Monitoring)
 
-	validator := rules["validator"]
-	assert.NotEmpty(t, validator)
+	validation := rules["validation"]
+	assert.NotEmpty(t, validation)
 
-	tw := tripwires["validator"]
+	tw := tripwires["validation"]
 	assert.Equal(t, TripwireHumanReview, tw.DefaultAction)
 
-	// At least one rule should map to kill
 	var hasKill bool
 	for _, policy := range tw.Rules {
 		if policy == TripwireImmediateTeardown {
@@ -59,17 +58,17 @@ func TestGenerateFalcoRules_ValidatorStrict(t *testing.T) {
 			break
 		}
 	}
-	assert.True(t, hasKill, "validator should have at least one kill tripwire")
+	assert.True(t, hasKill, "validation should have at least one kill tripwire")
 }
 
 func TestGenerateFalcoRules_AllowlistSubstitution(t *testing.T) {
 	cfg := config.Defaults()
 	rules, _ := GenerateFalcoRules(cfg.Monitoring)
 
-	validator := rules["validator"]
+	validation := rules["validation"]
 	var found bool
-	for _, r := range validator {
-		if r.Rule == "unexpected process in validator cage" {
+	for _, r := range validation {
+		if r.Rule == "unexpected process in validation cage" {
 			assert.Contains(t, r.Condition, "agent")
 			assert.Contains(t, r.Condition, "payload-proxy")
 			assert.Contains(t, r.Condition, "findings-sidecar")
