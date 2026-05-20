@@ -1,4 +1,11 @@
-runtime node
-build npm run build
-entrypoint node dist/agent.js
-capability discovery
+RUNTIME node
+BUILD npm run build
+ENTRYPOINT node dist/agent.js
+
+DISCOVERY
+EXPLOITATION sqli xss info_disclosure headers cors auth_bypass idor csrf broken_auth rate_limit
+
+# chromium / sqlmap / nuclei / ffuf are pre-installed in the cage rootfs;
+# declaring them here documents the toolkit this agent depends on.
+DEPS chromium sqlmap nuclei ffuf
+NPM puppeteer-core@22.13.1

@@ -9,5 +9,5 @@
     "skipLibCheck": true,
     "resolveJsonModule": true
   },
-  "include": ["agent.ts"]
+  "include": ["agent.ts", "*.ts", "cages/**/*.ts"]
 }
