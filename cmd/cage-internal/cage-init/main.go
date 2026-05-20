@@ -195,6 +195,15 @@ func main() {
 	if env.JudgeEndpoint != "" {
 		setEnv("AGENTCAGE_JUDGE_AVAILABLE", "true")
 	}
+	if env.VulnClass != "" {
+		setEnv("AGENTCAGE_VULN_CLASS", env.VulnClass)
+	}
+	if len(env.ScopePaths) > 0 {
+		setEnv("AGENTCAGE_SCOPE_PATHS", strings.Join(env.ScopePaths, ","))
+	}
+	if len(env.ScopePorts) > 0 {
+		setEnv("AGENTCAGE_SCOPE_PORTS", strings.Join(env.ScopePorts, ","))
+	}
 	setEnv("AGENTCAGE_DIRECTIVES_FILE", socketDir+"/directives.json")
 	setEnv("AGENTCAGE_HOLD_SOCKET", socketDir+"/hold.sock")
 	setEnv("AGENTCAGE_LOG_SOCKET", socketDir+"/logs.sock")
