@@ -215,23 +215,44 @@ RULES:
 
 // PlanProposalInput bundles everything GenerateExploitationPlan needs.
 // Bundled so the signature does not churn as the planner learns to
-// reason about more context.
+// reason about more context. Every field is serialized so Temporal
+// preserves them across the workflow→activity boundary; the LLM prompt
+// body is built from planPromptPayload, which is the public-facing
+// subset.
 type PlanProposalInput struct {
-	AssessmentID     string
+	AssessmentID     string                     `json:"assessment_id"`
 	Goal             string                     `json:"goal"`
 	Target           cage.Scope                 `json:"target"`
 	Guidance         *Guidance                  `json:"guidance,omitempty"`
 	Findings         []FindingSummary           `json:"findings"`
 	Capabilities     cagefile.AgentCapabilities `json:"agent_capabilities"`
 	OperatorFeedback string                     `json:"operator_feedback,omitempty"`
-	TokenBudget      int64                      `json:"-"`
+	TokenBudget      int64                      `json:"token_budget"`
+}
+
+// planPromptPayload is what the LLM sees. TokenBudget is intentionally
+// withheld so the planner's reasoning isn't anchored on remaining quota.
+type planPromptPayload struct {
+	Goal             string                     `json:"goal"`
+	Target           cage.Scope                 `json:"target"`
+	Guidance         *Guidance                  `json:"guidance,omitempty"`
+	Findings         []FindingSummary           `json:"findings"`
+	Capabilities     cagefile.AgentCapabilities `json:"agent_capabilities"`
+	OperatorFeedback string                     `json:"operator_feedback,omitempty"`
 }
 
 // GenerateExploitationPlan asks the LLM to propose a concrete plan
 // the operator can review. When OperatorFeedback is non-empty, the
 // prompt treats it as revisions on a prior proposal.
 func (p *Planner) GenerateExploitationPlan(ctx context.Context, in PlanProposalInput) (PlanProposal, error) {
-	body, err := json.Marshal(in)
+	body, err := json.Marshal(planPromptPayload{
+		Goal:             in.Goal,
+		Target:           in.Target,
+		Guidance:         in.Guidance,
+		Findings:         in.Findings,
+		Capabilities:     in.Capabilities,
+		OperatorFeedback: in.OperatorFeedback,
+	})
 	if err != nil {
 		return PlanProposal{}, fmt.Errorf("marshaling plan input: %w", err)
 	}
