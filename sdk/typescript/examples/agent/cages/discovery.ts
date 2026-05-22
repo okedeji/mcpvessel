@@ -30,7 +30,7 @@ import { done } from '../tools/discovery/done';
 const TOOLS: DiscoveryTool[] = [fetchPath, crawl, probePaths, dirFuzz, reconScan, submitFinding, done];
 const TOOLS_BY_NAME = new Map(TOOLS.map((t) => [t.name, t]));
 
-const MAX_ITERATIONS = 25;
+const MAX_ITERATIONS = 15;
 
 const SYSTEM_PROMPT = `You are a penetration testing agent performing attack surface discovery.
 
