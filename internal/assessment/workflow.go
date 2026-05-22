@@ -548,7 +548,10 @@ func applyCageDefaults(cageCfg *cage.Config, cfg Config) {
 			cageCfg.RateLimits = cage.RateLimits{RequestsPerSecond: tc.RateLimit}
 		}
 	}
-	if cfg.TokenBudget > 0 {
+	// Validation cages are deterministic re-tests with no LLM access;
+	// enforcement/validate.go rejects a validation cage that carries an
+	// LLM config. Discovery and exploitation cages require one.
+	if cfg.TokenBudget > 0 && cageCfg.Type != cage.TypeValidation {
 		cageCfg.LLM = &cage.LLMGatewayConfig{TokenBudget: cfg.TokenBudget}
 	}
 	cageCfg.Credentials = cfg.Credentials
