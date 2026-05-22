@@ -24,22 +24,23 @@ import (
 // Env holds the environment variables injected into a cage VM at
 // boot. cage-init reads these from /etc/agentcage/cage.json.
 type Env struct {
-	CageID                     string          `json:"cage_id"`
-	AssessmentID               string          `json:"assessment_id"`
-	CustomerID                 string          `json:"customer_id,omitempty"`
-	CageType                   string          `json:"cage_type"`
-	Entrypoint                 string          `json:"entrypoint"`
-	Objective                  string          `json:"objective,omitempty"`
-	LLMEndpoint                string          `json:"llm_endpoint,omitempty"`
-	LLMAPIKey                  string          `json:"llm_api_key,omitempty"`
-	JudgeAPIKey                string          `json:"judge_api_key,omitempty"`
-	NATSAddr                   string          `json:"nats_addr,omitempty"`
-	ScopeHost                  string          `json:"scope_host"`
-	ScopePorts                 []string        `json:"scope_ports,omitempty"`
-	ScopePaths                 []string        `json:"scope_paths,omitempty"`
-	SkipPaths                  []string        `json:"skip_paths,omitempty"`
-	TokenBudget                int64           `json:"token_budget,omitempty"`
-	VulnClass                  string          `json:"vuln_class,omitempty"`
+	CageID       string   `json:"cage_id"`
+	AssessmentID string   `json:"assessment_id"`
+	CustomerID   string   `json:"customer_id,omitempty"`
+	CageType     string   `json:"cage_type"`
+	Entrypoint   string   `json:"entrypoint"`
+	Objective    string   `json:"objective,omitempty"`
+	LLMEndpoint  string   `json:"llm_endpoint,omitempty"`
+	LLMAPIKey    string   `json:"llm_api_key,omitempty"`
+	JudgeAPIKey  string   `json:"judge_api_key,omitempty"`
+	NATSAddr     string   `json:"nats_addr,omitempty"`
+	ScopeHost    string   `json:"scope_host"`
+	ScopePorts   []string `json:"scope_ports,omitempty"`
+	ScopePaths   []string `json:"scope_paths,omitempty"`
+	SkipPaths    []string `json:"skip_paths,omitempty"`
+	TokenBudget  int64    `json:"token_budget,omitempty"`
+	VulnClass    string   `json:"vuln_class,omitempty"`
+	ParentFindingID            string          `json:"parent_finding_id,omitempty"`
 	HoldsEnabled               bool            `json:"holds_enabled,omitempty"`
 	HoldTimeoutSec             int             `json:"hold_timeout_sec,omitempty"`
 	TargetCredentials          json.RawMessage `json:"target_credentials,omitempty"`

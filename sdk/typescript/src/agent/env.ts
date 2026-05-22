@@ -19,6 +19,7 @@ export interface CageEnv {
   scopePaths: string[];
   scopePorts: string[];
   vulnClass: string;
+  parentFindingId: string;
   objective: string;
   llmEndpoint: string;
   llmApiKey: string;
@@ -40,6 +41,7 @@ export function readCageEnv(): CageEnv {
     scopePaths: parseCsv(process.env.AGENTCAGE_SCOPE_PATHS),
     scopePorts: parseCsv(process.env.AGENTCAGE_SCOPE_PORTS),
     vulnClass: (process.env.AGENTCAGE_VULN_CLASS ?? '').trim(),
+    parentFindingId: (process.env.AGENTCAGE_PARENT_FINDING_ID ?? '').trim(),
     objective: process.env.AGENTCAGE_OBJECTIVE ?? '',
     llmEndpoint: process.env.AGENTCAGE_LLM_ENDPOINT ?? '',
     llmApiKey: process.env.AGENTCAGE_LLM_API_KEY ?? '',

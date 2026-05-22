@@ -140,11 +140,12 @@ type Kind string
 const (
 	KindVulnerability Kind = "vulnerability"
 	KindDiscovery     Kind = "discovery"
+	KindValidationProof Kind = "validation_proof"
 )
 
 func (k Kind) Valid() bool {
 	switch k {
-	case KindVulnerability, KindDiscovery:
+	case KindVulnerability, KindDiscovery, KindValidationProof:
 		return true
 	default:
 		return false

@@ -1,7 +1,7 @@
 -- +migrate Up
 CREATE TYPE finding_status AS ENUM ('candidate', 'validated', 'rejected');
 CREATE TYPE finding_severity AS ENUM ('info', 'low', 'medium', 'high', 'critical');
-CREATE TYPE finding_kind AS ENUM ('vulnerability', 'discovery');
+CREATE TYPE finding_kind AS ENUM ('vulnerability', 'discovery', 'validation_proof');
 
 CREATE TABLE findings (
     id                TEXT PRIMARY KEY,
@@ -24,8 +24,9 @@ CREATE TABLE findings (
     validated_at      TIMESTAMPTZ,
     created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    CHECK ((kind = 'vulnerability' AND vuln_class IS NOT NULL AND vuln_class <> '')
-        OR (kind = 'discovery' AND (vuln_class IS NULL OR vuln_class = '')))
+    CHECK ((kind IN ('vulnerability', 'validation_proof') AND vuln_class IS NOT NULL AND vuln_class <> '')
+        OR (kind = 'discovery' AND (vuln_class IS NULL OR vuln_class = ''))),
+    CHECK (kind <> 'validation_proof' OR parent_finding_id IS NOT NULL)
 );
 
 CREATE INDEX idx_findings_assessment_id ON findings(assessment_id);

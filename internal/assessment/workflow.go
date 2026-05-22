@@ -295,10 +295,31 @@ func AssessmentWorkflow(ctx workflow.Context, input AssessmentWorkflowInput) (As
 
 		batchSize := batchSizeForType(cfg, cage.TypeExploitation)
 
-		// Cap actions to remaining cage budget so we don't overshoot MaxTotalCages.
+		// Cap actions to remaining cage budget. When the agent declares
+		// VALIDATION capability, reserve one slot per pending candidate
+		// finding so the validation phase doesn't enter with zero
+		// budget. Conservative — counts ALL candidates (discovery
+		// candidates won't actually consume validation slots since the
+		// validation phase filters to those with reproductionSteps) —
+		// but better to leave slack than starve validation, which is
+		// the only path to the Validated status now that the
+		// auto-trust shortcut is fading.
 		actions := decision.Actions
 		if cfg.MaxTotalCages > 0 {
 			remaining := cfg.MaxTotalCages - result.TotalCages
+			if cfg.Capabilities.Validation {
+				var counts findings.StatusCounts
+				countCtx := withActivityTimeout(ctx, TimeoutGetFindings)
+				_ = workflow.ExecuteActivity(countCtx, "CountFindings", input.AssessmentID).Get(ctx, &counts)
+				reservation := counts.Candidate
+				if reservation > remaining {
+					reservation = remaining
+				}
+				remaining -= reservation
+			}
+			if remaining < 0 {
+				remaining = 0
+			}
 			if int32(len(actions)) > remaining {
 				actions = actions[:remaining]
 			}
@@ -891,17 +912,28 @@ func validateFindings(
 		}
 	}
 
-	// Filter to candidates that carry agent-provided reproduction steps.
-	// The SDK enforces that findings always include a validationProof;
-	// findings without one are skipped defensively.
+	// Only spawn validators for actual vulnerabilities — non-Info
+	// severity, with reproduction steps the validation cage can replay.
+	// Discovery findings ("here's an endpoint") and clean Info probes
+	// ("looked at this, found nothing") have nothing for a validator to
+	// reproduce, and ValidationProof children would themselves loop
+	// through this filter if not excluded. The reproductionSteps gate
+	// is the technical requirement; kind+severity is the intent gate.
 	var provable []findings.Finding
 	for _, f := range candidates {
 		if f.Status != findings.StatusCandidate {
 			continue
 		}
-		if f.ValidationProof != nil && f.ValidationProof.ReproductionSteps != "" {
-			provable = append(provable, f)
+		if f.Kind != findings.KindVulnerability {
+			continue
 		}
+		if f.Severity == findings.SeverityInfo {
+			continue
+		}
+		if f.ValidationProof == nil || f.ValidationProof.ReproductionSteps == "" {
+			continue
+		}
+		provable = append(provable, f)
 	}
 
 	// Mirror the exploitation-capability gating: if the agent did not

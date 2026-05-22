@@ -94,6 +94,7 @@ func CageWorkflow(ctx workflow.Context, input CageWorkflowInput) (CageWorkflowRe
 		CageType:                   cfg.Type.String(),
 		Objective:                  string(cfg.InputContext),
 		VulnClass:                  cfg.VulnClass,
+		ParentFindingID:            cfg.ParentFindingID,
 		LLMEndpoint:                input.LLMEndpoint,
 		LLMAPIKey:                  input.LLMAPIKey,
 		JudgeAPIKey:                input.JudgeAPIKey,

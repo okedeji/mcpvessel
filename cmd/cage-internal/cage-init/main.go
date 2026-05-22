@@ -31,6 +31,7 @@ type CageEnv struct {
 	ScopePaths                 []string          `json:"scope_paths,omitempty"`
 	TokenBudget                int64             `json:"token_budget,omitempty"`
 	VulnClass                  string            `json:"vuln_class,omitempty"`
+	ParentFindingID            string            `json:"parent_finding_id,omitempty"`
 	HoldsEnabled               bool              `json:"holds_enabled,omitempty"`
 	HoldTimeoutSec             int               `json:"hold_timeout_sec,omitempty"`
 	TargetCredentials          json.RawMessage   `json:"target_credentials,omitempty"`
@@ -201,6 +202,9 @@ func main() {
 	}
 	if env.VulnClass != "" {
 		setEnv("AGENTCAGE_VULN_CLASS", env.VulnClass)
+	}
+	if env.ParentFindingID != "" {
+		setEnv("AGENTCAGE_PARENT_FINDING_ID", env.ParentFindingID)
 	}
 	if len(env.ScopePaths) > 0 {
 		setEnv("AGENTCAGE_SCOPE_PATHS", strings.Join(env.ScopePaths, ","))

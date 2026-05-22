@@ -3,6 +3,7 @@ import { FindingStatus, Severity } from './enums';
 export enum FindingKind {
   Vulnerability = 'vulnerability',
   Discovery = 'discovery',
+  ValidationProof = 'validation_proof',
 }
 
 export interface Evidence {

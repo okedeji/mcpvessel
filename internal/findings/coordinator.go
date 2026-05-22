@@ -69,8 +69,27 @@ func (c *Coordinator) HandleMessage(ctx context.Context, msg Message) error {
 	c.logger.Info("finding processed",
 		"finding_id", msg.Finding.ID,
 		"assessment_id", msg.Finding.AssessmentID,
+		"kind", msg.Finding.Kind,
 		"vuln_class", msg.Finding.VulnClass,
 	)
+
+	if msg.Finding.Kind == KindValidationProof && msg.Finding.ParentFindingID != "" {
+		newStatus := StatusRejected
+		if msg.Finding.Severity != SeverityInfo {
+			newStatus = StatusValidated
+		}
+		if err := c.store.UpdateStatus(ctx, msg.Finding.ParentFindingID, newStatus); err != nil {
+			c.logger.Error(err, "promoting parent finding from validation proof failed",
+				"parent_finding_id", msg.Finding.ParentFindingID,
+				"new_status", newStatus,
+				"proof_finding_id", msg.Finding.ID)
+		} else {
+			c.logger.Info("parent finding promoted by validation proof",
+				"parent_finding_id", msg.Finding.ParentFindingID,
+				"new_status", newStatus,
+				"proof_finding_id", msg.Finding.ID)
+		}
+	}
 
 	return nil
 }
