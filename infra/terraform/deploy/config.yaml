@@ -16,4 +16,4 @@ assessment:
   # Headroom for 1 discovery + ~8 exploitation (one per vuln class) +
   # a few validation cages. The Defaults() ceiling is 50; this template
   # picks a tighter number tuned to a single-host dev deploy.
-  max_total_cages: 12
+  max_total_cages: 20
