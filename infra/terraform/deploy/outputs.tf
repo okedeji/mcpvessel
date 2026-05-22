@@ -43,6 +43,6 @@ output "webhook_instance_id" {
 }
 
 output "webhook_ssh_command" {
-  description = "SSH into the webhook EC2 (only when enable_ssh = true). Webhook lives on a private IP, so jump via the agentcage host."
-  value       = var.enable_ssh ? "ssh -i ${path.module}/agentcage-ssh.pem -J ubuntu@${module.agentcage.public_ip} ec2-user@${module.webhook.private_ip}" : ""
+  description = "SSH into the webhook EC2 (only when enable_ssh = true)."
+  value       = var.enable_ssh ? "ssh -i ${path.module}/agentcage-ssh.pem ec2-user@${module.webhook.public_ip}" : ""
 }
