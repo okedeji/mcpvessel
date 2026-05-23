@@ -117,11 +117,11 @@ func CageWorkflow(ctx workflow.Context, input CageWorkflowInput) (CageWorkflowRe
 	if cfg.LLM != nil {
 		env.TokenBudget = cfg.LLM.TokenBudget
 	}
-	if cfg.Credentials != "" {
+	if cfg.CredentialsKey != "" {
 		var credData []byte
 		if err := workflow.ExecuteActivity(
 			withTimeout(ctx, t.FetchSecrets),
-			"FetchTargetCredentials", cfg.Credentials,
+			"FetchTargetCredentials", cfg.CredentialsKey,
 		).Get(ctx, &credData); err != nil {
 			cleanupIdentity(ctx, t, svid.ID, &token)
 			return failResult(ctx, t, result, "fetching target credentials: %v", err), nil

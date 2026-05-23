@@ -139,8 +139,8 @@ type Config struct {
 	SkipPaths       []string
 	Guidance        []byte
 	InputContext    []byte
-	Credentials     string
-	ProofThreshold  float64
+	CredentialsKey string
+	ProofThreshold float64
 	// IdentifyInRequests causes the payload proxy to inject an
 	// X-Agentcage-Pentest header attributing traffic to this
 	// assessment. Toggled at the assessment level; propagated to every

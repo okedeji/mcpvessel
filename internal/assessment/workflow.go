@@ -563,7 +563,7 @@ func applyCageDefaults(cageCfg *cage.Config, cfg Config) {
 	if cfg.TokenBudget > 0 && cageCfg.Type != cage.TypeValidation {
 		cageCfg.LLM = &cage.LLMGatewayConfig{TokenBudget: cfg.TokenBudget}
 	}
-	cageCfg.Credentials = cfg.Credentials
+	cageCfg.CredentialsKey = cfg.CredentialsKey
 	cageCfg.ProofThreshold = cfg.ProofThreshold
 	cageCfg.Environment = cfg.Environment
 	applyGuidance(cageCfg, cfg.Guidance)

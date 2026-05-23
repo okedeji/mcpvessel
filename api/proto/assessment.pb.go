@@ -186,8 +186,13 @@ type AssessmentConfig struct {
 	MaxIterations    int32                  `protobuf:"varint,17,opt,name=max_iterations,json=maxIterations,proto3" json:"max_iterations,omitempty"`
 	Environment      map[string]string      `protobuf:"bytes,18,rep,name=environment,proto3" json:"environment,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	Workflow         *Workflow              `protobuf:"bytes,19,opt,name=workflow,proto3" json:"workflow,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// credentials_key references a Vault entry holding the target
+	// credentials JSON. The orchestrator resolves it at cage spawn; the
+	// value never appears in the proto, the assessment row, or the
+	// audit log.
+	CredentialsKey string `protobuf:"bytes,20,opt,name=credentials_key,json=credentialsKey,proto3" json:"credentials_key,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *AssessmentConfig) Reset() {
@@ -316,6 +321,13 @@ func (x *AssessmentConfig) GetWorkflow() *Workflow {
 		return x.Workflow
 	}
 	return nil
+}
+
+func (x *AssessmentConfig) GetCredentialsKey() string {
+	if x != nil {
+		return x.CredentialsKey
+	}
+	return ""
 }
 
 // Workflow controls pipeline gates that are operator-toggleable but
@@ -1498,7 +1510,7 @@ const file_api_proto_assessment_proto_rawDesc = "" +
 	"\x04type\x18\x01 \x01(\x0e2\x1b.agentcage.cage.v1.CageTypeR\x04type\x12=\n" +
 	"\bdefaults\x18\x02 \x01(\v2!.agentcage.cage.v1.ResourceLimitsR\bdefaults\x12$\n" +
 	"\x0emax_batch_size\x18\x03 \x01(\x05R\fmaxBatchSize\x12<\n" +
-	"\fmax_duration\x18\x04 \x01(\v2\x19.google.protobuf.DurationR\vmaxDuration\"\x9d\a\n" +
+	"\fmax_duration\x18\x04 \x01(\v2\x19.google.protobuf.DurationR\vmaxDuration\"\xc6\a\n" +
 	"\x10AssessmentConfig\x12\x1f\n" +
 	"\vcustomer_id\x18\x01 \x01(\tR\n" +
 	"customerId\x124\n" +
@@ -1515,7 +1527,8 @@ const file_api_proto_assessment_proto_rawDesc = "" +
 	"\x0fmax_total_cages\x18\x0e \x01(\x05R\rmaxTotalCages\x12%\n" +
 	"\x0emax_iterations\x18\x11 \x01(\x05R\rmaxIterations\x12\\\n" +
 	"\venvironment\x18\x12 \x03(\v2:.agentcage.assessment.v1.AssessmentConfig.EnvironmentEntryR\venvironment\x12=\n" +
-	"\bworkflow\x18\x13 \x01(\v2!.agentcage.assessment.v1.WorkflowR\bworkflow\x1a7\n" +
+	"\bworkflow\x18\x13 \x01(\v2!.agentcage.assessment.v1.WorkflowR\bworkflow\x12'\n" +
+	"\x0fcredentials_key\x18\x14 \x01(\tR\x0ecredentialsKey\x1a7\n" +
 	"\tTagsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a>\n" +

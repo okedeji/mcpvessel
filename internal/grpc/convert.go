@@ -123,6 +123,7 @@ func assessmentConfigFromProto(p *pb.AssessmentConfig) assessment.Config {
 	}
 	cfg.SkipPaths = p.GetSkipPaths()
 	cfg.Environment = p.GetEnvironment()
+	cfg.CredentialsKey = p.GetCredentialsKey()
 	if n := p.GetNotifications(); n != nil {
 		cfg.Notifications = assessment.NotificationConfig{
 			Webhook:    n.GetWebhook(),
@@ -273,6 +274,7 @@ func assessmentConfigToProto(cfg assessment.Config) *pb.AssessmentConfig {
 		SkipPaths:        cfg.SkipPaths,
 		Tags:             cfg.Tags,
 		Environment:      cfg.Environment,
+		CredentialsKey:   cfg.CredentialsKey,
 		Scope: &pb.TargetScope{
 			Host:  cfg.Target.Host,
 			Ports: cfg.Target.Ports,

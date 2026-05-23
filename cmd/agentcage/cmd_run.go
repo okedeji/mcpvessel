@@ -86,6 +86,7 @@ func cmdRun(args []string) {
 		Name:             rf.name,
 		Tags:             []string(rf.tags),
 		CustomerID:       rf.customerID,
+		CredentialsKey:   rf.credentialsKey,
 	})
 	if err != nil {
 		exitErr("parsing flags", err)

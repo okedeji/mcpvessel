@@ -144,9 +144,12 @@ type Config struct {
 	JudgeTimeoutSec int
 	Tags            map[string]string
 	Notifications   NotificationConfig
-	Credentials     string
-	Environment     map[string]string
-	Capabilities    cagefile.AgentCapabilities
+	// CredentialsKey is a Vault key naming the target credentials entry.
+	// The orchestrator resolves it at cage spawn; the credential value
+	// itself never sits in the assessment row or the gRPC payload.
+	CredentialsKey string
+	Environment    map[string]string
+	Capabilities   cagefile.AgentCapabilities
 }
 
 type NotificationConfig struct {

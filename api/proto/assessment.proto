@@ -54,6 +54,11 @@ message AssessmentConfig {
   int32 max_iterations = 17;
   map<string, string> environment = 18;
   Workflow workflow = 19;
+  // credentials_key references a Vault entry holding the target
+  // credentials JSON. The orchestrator resolves it at cage spawn; the
+  // value never appears in the proto, the assessment row, or the
+  // audit log.
+  string credentials_key = 20;
 }
 
 // Workflow controls pipeline gates that are operator-toggleable but

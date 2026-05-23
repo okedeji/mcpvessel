@@ -39,6 +39,7 @@ type runFlags struct {
 	name             string
 	tags             stringSliceFlag
 	customerID       string
+	credentialsKey   string
 }
 
 func parseRunFlags(args []string) (*runFlags, *flag.FlagSet) {
@@ -72,6 +73,7 @@ func parseRunFlags(args []string) (*runFlags, *flag.FlagSet) {
 	fs.StringVar(&rf.name, "name", "", "human name for this assessment")
 	fs.Var(&rf.tags, "tag", "key=value metadata (repeatable)")
 	fs.StringVar(&rf.customerID, "customer-id", "", "customer identifier")
+	fs.StringVar(&rf.credentialsKey, "credentials-key", "", "Vault key naming the target credentials entry (resolved at cage spawn; never logged)")
 
 	_ = fs.Parse(args)
 	return rf, fs
@@ -98,6 +100,9 @@ Required (unless in plan file):
   --agent              agent name:tag or ref (e.g. agent-starter:latest)
   --target             target host (one per assessment)
   --customer-id        customer identifier
+
+Authentication:
+  --credentials-key    Vault key for target credentials (use 'agentcage vault put target <key> <json>' to stash; cage receives the resolved JSON only)
 
 Plan file:
   --plan               path to assessment YAML plan file

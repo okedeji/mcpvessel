@@ -20,6 +20,7 @@ func buildCreateAssessmentRequest(p *plan.Plan, bundleRef string) (*pb.CreateAss
 		SkipPaths:        p.Target.SkipPaths,
 		Tags:             p.Tags,
 		Environment:      p.Environment,
+		CredentialsKey:   p.Target.CredentialsKey,
 	}
 
 	cfg.Scope = &pb.TargetScope{

@@ -167,11 +167,11 @@ type Workflow struct {
 }
 
 type Target struct {
-	Host        string   `yaml:"host"`
-	Ports       []string `yaml:"ports"`
-	Paths       []string `yaml:"paths"`
-	SkipPaths   []string `yaml:"skip_paths"`
-	Credentials string   `yaml:"credentials,omitempty"`
+	Host      string   `yaml:"host"`
+	Ports     []string `yaml:"ports"`
+	Paths     []string `yaml:"paths"`
+	SkipPaths []string `yaml:"skip_paths"`
+	CredentialsKey string `yaml:"credentials_key,omitempty"`
 }
 
 type Budget struct {
@@ -246,6 +246,7 @@ func Merge(base, override *Plan) *Plan {
 	out.Target.Ports = copyStrings(base.Target.Ports)
 	out.Target.Paths = copyStrings(base.Target.Paths)
 	out.Target.SkipPaths = copyStrings(base.Target.SkipPaths)
+	out.Target.CredentialsKey = base.Target.CredentialsKey
 	if base.CageTypes != nil {
 		out.CageTypes = make(map[string]CageType, len(base.CageTypes))
 		for k, v := range base.CageTypes {
@@ -284,8 +285,8 @@ func Merge(base, override *Plan) *Plan {
 	if len(override.Target.SkipPaths) > 0 {
 		out.Target.SkipPaths = override.Target.SkipPaths
 	}
-	if override.Target.Credentials != "" {
-		out.Target.Credentials = override.Target.Credentials
+	if override.Target.CredentialsKey != "" {
+		out.Target.CredentialsKey = override.Target.CredentialsKey
 	}
 
 	if override.Budget.Tokens > 0 {
@@ -478,10 +479,6 @@ func Validate(p *Plan) error {
 			}
 		}
 	}
-	if p.Target.Credentials != "" {
-		return fmt.Errorf("target.credentials is not yet supported, use Vault for target credential management")
-	}
-
 	// Guidance field limits.
 	if len(p.Guidance.Strategy.Context) > maxContextLen {
 		return fmt.Errorf("guidance.strategy.context exceeds %d characters", maxContextLen)
@@ -648,6 +645,7 @@ type RawFlags struct {
 	Name             string
 	Tags             []string
 	CustomerID       string
+	CredentialsKey   string
 }
 
 func FlagsToOverride(explicit map[string]bool, f RawFlags) (*Plan, error) {
@@ -667,6 +665,9 @@ func FlagsToOverride(explicit map[string]bool, f RawFlags) (*Plan, error) {
 	}
 	if explicit["skip-path"] {
 		p.Target.SkipPaths = f.SkipPaths
+	}
+	if explicit["credentials-key"] {
+		p.Target.CredentialsKey = strings.TrimSpace(f.CredentialsKey)
 	}
 	if explicit["token-budget"] {
 		p.Budget.Tokens = f.TokenBudget
