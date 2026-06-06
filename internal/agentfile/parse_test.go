@@ -30,7 +30,6 @@ BUILD pip install --no-cache-dir agentcage-sdk
 BUILD pip install --no-cache-dir anthropic==0.34.0
 MODEL anthropic/claude-3.5
 
-ACCESS headless-browser, filesystem
 USES @anthropic/web-search:1.2.0
 USES PUBLIC @user/web-tool:0.5.0
 BUDGET 100000
@@ -55,9 +54,6 @@ EVAL ./tests/eval.yaml
 	}
 	if !reflect.DeepEqual(got.Build, wantBuild) {
 		t.Errorf("Build = %v, want %v", got.Build, wantBuild)
-	}
-	if !reflect.DeepEqual(got.Access, []Capability{CapHeadlessBrowser, CapFilesystem}) {
-		t.Errorf("Access = %v", got.Access)
 	}
 	if len(got.Uses) != 2 {
 		t.Fatalf("Uses len = %d, want 2", len(got.Uses))
@@ -209,11 +205,6 @@ func TestParse_Errors(t *testing.T) {
 			"uses missing org slash name",
 			"BASE x\nENTRYPOINT y\nUSES @web-search:1.0",
 			"must be @org/name:version",
-		},
-		{
-			"unknown access",
-			"BASE x\nENTRYPOINT y\nACCESS foobar",
-			"unknown access capability",
 		},
 		{
 			"budget negative",

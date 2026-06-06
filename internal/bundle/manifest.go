@@ -31,7 +31,6 @@ type AgentfileSpec struct {
 	Entrypoint string            `json:"entrypoint"`
 	Build      []string          `json:"build,omitempty"`
 	Model      string            `json:"model,omitempty"` // "provider/name"
-	Access     []string          `json:"access,omitempty"`
 	Uses       []UseSpec         `json:"uses,omitempty"`
 	Budget     int               `json:"budget,omitempty"`
 	Env        map[string]string `json:"env,omitempty"`

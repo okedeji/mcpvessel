@@ -18,7 +18,6 @@ type Agentfile struct {
 	Entrypoint string            // ENTRYPOINT: command line that starts the MCP server
 	Build      []string          // BUILD: ordered build-time commands
 	Model      *Model            // MODEL: nil when unset
-	Access     []Capability      // ACCESS: built-in capabilities the agent uses
 	Uses       []Use             // USES: registry sub-agent dependencies
 	Budget     int               // BUDGET: max LLM tokens per run, 0 when unset
 	Env        map[string]string // ENV: author-supplied environment variables
@@ -52,18 +51,6 @@ type ModelProvider string
 const (
 	ProviderOpenAI    ModelProvider = "openai"
 	ProviderAnthropic ModelProvider = "anthropic"
-)
-
-// Capability names a built-in runtime feature an ACCESS directive grants.
-// Parser only emits the constants below.
-type Capability string
-
-const (
-	CapShell           Capability = "shell"
-	CapHeadlessBrowser Capability = "headless-browser"
-	CapFilesystem      Capability = "filesystem"
-	CapNetwork         Capability = "network"
-	CapClock           Capability = "clock"
 )
 
 // Parse reads an Agentfile from r and returns the validated result.

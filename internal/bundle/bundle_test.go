@@ -20,7 +20,6 @@ func minimalSource(t *testing.T, dir string) {
 BUILD pip install --no-cache-dir agentcage-sdk
 ENTRYPOINT python3 agent.py
 MODEL anthropic/claude-3.5
-ACCESS filesystem
 META description "test agent"
 `)
 	writeFile(t, filepath.Join(dir, "agent.py"), "print('hello')\n")
@@ -64,11 +63,8 @@ func TestBuild_HappyPath(t *testing.T) {
 	if manifest.Agentfile.Model != "anthropic/claude-3.5" {
 		t.Errorf("Agentfile.Model = %q, want anthropic/claude-3.5", manifest.Agentfile.Model)
 	}
-	if len(manifest.Agentfile.Access) != 1 || manifest.Agentfile.Access[0] != "filesystem" {
-		t.Errorf("Agentfile.Access = %v", manifest.Agentfile.Access)
-	}
 	want := map[string]string{
-		"files/Agentfile": "BASE python:3.12-slim\nBUILD pip install --no-cache-dir agentcage-sdk\nENTRYPOINT python3 agent.py\nMODEL anthropic/claude-3.5\nACCESS filesystem\nMETA description \"test agent\"\n",
+		"files/Agentfile": "BASE python:3.12-slim\nBUILD pip install --no-cache-dir agentcage-sdk\nENTRYPOINT python3 agent.py\nMODEL anthropic/claude-3.5\nMETA description \"test agent\"\n",
 		"files/agent.py":  "print('hello')\n",
 	}
 	if len(files) != len(want) {

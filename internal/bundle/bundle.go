@@ -142,7 +142,6 @@ func buildManifest(af *agentfile.Agentfile, hash string) *Manifest {
 		Base:       af.Base,
 		Entrypoint: af.Entrypoint,
 		Build:      af.Build,
-		Access:     capsToStrings(af.Access),
 		Uses:       usesToSpec(af.Uses),
 		Budget:     af.Budget,
 		Env:        af.Env,
@@ -161,17 +160,6 @@ func buildManifest(af *agentfile.Agentfile, hash string) *Manifest {
 		BuiltAt:     nowFunc().UTC(),
 		BuiltWith:   builtWith,
 	}
-}
-
-func capsToStrings(caps []agentfile.Capability) []string {
-	if len(caps) == 0 {
-		return nil
-	}
-	out := make([]string, len(caps))
-	for i, c := range caps {
-		out[i] = string(c)
-	}
-	return out
 }
 
 func usesToSpec(uses []agentfile.Use) []UseSpec {

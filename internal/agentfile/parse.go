@@ -9,16 +9,6 @@ import (
 	"strings"
 )
 
-// Built-in capabilities valid in ACCESS. Adding one here also requires
-// runtime support in the SDK and cage.
-var validAccess = map[string]Capability{
-	"shell":            CapShell,
-	"headless-browser": CapHeadlessBrowser,
-	"filesystem":       CapFilesystem,
-	"network":          CapNetwork,
-	"clock":            CapClock,
-}
-
 // LLM providers the runtime knows in v0.
 var validProviders = map[string]ModelProvider{
 	"openai":    ProviderOpenAI,
@@ -67,8 +57,6 @@ func parseLine(af *Agentfile, line string, lineNo int) error {
 		return parseBuild(af, rest, lineNo)
 	case "MODEL":
 		return parseModel(af, rest, lineNo)
-	case "ACCESS":
-		return parseAccess(af, rest, lineNo)
 	case "USES":
 		return parseUses(af, rest, lineNo)
 	case "BUDGET":
@@ -143,21 +131,6 @@ func parseModel(af *Agentfile, rest string, lineNo int) error {
 		return fmt.Errorf("line %d: unknown provider %q (v0 supports openai, anthropic)", lineNo, parts[0])
 	}
 	af.Model = &Model{Provider: provider, Name: parts[1]}
-	return nil
-}
-
-func parseAccess(af *Agentfile, rest string, lineNo int) error {
-	if rest == "" {
-		return fmt.Errorf("line %d: ACCESS requires at least one capability", lineNo)
-	}
-	rest = strings.ReplaceAll(rest, ",", " ")
-	for _, name := range strings.Fields(rest) {
-		cap, ok := validAccess[name]
-		if !ok {
-			return fmt.Errorf("line %d: unknown access capability %q", lineNo, name)
-		}
-		af.Access = append(af.Access, cap)
-	}
 	return nil
 }
 
