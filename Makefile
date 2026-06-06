@@ -1,6 +1,4 @@
-.PHONY: all build build-agentcage build-cage-rootfs \
-       build-cage-internal build-typescript-sdk clean proto test vet lint \
-       check-secrets fmt-check ci tidy
+.PHONY: all build clean test vet lint check-secrets fmt-check ci tidy
 
 GO := go
 VERSION := $(shell git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo dev)
@@ -10,46 +8,11 @@ BINDIR := bin
 
 all: vet build
 
-build: build-agentcage build-cage-internal
-
-build-agentcage:
+build:
 	$(GO) build $(GOFLAGS) -o $(BINDIR)/agentcage ./cmd/agentcage/
-
-# Go uses GOARCH=arm64 on both macOS and Linux. uname -m returns
-# arm64 on macOS but aarch64 on Linux; normalize to Go convention.
-GOARCH_ARM := arm64
-GOARCH_AMD := amd64
-
-# Normalize uname -m to Go arch for rootfs naming.
-UNAME_ARCH := $(shell uname -m)
-ifeq ($(UNAME_ARCH),x86_64)
-  NORMALIZED_ARCH := amd64
-else ifeq ($(UNAME_ARCH),aarch64)
-  NORMALIZED_ARCH := arm64
-else
-  NORMALIZED_ARCH := $(UNAME_ARCH)
-endif
-
-build-cage-rootfs: build-cage-internal
-	./scripts/build-cage-rootfs.sh $(BINDIR)/cage-rootfs-$(NORMALIZED_ARCH).ext4
-
-CAGE_INTERNAL := cage-init payload-proxy findings-sidecar directive-sidecar
-
-build-cage-internal: $(addprefix build-cage-internal-,$(CAGE_INTERNAL))
-
-build-cage-internal-%:
-	CGO_ENABLED=0 $(GO) build $(GOFLAGS) -o $(BINDIR)/cage-internal/$* ./cmd/cage-internal/$*/
 
 clean:
 	rm -rf $(BINDIR)
-
-proto:
-	@echo "Generating proto stubs..."
-	protoc \
-		--proto_path=. \
-		--go_out=. --go_opt=paths=source_relative \
-		--go-grpc_out=. --go-grpc_opt=paths=source_relative \
-		api/proto/*.proto
 
 test:
 	$(GO) test ./...
@@ -68,9 +31,6 @@ fmt-check:
 	@unformatted=$$(gofmt -l .); if [ -n "$$unformatted" ]; then echo "gofmt: these files are not formatted:" >&2; echo "$$unformatted" >&2; exit 1; fi
 
 ci: fmt-check vet lint check-secrets test build
-
-build-typescript-sdk:
-	cd sdk/typescript && npm install && npm run build
 
 tidy:
 	$(GO) mod tidy

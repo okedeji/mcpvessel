@@ -12,10 +12,6 @@ import (
 	"time"
 
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/metric"
-
-	agentmetrics "github.com/okedeji/agentcage/internal/metrics"
 )
 
 const (
@@ -101,11 +97,7 @@ func (c *Client) ChatCompletion(ctx context.Context, cageID, assessmentID string
 		return nil, fmt.Errorf("marshaling LLM request: %w", err)
 	}
 
-	start := time.Now()
 	respBody, err := c.doWithRetry(ctx, body)
-	if agentmetrics.GatewayRequestDuration != nil {
-		agentmetrics.GatewayRequestDuration.Record(ctx, time.Since(start).Seconds())
-	}
 	if err != nil {
 		return nil, err
 	}
@@ -120,11 +112,6 @@ func (c *Client) ChatCompletion(ctx context.Context, cageID, assessmentID string
 	}
 
 	c.meter.Record(cageID, assessmentID, resp.Model, resp.Usage.PromptTokens, resp.Usage.CompletionTokens)
-	if agentmetrics.GatewayTokensConsumed != nil {
-		agentmetrics.GatewayTokensConsumed.Add(ctx, resp.Usage.TotalTokens,
-			metric.WithAttributes(attribute.String("model", resp.Model)),
-		)
-	}
 
 	return &resp, nil
 }
