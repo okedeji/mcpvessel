@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/okedeji/agentcage/internal/progress"
 )
 
 func TestHumanSize(t *testing.T) {
@@ -66,7 +68,7 @@ func TestRunBuild_HappyPath(t *testing.T) {
 
 	out := filepath.Join(t.TempDir(), "researcher.agent")
 	var buf bytes.Buffer
-	if err := runBuild(&buf, srcDir, out); err != nil {
+	if err := runBuild(&buf, srcDir, out, progress.ModePlain); err != nil {
 		t.Fatalf("runBuild: %v", err)
 	}
 
@@ -93,7 +95,7 @@ func TestRunBuild_PropagatesBundleError(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "x.agent")
 
 	var buf bytes.Buffer
-	err := runBuild(&buf, srcDir, out)
+	err := runBuild(&buf, srcDir, out, progress.ModePlain)
 	if err == nil {
 		t.Fatalf("expected error, got nil")
 	}

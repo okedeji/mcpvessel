@@ -10,10 +10,12 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/okedeji/agentcage/internal/bundle"
+	"github.com/okedeji/agentcage/internal/progress"
 )
 
 func newBuildCmd() *cobra.Command {
 	var outPath string
+	var progressFlag string
 	cmd := &cobra.Command{
 		Use:   "build [PATH]",
 		Short: "Build an agent bundle from an Agentfile",
@@ -33,29 +35,28 @@ named after the source directory unless -o is given.`,
 			if outPath == "" {
 				outPath = defaultOutputPath(srcDir)
 			}
-			return runBuild(cmd.OutOrStdout(), srcDir, outPath)
+			return runBuild(cmd.OutOrStdout(), srcDir, outPath, progress.ParseMode(progressFlag))
 		},
 	}
 	cmd.Flags().StringVarP(&outPath, "output", "o", "", "output path for the .agent file")
+	cmd.Flags().StringVar(&progressFlag, "progress", "auto", "set progress output (auto, plain, tty)")
 	return cmd
 }
 
-// runBuild calls bundle.Build with progress lines written to w.
-// w is taken from the cobra command so tests and callers that want the
-// output captured (e.g. for --json later) can override it.
+// runBuild calls bundle.Build with a progress renderer chosen by mode.
 //
-// Output mirrors Docker's classic builder shape:
-//
-//	Step 1/3 : Parsing Agentfile
-//	Step 2/3 : Hashing source tree
-//	Step 3/3 : Sealing bundle → my-agent.agent
-//	Successfully built my-agent.agent (608 B) in 12ms
-func runBuild(w io.Writer, srcDir, outPath string) error {
+// Plain mode mirrors Docker's classic builder format (one line per
+// step start, no live updates). TTY mode mirrors modern BuildKit
+// output, refreshing in place with live timers. Auto picks based on
+// whether w is a real terminal.
+func runBuild(w io.Writer, srcDir, outPath string, mode progress.Mode) error {
 	start := time.Now()
+	renderer := progress.New(w, mode)
 
 	err := bundle.Build(srcDir, outPath, bundle.WithProgress(func(step, total int, msg string) {
-		_, _ = fmt.Fprintf(w, "Step %d/%d : %s\n", step, total, msg)
+		renderer.Step(step, total, msg)
 	}))
+	renderer.Done()
 	if err != nil {
 		return err
 	}
