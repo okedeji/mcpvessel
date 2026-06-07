@@ -27,9 +27,9 @@ type Manifest struct {
 // Fields tagged omitempty are omitted from JSON when unset, keeping
 // manifests for minimal agents concise.
 type AgentfileSpec struct {
-	Base       string            `json:"base"`
+	From       string            `json:"from"`
 	Entrypoint string            `json:"entrypoint"`
-	Build      []string          `json:"build,omitempty"`
+	Run        []string          `json:"run,omitempty"`
 	Model      string            `json:"model,omitempty"` // "provider/name"
 	Uses       []UseSpec         `json:"uses,omitempty"`
 	Budget     int               `json:"budget,omitempty"`

@@ -139,9 +139,9 @@ func bundleSkip(srcDir, outAbs string) func(rel string) bool {
 
 func buildManifest(af *agentfile.Agentfile, hash string) *Manifest {
 	spec := AgentfileSpec{
-		Base:       af.Base,
+		From:       af.From,
 		Entrypoint: af.Entrypoint,
-		Build:      af.Build,
+		Run:        af.Run,
 		Uses:       usesToSpec(af.Uses),
 		Budget:     af.Budget,
 		Env:        af.Env,

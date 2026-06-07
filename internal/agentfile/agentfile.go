@@ -14,9 +14,9 @@ import (
 // unset scalar directives, nil for slice-shaped directives that did not
 // appear, an empty map for Env and Meta.
 type Agentfile struct {
-	Base       string            // BASE: OCI image reference
+	From       string            // FROM: OCI image reference
 	Entrypoint string            // ENTRYPOINT: command line that starts the MCP server
-	Build      []string          // BUILD: ordered build-time commands
+	Run        []string          // RUN: ordered build-time commands
 	Model      *Model            // MODEL: nil when unset
 	Uses       []Use             // USES: registry sub-agent dependencies
 	Budget     int               // BUDGET: max LLM tokens per run, 0 when unset

@@ -38,8 +38,8 @@ if __name__ == "__main__":
 Pair with an `Agentfile`:
 
 ```
-BASE python:3.12-slim
-BUILD pip install --no-cache-dir agentcage-sdk
+FROM python:3.12-slim
+RUN pip install --no-cache-dir agentcage-sdk
 MODEL anthropic/claude-3-5-sonnet
 SECRETS anthropic_api_key
 NETWORK allow:api.anthropic.com

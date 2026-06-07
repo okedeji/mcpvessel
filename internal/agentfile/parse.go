@@ -49,12 +49,12 @@ func parse(r io.Reader) (*Agentfile, error) {
 func parseLine(af *Agentfile, line string, lineNo int) error {
 	directive, rest := splitDirective(line)
 	switch strings.ToUpper(directive) {
-	case "BASE":
-		return parseBase(af, rest, lineNo)
+	case "FROM":
+		return parseFrom(af, rest, lineNo)
 	case "ENTRYPOINT":
 		return parseEntrypoint(af, rest, lineNo)
-	case "BUILD":
-		return parseBuild(af, rest, lineNo)
+	case "RUN":
+		return parseRun(af, rest, lineNo)
 	case "MODEL":
 		return parseModel(af, rest, lineNo)
 	case "USES":
@@ -85,14 +85,14 @@ func splitDirective(line string) (string, string) {
 	return line, ""
 }
 
-func parseBase(af *Agentfile, rest string, lineNo int) error {
-	if af.Base != "" {
-		return fmt.Errorf("line %d: BASE declared twice", lineNo)
+func parseFrom(af *Agentfile, rest string, lineNo int) error {
+	if af.From != "" {
+		return fmt.Errorf("line %d: FROM declared twice", lineNo)
 	}
 	if rest == "" {
-		return fmt.Errorf("line %d: BASE requires an OCI image reference", lineNo)
+		return fmt.Errorf("line %d: FROM requires an OCI image reference", lineNo)
 	}
-	af.Base = rest
+	af.From = rest
 	return nil
 }
 
@@ -107,11 +107,11 @@ func parseEntrypoint(af *Agentfile, rest string, lineNo int) error {
 	return nil
 }
 
-func parseBuild(af *Agentfile, rest string, lineNo int) error {
+func parseRun(af *Agentfile, rest string, lineNo int) error {
 	if rest == "" {
-		return fmt.Errorf("line %d: BUILD requires a command", lineNo)
+		return fmt.Errorf("line %d: RUN requires a command", lineNo)
 	}
-	af.Build = append(af.Build, rest)
+	af.Run = append(af.Run, rest)
 	return nil
 }
 
@@ -267,8 +267,8 @@ func parseEval(af *Agentfile, rest string, lineNo int) error {
 }
 
 func validate(af *Agentfile) error {
-	if af.Base == "" {
-		return errors.New("BASE is required")
+	if af.From == "" {
+		return errors.New("FROM is required")
 	}
 	if af.Entrypoint == "" {
 		return errors.New("ENTRYPOINT is required")

@@ -16,8 +16,8 @@ import (
 // minimalSource writes a small but valid Agentfile + agent.py into dir.
 func minimalSource(t *testing.T, dir string) {
 	t.Helper()
-	writeFile(t, filepath.Join(dir, "Agentfile"), `BASE python:3.12-slim
-BUILD pip install --no-cache-dir agentcage-sdk
+	writeFile(t, filepath.Join(dir, "Agentfile"), `FROM python:3.12-slim
+RUN pip install --no-cache-dir agentcage-sdk
 MODEL anthropic/claude-3.5
 META description "test agent"
 ENTRYPOINT python3 agent.py
@@ -57,14 +57,14 @@ func TestBuild_HappyPath(t *testing.T) {
 	if !strings.HasPrefix(manifest.FilesHash, "sha256:") {
 		t.Errorf("FilesHash = %q, want sha256: prefix", manifest.FilesHash)
 	}
-	if manifest.Agentfile.Base != "python:3.12-slim" {
-		t.Errorf("Agentfile.Base = %q", manifest.Agentfile.Base)
+	if manifest.Agentfile.From != "python:3.12-slim" {
+		t.Errorf("Agentfile.From = %q", manifest.Agentfile.From)
 	}
 	if manifest.Agentfile.Model != "anthropic/claude-3.5" {
 		t.Errorf("Agentfile.Model = %q, want anthropic/claude-3.5", manifest.Agentfile.Model)
 	}
 	want := map[string]string{
-		"files/Agentfile": "BASE python:3.12-slim\nBUILD pip install --no-cache-dir agentcage-sdk\nMODEL anthropic/claude-3.5\nMETA description \"test agent\"\nENTRYPOINT python3 agent.py\n",
+		"files/Agentfile": "FROM python:3.12-slim\nRUN pip install --no-cache-dir agentcage-sdk\nMODEL anthropic/claude-3.5\nMETA description \"test agent\"\nENTRYPOINT python3 agent.py\n",
 		"files/agent.py":  "print('hello')\n",
 	}
 	if len(files) != len(want) {

@@ -7,15 +7,15 @@ import (
 )
 
 func TestParse_Minimal(t *testing.T) {
-	src := `BASE python:3.12-slim
+	src := `FROM python:3.12-slim
 ENTRYPOINT python3 -m agent
 `
 	got, err := Parse(strings.NewReader(src))
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-	if got.Base != "python:3.12-slim" {
-		t.Errorf("Base = %q, want python:3.12-slim", got.Base)
+	if got.From != "python:3.12-slim" {
+		t.Errorf("From = %q, want python:3.12-slim", got.From)
 	}
 	if got.Entrypoint != "python3 -m agent" {
 		t.Errorf("Entrypoint = %q, want python3 -m agent", got.Entrypoint)
@@ -24,9 +24,9 @@ ENTRYPOINT python3 -m agent
 
 func TestParse_AllDirectives(t *testing.T) {
 	src := `# Comment line at the top.
-BASE python:3.12-slim
-BUILD pip install --no-cache-dir agentcage-sdk
-BUILD pip install --no-cache-dir anthropic==0.34.0
+FROM python:3.12-slim
+RUN pip install --no-cache-dir agentcage-sdk
+RUN pip install --no-cache-dir anthropic==0.34.0
 MODEL anthropic/claude-3.5
 
 USES @anthropic/web-search:1.2.0
@@ -48,12 +48,12 @@ ENTRYPOINT python3 -m researcher
 	if !reflect.DeepEqual(got.Model, wantModel) {
 		t.Errorf("Model = %+v, want %+v", got.Model, wantModel)
 	}
-	wantBuild := []string{
+	wantRun := []string{
 		"pip install --no-cache-dir agentcage-sdk",
 		"pip install --no-cache-dir anthropic==0.34.0",
 	}
-	if !reflect.DeepEqual(got.Build, wantBuild) {
-		t.Errorf("Build = %v, want %v", got.Build, wantBuild)
+	if !reflect.DeepEqual(got.Run, wantRun) {
+		t.Errorf("Run = %v, want %v", got.Run, wantRun)
 	}
 	if len(got.Uses) != 2 {
 		t.Fatalf("Uses len = %d, want 2", len(got.Uses))
@@ -88,7 +88,7 @@ ENTRYPOINT python3 -m researcher
 }
 
 func TestParse_CaseInsensitive(t *testing.T) {
-	src := `base python:3.12-slim
+	src := `from python:3.12-slim
 EnTrYpOiNt python3 -m agent
 uses public @org/x:1.0
 `
@@ -96,8 +96,8 @@ uses public @org/x:1.0
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-	if got.Base != "python:3.12-slim" {
-		t.Errorf("Base = %q", got.Base)
+	if got.From != "python:3.12-slim" {
+		t.Errorf("From = %q", got.From)
 	}
 	if got.Entrypoint != "python3 -m agent" {
 		t.Errorf("Entrypoint = %q", got.Entrypoint)
@@ -109,7 +109,7 @@ uses public @org/x:1.0
 
 func TestParse_CommentsAndBlankLines(t *testing.T) {
 	src := `# leading comment
-BASE python:3.12-slim
+FROM python:3.12-slim
 
 # blank line above, blank line below
 
@@ -120,7 +120,7 @@ ENTRYPOINT python3 -m agent
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-	if got.Base != "python:3.12-slim" || got.Entrypoint != "python3 -m agent" {
+	if got.From != "python:3.12-slim" || got.Entrypoint != "python3 -m agent" {
 		t.Errorf("required fields not parsed: %+v", got)
 	}
 }
@@ -129,19 +129,19 @@ ENTRYPOINT python3 -m agent
 // This matches Dockerfile and preserves legitimate uses like pip's
 // `url#sha256=...` pin specs.
 func TestParse_InlineHashIsNotComment(t *testing.T) {
-	src := `BASE python:3.12-slim # not a comment
-BUILD pip install foo @ https://example.com/foo.tar.gz#sha256=abc
+	src := `FROM python:3.12-slim # not a comment
+RUN pip install foo @ https://example.com/foo.tar.gz#sha256=abc
 ENTRYPOINT python3 -m agent
 `
 	got, err := Parse(strings.NewReader(src))
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-	if got.Base != "python:3.12-slim # not a comment" {
-		t.Errorf("Base = %q, want the # to be preserved", got.Base)
+	if got.From != "python:3.12-slim # not a comment" {
+		t.Errorf("From = %q, want the # to be preserved", got.From)
 	}
-	if len(got.Build) != 1 || got.Build[0] != "pip install foo @ https://example.com/foo.tar.gz#sha256=abc" {
-		t.Errorf("Build = %v, want #sha256= preserved verbatim", got.Build)
+	if len(got.Run) != 1 || got.Run[0] != "pip install foo @ https://example.com/foo.tar.gz#sha256=abc" {
+		t.Errorf("Run = %v, want #sha256= preserved verbatim", got.Run)
 	}
 }
 
@@ -152,93 +152,93 @@ func TestParse_Errors(t *testing.T) {
 		want string
 	}{
 		{
-			"missing base",
+			"missing from",
 			"ENTRYPOINT python3 -m agent",
-			"BASE is required",
+			"FROM is required",
 		},
 		{
 			"missing entrypoint",
-			"BASE python:3.12-slim",
+			"FROM python:3.12-slim",
 			"ENTRYPOINT is required",
 		},
 		{
 			"unknown directive",
-			"BASE x\nENTRYPOINT y\nFOOBAR baz",
+			"FROM x\nENTRYPOINT y\nFOOBAR baz",
 			"unknown directive",
 		},
 		{
-			"base declared twice",
-			"BASE x\nBASE y\nENTRYPOINT z",
-			"BASE declared twice",
+			"from declared twice",
+			"FROM x\nFROM y\nENTRYPOINT z",
+			"FROM declared twice",
 		},
 		{
 			"entrypoint declared twice",
-			"BASE x\nENTRYPOINT y\nENTRYPOINT z",
+			"FROM x\nENTRYPOINT y\nENTRYPOINT z",
 			"ENTRYPOINT declared twice",
 		},
 		{
 			"unknown model provider",
-			"BASE x\nENTRYPOINT y\nMODEL google/gemini",
+			"FROM x\nENTRYPOINT y\nMODEL google/gemini",
 			"unknown provider",
 		},
 		{
 			"model bad form",
-			"BASE x\nENTRYPOINT y\nMODEL just-a-name",
+			"FROM x\nENTRYPOINT y\nMODEL just-a-name",
 			"MODEL must be provider/model-name",
 		},
 		{
 			"uses latest tag rejected",
-			"BASE x\nENTRYPOINT y\nUSES @anthropic/web-search:latest",
+			"FROM x\nENTRYPOINT y\nUSES @anthropic/web-search:latest",
 			"cannot use the latest tag",
 		},
 		{
 			"uses missing version",
-			"BASE x\nENTRYPOINT y\nUSES @anthropic/web-search",
+			"FROM x\nENTRYPOINT y\nUSES @anthropic/web-search",
 			"must include a version tag",
 		},
 		{
 			"uses missing @",
-			"BASE x\nENTRYPOINT y\nUSES anthropic/web-search:1.0",
+			"FROM x\nENTRYPOINT y\nUSES anthropic/web-search:1.0",
 			"must start with @",
 		},
 		{
 			"uses missing org slash name",
-			"BASE x\nENTRYPOINT y\nUSES @web-search:1.0",
+			"FROM x\nENTRYPOINT y\nUSES @web-search:1.0",
 			"must be @org/name:version",
 		},
 		{
 			"budget negative",
-			"BASE x\nENTRYPOINT y\nBUDGET -1",
+			"FROM x\nENTRYPOINT y\nBUDGET -1",
 			"must be positive",
 		},
 		{
 			"budget extra args",
-			"BASE x\nENTRYPOINT y\nBUDGET 1 USD",
+			"FROM x\nENTRYPOINT y\nBUDGET 1 USD",
 			"takes a single token count",
 		},
 		{
 			"budget bad form",
-			"BASE x\nENTRYPOINT y\nBUDGET notanumber",
+			"FROM x\nENTRYPOINT y\nBUDGET notanumber",
 			"is not a token count",
 		},
 		{
 			"reserved env prefix",
-			"BASE x\nENTRYPOINT y\nENV AGENTCAGE_FOO=bar",
+			"FROM x\nENTRYPOINT y\nENV AGENTCAGE_FOO=bar",
 			"reserved AGENTCAGE_ prefix",
 		},
 		{
 			"env bad form",
-			"BASE x\nENTRYPOINT y\nENV NO_EQUALS_SIGN",
+			"FROM x\nENTRYPOINT y\nENV NO_EQUALS_SIGN",
 			"ENV must be KEY=VALUE",
 		},
 		{
 			"network bad format",
-			"BASE x\nENTRYPOINT y\nNETWORK something",
+			"FROM x\nENTRYPOINT y\nNETWORK something",
 			"must be deny-default or allow:",
 		},
 		{
 			"eval declared twice",
-			"BASE x\nENTRYPOINT y\nEVAL a\nEVAL b",
+			"FROM x\nENTRYPOINT y\nEVAL a\nEVAL b",
 			"EVAL declared twice",
 		},
 	}

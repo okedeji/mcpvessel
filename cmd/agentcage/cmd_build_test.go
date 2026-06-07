@@ -58,7 +58,7 @@ func TestDefaultOutputPath(t *testing.T) {
 func TestRunBuild_HappyPath(t *testing.T) {
 	srcDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(srcDir, "Agentfile"), []byte(
-		"BASE python:3.12-slim\nENTRYPOINT python3 agent.py\n",
+		"FROM python:3.12-slim\nENTRYPOINT python3 agent.py\n",
 	), 0o644); err != nil {
 		t.Fatalf("WriteFile Agentfile: %v", err)
 	}
