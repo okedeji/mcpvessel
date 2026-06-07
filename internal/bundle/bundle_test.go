@@ -19,6 +19,8 @@ func minimalSource(t *testing.T, dir string) {
 	writeFile(t, filepath.Join(dir, "Agentfile"), `FROM python:3.12-slim
 RUN pip install --no-cache-dir agentcage-sdk
 MODEL anthropic/claude-3.5
+MAIN respond
+EXPOSE fetch_paper
 META description "test agent"
 ENTRYPOINT python3 agent.py
 `)
@@ -63,8 +65,14 @@ func TestBuild_HappyPath(t *testing.T) {
 	if manifest.Agentfile.Model != "anthropic/claude-3.5" {
 		t.Errorf("Agentfile.Model = %q, want anthropic/claude-3.5", manifest.Agentfile.Model)
 	}
+	if manifest.Agentfile.Main != "respond" {
+		t.Errorf("Agentfile.Main = %q, want %q", manifest.Agentfile.Main, "respond")
+	}
+	if len(manifest.Agentfile.Expose) != 1 || manifest.Agentfile.Expose[0] != "fetch_paper" {
+		t.Errorf("Agentfile.Expose = %v, want [fetch_paper]", manifest.Agentfile.Expose)
+	}
 	want := map[string]string{
-		"files/Agentfile": "FROM python:3.12-slim\nRUN pip install --no-cache-dir agentcage-sdk\nMODEL anthropic/claude-3.5\nMETA description \"test agent\"\nENTRYPOINT python3 agent.py\n",
+		"files/Agentfile": "FROM python:3.12-slim\nRUN pip install --no-cache-dir agentcage-sdk\nMODEL anthropic/claude-3.5\nMAIN respond\nEXPOSE fetch_paper\nMETA description \"test agent\"\nENTRYPOINT python3 agent.py\n",
 		"files/agent.py":  "print('hello')\n",
 	}
 	if len(files) != len(want) {

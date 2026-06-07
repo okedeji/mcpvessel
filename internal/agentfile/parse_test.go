@@ -87,6 +87,47 @@ ENTRYPOINT python3 -m researcher
 	}
 }
 
+func TestParse_MainAndExpose(t *testing.T) {
+	src := `FROM python:3.12-slim
+ENTRYPOINT python3 -m agent
+MODEL anthropic/claude-3.5
+MAIN respond
+EXPOSE fetch_paper
+EXPOSE cite_count, parse_doi
+EXPOSE cite_count
+`
+	got, err := Parse(strings.NewReader(src))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if got.Main != "respond" {
+		t.Errorf("Main = %q, want %q", got.Main, "respond")
+	}
+	wantExpose := []string{"fetch_paper", "cite_count", "parse_doi"}
+	if !reflect.DeepEqual(got.Expose, wantExpose) {
+		t.Errorf("Expose = %v, want %v (duplicates should be deduped, order preserved)", got.Expose, wantExpose)
+	}
+}
+
+func TestParse_MainOptional(t *testing.T) {
+	// Tool collection: no MAIN. Parse succeeds; Main stays empty.
+	src := `FROM node:20-slim
+ENTRYPOINT node dist/server.js
+EXPOSE search
+EXPOSE news
+`
+	got, err := Parse(strings.NewReader(src))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if got.Main != "" {
+		t.Errorf("Main = %q, want empty for tool collection", got.Main)
+	}
+	if !reflect.DeepEqual(got.Expose, []string{"search", "news"}) {
+		t.Errorf("Expose = %v", got.Expose)
+	}
+}
+
 func TestParse_CaseInsensitive(t *testing.T) {
 	src := `from python:3.12-slim
 EnTrYpOiNt python3 -m agent
@@ -240,6 +281,26 @@ func TestParse_Errors(t *testing.T) {
 			"eval declared twice",
 			"FROM x\nENTRYPOINT y\nEVAL a\nEVAL b",
 			"EVAL declared twice",
+		},
+		{
+			"main empty",
+			"FROM x\nENTRYPOINT y\nMAIN",
+			"MAIN requires a tool name",
+		},
+		{
+			"main declared twice",
+			"FROM x\nENTRYPOINT y\nMAIN respond\nMAIN other",
+			"MAIN declared twice",
+		},
+		{
+			"main extra tokens",
+			"FROM x\nENTRYPOINT y\nMAIN respond other",
+			"MAIN takes a single tool name",
+		},
+		{
+			"expose empty",
+			"FROM x\nENTRYPOINT y\nEXPOSE",
+			"EXPOSE requires at least one tool name",
 		},
 	}
 	for _, tc := range cases {

@@ -142,6 +142,8 @@ func buildManifest(af *agentfile.Agentfile, hash string) *Manifest {
 		From:       af.From,
 		Entrypoint: af.Entrypoint,
 		Run:        af.Run,
+		Main:       af.Main,
+		Expose:     af.Expose,
 		Uses:       usesToSpec(af.Uses),
 		Budget:     af.Budget,
 		Env:        af.Env,

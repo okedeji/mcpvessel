@@ -57,6 +57,10 @@ func parseLine(af *Agentfile, line string, lineNo int) error {
 		return parseRun(af, rest, lineNo)
 	case "MODEL":
 		return parseModel(af, rest, lineNo)
+	case "MAIN":
+		return parseMain(af, rest, lineNo)
+	case "EXPOSE":
+		return parseExpose(af, rest, lineNo)
 	case "USES":
 		return parseUses(af, rest, lineNo)
 	case "BUDGET":
@@ -131,6 +135,51 @@ func parseModel(af *Agentfile, rest string, lineNo int) error {
 		return fmt.Errorf("line %d: unknown provider %q (v0 supports openai, anthropic)", lineNo, parts[0])
 	}
 	af.Model = &Model{Provider: provider, Name: parts[1]}
+	return nil
+}
+
+// parseMain handles the MAIN directive, which names the tool that
+// runs when the agent is invoked as an agent (`agentcage run BUNDLE
+// "..."`). The validator does NOT confirm the tool actually exists in
+// the agent's MCP server — that check belongs to the build-time
+// introspection pass (M2 work). Here we only validate the surface
+// shape: one token, declared at most once.
+func parseMain(af *Agentfile, rest string, lineNo int) error {
+	if af.Main != "" {
+		return fmt.Errorf("line %d: MAIN declared twice", lineNo)
+	}
+	fields := strings.Fields(rest)
+	if len(fields) == 0 {
+		return fmt.Errorf("line %d: MAIN requires a tool name", lineNo)
+	}
+	if len(fields) > 1 {
+		return fmt.Errorf("line %d: MAIN takes a single tool name (got %q)", lineNo, rest)
+	}
+	af.Main = fields[0]
+	return nil
+}
+
+// parseExpose handles the EXPOSE directive. Repeatable. Each invocation
+// adds one or more tool names to the agent's public surface. Tools
+// not in Expose (and not equal to Main) stay private. Duplicate names
+// are silently deduplicated so authors can be redundant across lines
+// without breaking the build.
+func parseExpose(af *Agentfile, rest string, lineNo int) error {
+	if rest == "" {
+		return fmt.Errorf("line %d: EXPOSE requires at least one tool name", lineNo)
+	}
+	rest = strings.ReplaceAll(rest, ",", " ")
+	seen := make(map[string]struct{}, len(af.Expose))
+	for _, name := range af.Expose {
+		seen[name] = struct{}{}
+	}
+	for _, name := range strings.Fields(rest) {
+		if _, dup := seen[name]; dup {
+			continue
+		}
+		seen[name] = struct{}{}
+		af.Expose = append(af.Expose, name)
+	}
 	return nil
 }
 

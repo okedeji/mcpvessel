@@ -18,6 +18,8 @@ type Agentfile struct {
 	Entrypoint string            // ENTRYPOINT: command line that starts the MCP server
 	Run        []string          // RUN: ordered build-time commands
 	Model      *Model            // MODEL: nil when unset
+	Main       string            // MAIN: name of the agent's reasoning-entry tool; empty for tool collections
+	Expose     []string          // EXPOSE: tool names that are publicly callable from outside the cage
 	Uses       []Use             // USES: registry sub-agent dependencies
 	Budget     int               // BUDGET: max LLM tokens per run, 0 when unset
 	Env        map[string]string // ENV: author-supplied environment variables

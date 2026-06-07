@@ -31,6 +31,8 @@ type AgentfileSpec struct {
 	Entrypoint string            `json:"entrypoint"`
 	Run        []string          `json:"run,omitempty"`
 	Model      string            `json:"model,omitempty"` // "provider/name"
+	Main       string            `json:"main,omitempty"`  // name of the tool that runs on `agentcage run`; omitted for tool collections
+	Expose     []string          `json:"expose,omitempty"`
 	Uses       []UseSpec         `json:"uses,omitempty"`
 	Budget     int               `json:"budget,omitempty"`
 	Env        map[string]string `json:"env,omitempty"`
