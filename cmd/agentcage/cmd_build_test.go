@@ -55,6 +55,24 @@ func TestDefaultOutputPath(t *testing.T) {
 	}
 }
 
+func TestDefaultOutput_FromTag(t *testing.T) {
+	t.Setenv("AGENTCAGE_REGISTRY", "")
+	// With -t, the name comes from the ref so push finds it, regardless of
+	// the source directory's name.
+	got, err := defaultOutput("/some/unrelated/dir", "@okedeji/researcher:0.1")
+	if err != nil {
+		t.Fatalf("defaultOutput: %v", err)
+	}
+	if got != "researcher.agent" {
+		t.Errorf("defaultOutput with -t = %q, want researcher.agent", got)
+	}
+
+	// A malformed -t reference is surfaced, not silently ignored.
+	if _, err := defaultOutput(".", "not a ref"); err == nil {
+		t.Error("expected an error for a malformed -t reference")
+	}
+}
+
 func TestRunBuild_HappyPath(t *testing.T) {
 	srcDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(srcDir, "Agentfile"), []byte(

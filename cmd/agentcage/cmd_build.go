@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"time"
 
@@ -11,20 +12,28 @@ import (
 
 	"github.com/okedeji/agentcage/internal/bundle"
 	"github.com/okedeji/agentcage/internal/progress"
+	"github.com/okedeji/agentcage/internal/reference"
 )
 
 func newBuildCmd() *cobra.Command {
 	var outPath string
 	var progressFlag string
+	var tag string
 	cmd := &cobra.Command{
 		Use:   "build [PATH]",
 		Short: "Build an agent bundle from an Agentfile",
 		Long: `Build an agent bundle from a directory containing an Agentfile and source.
 
 The directory defaults to the current directory. The output is a .agent file
-named after the source directory unless -o is given.`,
+named after the source directory, or after the -t reference when given, or
+after -o when given.
+
+Naming the output from -t means push finds it without an explicit path:
+'build -t @okedeji/researcher:0.1' writes researcher.agent, and
+'push @okedeji/researcher:0.1' looks for researcher.agent.`,
 		Example: `  agentcage build .
   agentcage build ./my-agent
+  agentcage build . -t @okedeji/researcher:0.1
   agentcage build . -o my-agent.agent`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -33,13 +42,18 @@ named after the source directory unless -o is given.`,
 				srcDir = args[0]
 			}
 			if outPath == "" {
-				outPath = defaultOutputPath(srcDir)
+				var err error
+				outPath, err = defaultOutput(srcDir, tag)
+				if err != nil {
+					return err
+				}
 			}
 			return runBuild(cmd.OutOrStdout(), srcDir, outPath, progress.ParseMode(progressFlag))
 		},
 	}
 	cmd.Flags().StringVarP(&outPath, "output", "o", "", "output path for the .agent file")
 	cmd.Flags().StringVar(&progressFlag, "progress", "auto", "set progress output (auto, plain, tty)")
+	cmd.Flags().StringVarP(&tag, "tag", "t", "", "reference for the agent being built (also names the output bundle)")
 	return cmd
 }
 
@@ -68,6 +82,20 @@ func runBuild(w io.Writer, srcDir, outPath string, mode progress.Mode) error {
 	_, _ = fmt.Fprintf(w, "Successfully built %s (%s) in %s\n",
 		outPath, size, time.Since(start).Round(time.Millisecond))
 	return nil
+}
+
+// defaultOutput picks the .agent filename when -o was not given. With a
+// -t reference, the name comes from the agent's name so push finds it by
+// convention; otherwise it comes from the source directory's basename.
+func defaultOutput(srcDir, tag string) (string, error) {
+	if tag != "" {
+		ref, err := reference.Parse(tag)
+		if err != nil {
+			return "", err
+		}
+		return path.Base(ref.Repository) + ".agent", nil
+	}
+	return defaultOutputPath(srcDir), nil
 }
 
 // defaultOutputPath derives a .agent filename from the source directory's
