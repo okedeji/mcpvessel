@@ -26,6 +26,7 @@ func main() {
 	root.AddCommand(newCallCmd())
 	root.AddCommand(newPushCmd())
 	root.AddCommand(newPullCmd())
+	root.AddCommand(newLoginCmd())
 
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)

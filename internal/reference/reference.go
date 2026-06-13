@@ -133,6 +133,12 @@ func defaultRegistry() string {
 	return fallbackRegistry
 }
 
+// DefaultRegistry is the host shorthand references resolve to. The login
+// command defaults to it when the operator names no registry.
+func DefaultRegistry() string {
+	return defaultRegistry()
+}
+
 // OCIRef is the canonical host/repository[:tag|@digest] string the
 // registry layer pulls and pushes against. Digest wins over tag when
 // both are set so a locked reference fetches exactly what it pinned.

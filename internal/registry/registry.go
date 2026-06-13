@@ -137,6 +137,32 @@ func (c *Client) Pull(ctx context.Context, ref reference.Reference) (bundlePath,
 	return path, digest, nil
 }
 
+// Login validates username/password against the registry host and stores
+// the credential in the shared Docker keychain, so later push and pull
+// authenticate without re-entering it. A credential the registry rejects
+// is an error: a login that silently failed is worse than no login.
+func Login(ctx context.Context, host, username, password string) error {
+	if host == "" {
+		return fmt.Errorf("login: a registry host is required")
+	}
+	store, err := credentials.NewStoreFromDocker(credentials.StoreOptions{})
+	if err != nil {
+		return fmt.Errorf("opening credential store: %w", err)
+	}
+	reg, err := remote.NewRegistry(host)
+	if err != nil {
+		return fmt.Errorf("addressing registry %s: %w", host, err)
+	}
+	// credentials.Login validates the credential against the registry and
+	// stores it. It uses its own client internally, so reg.Client stays
+	// nil; the credential we pass is applied to the validating request.
+	cred := auth.Credential{Username: username, Password: password}
+	if err := credentials.Login(ctx, store, reg, cred); err != nil {
+		return fmt.Errorf("logging in to %s: %w", host, err)
+	}
+	return nil
+}
+
 // repository wires a remote repository handle with the shared auth client.
 func (c *Client) repository(ref reference.Reference) (*remote.Repository, error) {
 	repo, err := remote.NewRepository(ref.Registry + "/" + ref.Repository)
