@@ -22,10 +22,15 @@ import (
 )
 
 // Edge is one routing entry: where a USES sub-agent's MCP server lives and
-// which of its tools the caller may not invoke.
+// which of its tools the caller may not invoke. Banned marks an edge whose
+// target agent is banned outright (a whole-agent BAN); the gateway rejects
+// every call on it, handshake included, and the target is never started so
+// it points nowhere. Tool-level bans need no flag here: they arrive merged
+// into Deny.
 type Edge struct {
 	Target string   `json:"target"` // sub-agent MCP URL, e.g. http://web-search:8000/mcp
 	Deny   []string `json:"deny,omitempty"`
+	Banned bool     `json:"banned,omitempty"`
 }
 
 // Config is the gateway's routing table: the first path segment of an
@@ -40,7 +45,14 @@ type Config struct {
 func Handler(cfg Config) http.Handler {
 	proxies := make(map[string]*httputil.ReverseProxy, len(cfg.Edges))
 	deny := make(map[string]map[string]bool, len(cfg.Edges))
+	banned := make(map[string]bool, len(cfg.Edges))
 	for id, edge := range cfg.Edges {
+		if edge.Banned {
+			// A banned target never runs, so there is nothing to proxy to;
+			// the edge exists only so the caller gets a clean error.
+			banned[id] = true
+			continue
+		}
 		target, err := url.Parse(edge.Target)
 		if err != nil {
 			continue
@@ -62,6 +74,10 @@ func Handler(cfg Config) http.Handler {
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := firstSegment(r.URL.Path)
+		if banned[id] {
+			writeBanned(w, r)
+			return
+		}
 		proxy, ok := proxies[id]
 		if !ok {
 			http.Error(w, "unknown gateway edge: "+id, http.StatusNotFound)
@@ -133,6 +149,40 @@ func writeDenied(w http.ResponseWriter, body []byte, tool string) {
 	}{JSONRPC: "2.0", ID: id}
 	resp.Error.Code = -32003
 	resp.Error.Message = "tool " + tool + " denied by the gateway"
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// writeBanned answers every call on a banned edge with a JSON-RPC error.
+// A whole-agent BAN forbids the agent outright, so unlike a denied tool this
+// rejects the initialize handshake and every tool call alike. The error
+// carries the request id when the body is JSON-RPC so the caller's MCP
+// client surfaces it as a normal error rather than a transport failure.
+func writeBanned(w http.ResponseWriter, r *http.Request) {
+	id := json.RawMessage("null")
+	if r.Method == http.MethodPost {
+		body, _ := io.ReadAll(r.Body)
+		_ = r.Body.Close()
+		var req struct {
+			ID json.RawMessage `json:"id"`
+		}
+		if json.Unmarshal(body, &req) == nil && len(req.ID) > 0 {
+			id = req.ID
+		}
+	}
+
+	resp := struct {
+		JSONRPC string          `json:"jsonrpc"`
+		ID      json.RawMessage `json:"id"`
+		Error   struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}{JSONRPC: "2.0", ID: id}
+	resp.Error.Code = -32004
+	resp.Error.Message = "agent banned by the run policy"
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
