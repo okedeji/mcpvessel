@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -86,7 +87,7 @@ func TestRunBuild_HappyPath(t *testing.T) {
 
 	out := filepath.Join(t.TempDir(), "researcher.agent")
 	var buf bytes.Buffer
-	if err := runBuild(&buf, srcDir, out, progress.ModePlain); err != nil {
+	if err := runBuild(context.Background(), &buf, buildConfig{srcDir: srcDir, outPath: out, mode: progress.ModePlain}); err != nil {
 		t.Fatalf("runBuild: %v", err)
 	}
 
@@ -113,7 +114,7 @@ func TestRunBuild_PropagatesBundleError(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "x.agent")
 
 	var buf bytes.Buffer
-	err := runBuild(&buf, srcDir, out, progress.ModePlain)
+	err := runBuild(context.Background(), &buf, buildConfig{srcDir: srcDir, outPath: out, mode: progress.ModePlain})
 	if err == nil {
 		t.Fatalf("expected error, got nil")
 	}
