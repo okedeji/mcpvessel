@@ -65,3 +65,6 @@ __pycache__/
 
 # Build artifacts
 dist/
+
+# Local scratch agents for manual routing e2e (not part of the repo)
+sample/
