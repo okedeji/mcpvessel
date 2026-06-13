@@ -28,7 +28,7 @@ func newGatewayCmd() *cobra.Command {
 			}
 			addr := os.Getenv(env.GatewayAddr)
 			if addr == "" {
-				addr = ":9000"
+				addr = ":" + env.DefaultGatewayPort
 			}
 			srv := &http.Server{Addr: addr, Handler: gateway.Handler(cfg)}
 			return srv.ListenAndServe()
