@@ -198,12 +198,12 @@ func bootAgent(ctx context.Context, in bootInput) (*mcp.Client, func() error, er
 	// Start the container. On macOS this enters the Lima VM's rootless
 	// mount namespace via limactl shell; on Linux it shells out to nerdctl
 	// directly.
-	cmd := provisioner.PrepareRunContainer(ctx, ContainerSpec{
+	cmd := provisioner.Nerdctl(ctx, nerdctlRunArgs(ContainerSpec{
 		RunID:    in.RunID,
 		ImageRef: in.ImageRef,
 		Network:  in.Network,
 		Env:      in.Env,
-	})
+	})...)
 	stdinPipe, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, nil, fmt.Errorf("stdin pipe: %w", err)

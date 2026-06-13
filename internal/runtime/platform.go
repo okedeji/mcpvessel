@@ -28,18 +28,20 @@ import (
 // the daemon, which fails when the daemon is rootless inside a Lima
 // VM and we are not.
 //
-// PrepareRunContainer is how the runtime actually starts containers:
-// the Provisioner returns an unstarted *exec.Cmd configured to run
-// nerdctl in the right environment (inside the Lima VM on macOS,
-// directly on Linux). The caller wires Stdin/Stdout/Stderr and calls
-// Start. This mirrors what Finch, Rancher Desktop, and Colima do for
-// the same reason: shell-out to nerdctl is the working pattern for
-// rootless-containerd-in-a-VM setups.
+// Nerdctl is how the runtime drives containers and networks: the
+// Provisioner returns an unstarted *exec.Cmd that runs nerdctl with the
+// given arguments in the right environment (inside the Lima VM on macOS,
+// directly on Linux). The caller wires Stdin/Stdout/Stderr and calls Start.
+// This mirrors what Finch, Rancher Desktop, and Colima do for the same
+// reason: shell-out to nerdctl is the working pattern for
+// rootless-containerd-in-a-VM setups. Run a container with
+// nerdctlRunArgs(spec); create networks and stop containers with the
+// matching nerdctl subcommand.
 type Provisioner interface {
 	EnsureReady(ctx context.Context, stdout, stderr io.Writer) error
 	ContainerdAddress() string
 	BuildKitAddress() string
-	PrepareRunContainer(ctx context.Context, spec ContainerSpec) *exec.Cmd
+	Nerdctl(ctx context.Context, args ...string) *exec.Cmd
 	Close() error
 }
 
@@ -129,11 +131,10 @@ func (n *NativeProvisioner) ContainerdAddress() string { return DefaultContainer
 func (n *NativeProvisioner) BuildKitAddress() string   { return DefaultBuildKitAddress }
 func (n *NativeProvisioner) Close() error              { return nil }
 
-// PrepareRunContainer constructs `nerdctl run ...` on the host. Operators
-// are expected to have nerdctl on PATH when running agentcage on Linux
-// without Lima.
-func (n *NativeProvisioner) PrepareRunContainer(ctx context.Context, spec ContainerSpec) *exec.Cmd {
-	return exec.CommandContext(ctx, "nerdctl", nerdctlRunArgs(spec)...)
+// Nerdctl runs `nerdctl <args>` on the host. Operators are expected to have
+// nerdctl on PATH when running agentcage on Linux without Lima.
+func (n *NativeProvisioner) Nerdctl(ctx context.Context, args ...string) *exec.Cmd {
+	return exec.CommandContext(ctx, "nerdctl", args...)
 }
 
 // LimaProvisioner runs the containerd + buildkitd stack inside a Lima VM
@@ -184,15 +185,15 @@ func (l *LimaProvisioner) ContainerdAddress() string { return l.VM.ContainerdAdd
 func (l *LimaProvisioner) BuildKitAddress() string   { return l.VM.BuildKitAddress() }
 func (l *LimaProvisioner) Close() error              { return nil }
 
-// PrepareRunContainer constructs `limactl shell <instance> nerdctl run
-// ...`. The limactl shell wrapper enters the Lima VM's user shell, and
-// crucially the rootless mount namespace where snapshot paths actually
-// exist. nerdctl then drives containerd from inside that namespace,
-// sidestepping the cross-host snapshot-path problem entirely.
+// Nerdctl constructs `limactl shell <instance> nerdctl <args>`. The limactl
+// shell wrapper enters the Lima VM's user shell, and crucially the rootless
+// mount namespace where snapshot paths actually exist. nerdctl then drives
+// containerd from inside that namespace, sidestepping the cross-host
+// snapshot-path problem entirely.
 //
 // LIMA_HOME is injected via the wrapper's command builder so our state
 // stays isolated from the user's other Lima instances.
-func (l *LimaProvisioner) PrepareRunContainer(ctx context.Context, spec ContainerSpec) *exec.Cmd {
-	args := append([]string{"shell", l.VM.instanceName(), "nerdctl"}, nerdctlRunArgs(spec)...)
-	return l.VM.command(ctx, args...)
+func (l *LimaProvisioner) Nerdctl(ctx context.Context, args ...string) *exec.Cmd {
+	full := append([]string{"shell", l.VM.instanceName(), "nerdctl"}, args...)
+	return l.VM.command(ctx, full...)
 }
