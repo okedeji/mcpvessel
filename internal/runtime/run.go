@@ -125,9 +125,17 @@ type bootInput struct {
 	SourceDir string
 	ImageRef  string
 	RunID     string
-	Stdout    io.Writer
-	Stderr    io.Writer
-	Verbose   bool
+
+	// Network and Env place the parent on a per-run container network and
+	// inject its sub-agent URLs when the orchestrator wires a USES tree.
+	// Both are empty for a single-container run, which keeps the parent on
+	// the default network with no injected environment.
+	Network string
+	Env     map[string]string
+
+	Stdout  io.Writer
+	Stderr  io.Writer
+	Verbose bool
 }
 
 // bootAgent provisions the runtime, builds the agent's image, starts its
@@ -190,7 +198,12 @@ func bootAgent(ctx context.Context, in bootInput) (*mcp.Client, func() error, er
 	// Start the container. On macOS this enters the Lima VM's rootless
 	// mount namespace via limactl shell; on Linux it shells out to nerdctl
 	// directly.
-	cmd := provisioner.PrepareRunContainer(ctx, in.RunID, in.ImageRef)
+	cmd := provisioner.PrepareRunContainer(ctx, ContainerSpec{
+		RunID:    in.RunID,
+		ImageRef: in.ImageRef,
+		Network:  in.Network,
+		Env:      in.Env,
+	})
 	stdinPipe, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, nil, fmt.Errorf("stdin pipe: %w", err)

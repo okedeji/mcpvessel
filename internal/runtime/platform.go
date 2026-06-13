@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 )
 
 // Provisioner is the platform-specific gate to a Linux container
@@ -38,8 +39,45 @@ type Provisioner interface {
 	EnsureReady(ctx context.Context, stdout, stderr io.Writer) error
 	ContainerdAddress() string
 	BuildKitAddress() string
-	PrepareRunContainer(ctx context.Context, runID, imageRef string) *exec.Cmd
+	PrepareRunContainer(ctx context.Context, spec ContainerSpec) *exec.Cmd
 	Close() error
+}
+
+// ContainerSpec describes one container the runtime starts. Network
+// attaches it to a named nerdctl network so sibling containers reach it by
+// name; Env injects environment variables; Detached runs it in the
+// background (-d) instead of attaching stdio (-i). The parent agent stays
+// attached so the runtime speaks MCP over its stdio; sub-agents and the
+// gateway are detached, networked, and reached over HTTP.
+type ContainerSpec struct {
+	RunID    string
+	ImageRef string
+	Network  string
+	Env      map[string]string
+	Detached bool
+}
+
+// nerdctlRunArgs builds the `run ...` argument list for a spec. Env keys
+// are sorted so the command is deterministic (and testable).
+func nerdctlRunArgs(spec ContainerSpec) []string {
+	args := []string{"run", "--rm", "--name", spec.RunID}
+	if spec.Detached {
+		args = append(args, "-d")
+	} else {
+		args = append(args, "-i")
+	}
+	if spec.Network != "" {
+		args = append(args, "--network", spec.Network)
+	}
+	keys := make([]string, 0, len(spec.Env))
+	for k := range spec.Env {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		args = append(args, "--env", k+"="+spec.Env[k])
+	}
+	return append(args, spec.ImageRef)
 }
 
 // DefaultProvisioner returns the right Provisioner for the host OS,
@@ -91,15 +129,11 @@ func (n *NativeProvisioner) ContainerdAddress() string { return DefaultContainer
 func (n *NativeProvisioner) BuildKitAddress() string   { return DefaultBuildKitAddress }
 func (n *NativeProvisioner) Close() error              { return nil }
 
-// PrepareRunContainer constructs `nerdctl run --rm -i --name <runID>
-// <imageRef>` on the host. Operators are expected to have nerdctl on
-// PATH when running agentcage on Linux without Lima.
-func (n *NativeProvisioner) PrepareRunContainer(ctx context.Context, runID, imageRef string) *exec.Cmd {
-	return exec.CommandContext(ctx, "nerdctl",
-		"run", "--rm", "-i",
-		"--name", runID,
-		imageRef,
-	)
+// PrepareRunContainer constructs `nerdctl run ...` on the host. Operators
+// are expected to have nerdctl on PATH when running agentcage on Linux
+// without Lima.
+func (n *NativeProvisioner) PrepareRunContainer(ctx context.Context, spec ContainerSpec) *exec.Cmd {
+	return exec.CommandContext(ctx, "nerdctl", nerdctlRunArgs(spec)...)
 }
 
 // LimaProvisioner runs the containerd + buildkitd stack inside a Lima VM
@@ -151,19 +185,14 @@ func (l *LimaProvisioner) BuildKitAddress() string   { return l.VM.BuildKitAddre
 func (l *LimaProvisioner) Close() error              { return nil }
 
 // PrepareRunContainer constructs `limactl shell <instance> nerdctl run
-// --rm -i --name <runID> <imageRef>`. The limactl shell wrapper enters
-// the Lima VM's user shell, and crucially the rootless mount
-// namespace where snapshot paths actually exist. nerdctl then drives
-// containerd from inside that namespace, sidestepping the cross-host
-// snapshot-path problem entirely.
+// ...`. The limactl shell wrapper enters the Lima VM's user shell, and
+// crucially the rootless mount namespace where snapshot paths actually
+// exist. nerdctl then drives containerd from inside that namespace,
+// sidestepping the cross-host snapshot-path problem entirely.
 //
-// LIMA_HOME is injected via the wrapper's command builder so our
-// state stays isolated from the user's other Lima instances.
-func (l *LimaProvisioner) PrepareRunContainer(ctx context.Context, runID, imageRef string) *exec.Cmd {
-	return l.VM.command(ctx,
-		"shell", l.VM.instanceName(),
-		"nerdctl", "run", "--rm", "-i",
-		"--name", runID,
-		imageRef,
-	)
+// LIMA_HOME is injected via the wrapper's command builder so our state
+// stays isolated from the user's other Lima instances.
+func (l *LimaProvisioner) PrepareRunContainer(ctx context.Context, spec ContainerSpec) *exec.Cmd {
+	args := append([]string{"shell", l.VM.instanceName(), "nerdctl"}, nerdctlRunArgs(spec)...)
+	return l.VM.command(ctx, args...)
 }

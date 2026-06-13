@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"io"
+	"strings"
 	"testing"
 )
 
@@ -35,6 +36,39 @@ func TestNativeProvisioner_CloseIsNoop(t *testing.T) {
 	n := &NativeProvisioner{}
 	if err := n.Close(); err != nil {
 		t.Errorf("Close on native returned: %v", err)
+	}
+}
+
+func TestNerdctlRunArgs_AttachedDefault(t *testing.T) {
+	got := strings.Join(nerdctlRunArgs(ContainerSpec{
+		RunID:    "cg-1",
+		ImageRef: "agentcage/echo:latest",
+	}), " ")
+	want := "run --rm --name cg-1 -i agentcage/echo:latest"
+	if got != want {
+		t.Errorf("nerdctlRunArgs = %q, want %q", got, want)
+	}
+}
+
+func TestNerdctlRunArgs_DetachedNetworkedWithEnv(t *testing.T) {
+	got := strings.Join(nerdctlRunArgs(ContainerSpec{
+		RunID:    "cg-sub",
+		ImageRef: "agentcage/sub:latest",
+		Network:  "run-net",
+		Detached: true,
+		Env: map[string]string{
+			"AGENTCAGE_SERVE_HTTP":    ":8000",
+			"AGENTCAGE_USES_ECHO_URL": "http://gw/echo/mcp",
+		},
+	}), " ")
+	// Env keys are sorted, so the order is deterministic regardless of map
+	// iteration. The image ref is always last.
+	want := "run --rm --name cg-sub -d --network run-net " +
+		"--env AGENTCAGE_SERVE_HTTP=:8000 " +
+		"--env AGENTCAGE_USES_ECHO_URL=http://gw/echo/mcp " +
+		"agentcage/sub:latest"
+	if got != want {
+		t.Errorf("nerdctlRunArgs = %q, want %q", got, want)
 	}
 }
 
