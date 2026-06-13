@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -11,24 +13,35 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/okedeji/agentcage/internal/bundle"
+	"github.com/okedeji/agentcage/internal/reference"
+	"github.com/okedeji/agentcage/internal/registry"
 )
 
 func newInspectCmd() *cobra.Command {
 	var jsonOut bool
 	cmd := &cobra.Command{
-		Use:   "inspect BUNDLE",
-		Short: "Show an agent bundle's manifest and tool catalog",
-		Long: `Print the parsed Agentfile, build metadata, and tool catalog of a .agent bundle.
+		Use:   "inspect BUNDLE|REF",
+		Short: "Show an agent's manifest and tool catalog",
+		Long: `Print the parsed Agentfile, build metadata, and tool catalog of an agent.
+
+The argument is either a local .agent file or a registry reference. A reference
+is pulled (cache-first), so you can inspect any published agent without
+building or running it: 'agentcage inspect @anthropic/web-search:1.2.0'.
 
 The tool catalog lists every tool the agent declares, each marked with its
 visibility. Main and public tools are callable from outside the cage; private
 tools are listed so a reviewer can see the full surface, but only the agent
 itself can call them.`,
 		Example: `  agentcage inspect researcher.agent
+  agentcage inspect @anthropic/web-search:1.2.0
   agentcage inspect researcher.agent --json`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			manifest, err := bundle.ReadManifest(args[0])
+			bundlePath, display, err := resolveInspectTarget(cmd.Context(), args[0])
+			if err != nil {
+				return err
+			}
+			manifest, err := bundle.ReadManifest(bundlePath)
 			if err != nil {
 				return err
 			}
@@ -38,12 +51,41 @@ itself can call them.`,
 				enc.SetIndent("", "  ")
 				return enc.Encode(manifest)
 			}
-			printManifest(w, args[0], manifest)
+			printManifest(w, display, manifest)
 			return nil
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit the manifest as JSON")
 	return cmd
+}
+
+// resolveInspectTarget turns the inspect argument into a local bundle path.
+// An existing file is inspected directly; anything else is treated as a
+// registry reference and pulled (cache-first), so inspecting a published
+// agent never touches the network twice. The display string is what the
+// human view labels the bundle with: the file path, or the resolved ref.
+func resolveInspectTarget(ctx context.Context, arg string) (bundlePath, display string, err error) {
+	if info, statErr := os.Stat(arg); statErr == nil && !info.IsDir() {
+		return arg, arg, nil
+	}
+
+	ref, err := reference.Parse(arg)
+	if err != nil {
+		return "", "", fmt.Errorf("%q is neither a local bundle nor a registry reference: %w", arg, err)
+	}
+	if ref.Tag == "" && ref.Digest == "" {
+		return "", "", fmt.Errorf("inspect %s: a version tag or digest is required", arg)
+	}
+
+	client, err := registry.New()
+	if err != nil {
+		return "", "", err
+	}
+	path, _, err := client.Pull(ctx, ref)
+	if err != nil {
+		return "", "", err
+	}
+	return path, ref.OCIRef(), nil
 }
 
 // printManifest renders the human-readable inspect view: build metadata,

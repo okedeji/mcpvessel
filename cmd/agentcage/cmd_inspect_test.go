@@ -2,6 +2,9 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -103,6 +106,35 @@ func TestSchemaSignature(t *testing.T) {
 				t.Errorf("schemaSignature = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestResolveInspectTarget_LocalFile(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "x.agent")
+	if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	path, display, err := resolveInspectTarget(context.Background(), p)
+	if err != nil {
+		t.Fatalf("resolveInspectTarget: %v", err)
+	}
+	if path != p || display != p {
+		t.Errorf("got (%q, %q), want both %q", path, display, p)
+	}
+}
+
+func TestResolveInspectTarget_BogusArgErrors(t *testing.T) {
+	// Not an existing file and not a parseable reference.
+	if _, _, err := resolveInspectTarget(context.Background(), "not a ref and not a file"); err == nil {
+		t.Fatal("expected an error for an arg that is neither a file nor a ref")
+	}
+}
+
+func TestResolveInspectTarget_RefWithoutVersionErrors(t *testing.T) {
+	t.Setenv("AGENTCAGE_REGISTRY", "")
+	// A valid ref shape but no tag/digest: nothing to pull.
+	if _, _, err := resolveInspectTarget(context.Background(), "@anthropic/web-search"); err == nil {
+		t.Fatal("expected an error for a ref with no version")
 	}
 }
 
