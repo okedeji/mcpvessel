@@ -238,6 +238,72 @@ ENTRYPOINT python3 agent.py
 	}
 }
 
+func TestBuild_IntrospectionEnrichesCatalog(t *testing.T) {
+	src := t.TempDir()
+	writeFile(t, filepath.Join(src, "Agentfile"), `FROM python:3.12-slim
+MAIN respond
+EXPOSE fetch_paper
+ENTRYPOINT python3 agent.py
+`)
+	writeFile(t, filepath.Join(src, "agent.py"), "print('x')\n")
+
+	introspected := []IntrospectedTool{
+		{Name: "respond", Description: "Reason about a prompt.", Schema: map[string]any{"type": "object"}},
+		{Name: "fetch_paper", Description: "Fetch a paper."},
+		// served by the agent but not declared: discovered as private.
+		{Name: "parse_doi", Description: "Normalize a DOI."},
+	}
+	out := filepath.Join(t.TempDir(), "a.agent")
+	if err := Build(src, out, WithIntrospectedTools(introspected)); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	manifest, _ := extract(t, out)
+
+	got := map[string]Tool{}
+	for _, tool := range manifest.Tools {
+		got[tool.Name] = tool
+	}
+	wantVis := map[string]Visibility{
+		"respond":     VisibilityMain,
+		"fetch_paper": VisibilityPublic,
+		"parse_doi":   VisibilityPrivate,
+	}
+	for name, vis := range wantVis {
+		if got[name].Visibility != vis {
+			t.Errorf("%s visibility = %q, want %q", name, got[name].Visibility, vis)
+		}
+	}
+	if got["respond"].Description != "Reason about a prompt." {
+		t.Errorf("respond description not carried: %q", got["respond"].Description)
+	}
+	if got["respond"].Schema["type"] != "object" {
+		t.Errorf("respond schema not carried: %+v", got["respond"].Schema)
+	}
+}
+
+func TestBuild_IntrospectionRejectsDeclaredToolTheAgentDoesNotServe(t *testing.T) {
+	src := t.TempDir()
+	writeFile(t, filepath.Join(src, "Agentfile"), `FROM python:3.12-slim
+MAIN respond
+ENTRYPOINT python3 agent.py
+`)
+	writeFile(t, filepath.Join(src, "agent.py"), "print('x')\n")
+
+	// The agent serves "chat", but MAIN names "respond": a typo the build
+	// must catch.
+	out := filepath.Join(t.TempDir(), "a.agent")
+	err := Build(src, out, WithIntrospectedTools([]IntrospectedTool{{Name: "chat"}}))
+	if err == nil {
+		t.Fatal("expected build to fail when MAIN names a tool the agent does not serve")
+	}
+	if !strings.Contains(err.Error(), "respond") {
+		t.Errorf("error %q should name the missing MAIN tool", err.Error())
+	}
+	if _, statErr := os.Stat(out); statErr == nil {
+		t.Errorf("bundle written despite validation failure: %s", out)
+	}
+}
+
 func TestBuild_CatalogOmittedForToolCollectionWithoutMainOrExpose(t *testing.T) {
 	// Pathological case for v0: a bundle that ships an MCP server but
 	// declares neither MAIN nor EXPOSE. The build still succeeds; the

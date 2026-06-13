@@ -41,6 +41,18 @@ type Option func(*options)
 type options struct {
 	onStep        func(step, total int, message string)
 	resolveDigest func(u agentfile.Use) (string, error)
+	introspected  []IntrospectedTool
+	introspectSet bool
+}
+
+// IntrospectedTool is one tool as the agent's MCP server reported it
+// during build-time introspection: its name, plus the description and
+// input schema that enrich the catalog entry. The bundle package does not
+// know how to boot an agent; the caller introspects and supplies these.
+type IntrospectedTool struct {
+	Name        string
+	Description string
+	Schema      map[string]any
 }
 
 // WithProgress registers a callback fired before each major step of the
@@ -58,6 +70,19 @@ func WithProgress(fn func(step, total int, message string)) Option {
 // that cannot pin its dependencies must not ship claiming it did.
 func WithUsesResolver(fn func(u agentfile.Use) (string, error)) Option {
 	return Option(func(o *options) { o.resolveDigest = fn })
+}
+
+// WithIntrospectedTools supplies the tools introspected from the running
+// agent so the catalog carries descriptions, schemas, and the agent's
+// private tools, not just the MAIN and EXPOSE declarations. Visibility is
+// still classified from the Agentfile. Passing this option (even with an
+// empty slice) switches the catalog to the introspected path; without it,
+// the catalog is built from the Agentfile directives alone.
+func WithIntrospectedTools(tools []IntrospectedTool) Option {
+	return Option(func(o *options) {
+		o.introspected = tools
+		o.introspectSet = true
+	})
 }
 
 const buildSteps = 3
@@ -102,7 +127,7 @@ func Build(srcDir, outPath string, opts ...Option) error {
 		return fmt.Errorf("hashing source tree: %w", err)
 	}
 
-	manifest, err := buildManifest(af, hash, cfg.resolveDigest)
+	manifest, err := buildManifest(af, hash, cfg)
 	if err != nil {
 		return err
 	}
@@ -155,8 +180,12 @@ func bundleSkip(srcDir, outAbs string) func(rel string) bool {
 	}
 }
 
-func buildManifest(af *agentfile.Agentfile, hash string, resolve func(agentfile.Use) (string, error)) (*Manifest, error) {
-	uses, err := usesToSpec(af.Uses, resolve)
+func buildManifest(af *agentfile.Agentfile, hash string, cfg options) (*Manifest, error) {
+	uses, err := usesToSpec(af.Uses, cfg.resolveDigest)
+	if err != nil {
+		return nil, err
+	}
+	tools, err := buildCatalog(af, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -180,11 +209,68 @@ func buildManifest(af *agentfile.Agentfile, hash string, resolve func(agentfile.
 	return &Manifest{
 		SpecVersion: specVersion,
 		Agentfile:   spec,
-		Tools:       catalogFromAgentfile(af),
+		Tools:       tools,
 		FilesHash:   hash,
 		BuiltAt:     nowFunc().UTC(),
 		BuiltWith:   builtWith,
 	}, nil
+}
+
+// buildCatalog returns the tool catalog. With introspected tools it merges
+// the agent's real tools (descriptions, schemas, private tools) against
+// the Agentfile's declared visibility; without them it falls back to the
+// declared-only catalog.
+func buildCatalog(af *agentfile.Agentfile, cfg options) ([]Tool, error) {
+	if cfg.introspectSet {
+		return catalogFromIntrospection(af, cfg.introspected)
+	}
+	return catalogFromAgentfile(af), nil
+}
+
+// catalogFromIntrospection builds the catalog from the agent's actual
+// tools, classifying each one's visibility from the Agentfile: MAIN is
+// main, an EXPOSE'd tool is public, and anything else the agent serves is
+// private. It errors if a MAIN or EXPOSE directive names a tool the agent
+// does not actually serve, the check the parser deferred to build time.
+func catalogFromIntrospection(af *agentfile.Agentfile, introspected []IntrospectedTool) ([]Tool, error) {
+	served := make(map[string]bool, len(introspected))
+	for _, t := range introspected {
+		served[t.Name] = true
+	}
+	if af.Main != "" && !served[af.Main] {
+		return nil, fmt.Errorf("MAIN %q is not one of the agent's tools", af.Main)
+	}
+	for _, name := range af.Expose {
+		if !served[name] {
+			return nil, fmt.Errorf("EXPOSE %q is not one of the agent's tools", name)
+		}
+	}
+
+	exposed := make(map[string]bool, len(af.Expose))
+	for _, name := range af.Expose {
+		exposed[name] = true
+	}
+
+	if len(introspected) == 0 {
+		return nil, nil
+	}
+	tools := make([]Tool, 0, len(introspected))
+	for _, t := range introspected {
+		visibility := VisibilityPrivate
+		switch {
+		case t.Name == af.Main:
+			visibility = VisibilityMain
+		case exposed[t.Name]:
+			visibility = VisibilityPublic
+		}
+		tools = append(tools, Tool{
+			Name:        t.Name,
+			Visibility:  visibility,
+			Description: t.Description,
+			Schema:      t.Schema,
+		})
+	}
+	return tools, nil
 }
 
 func usesToSpec(uses []agentfile.Use, resolve func(agentfile.Use) (string, error)) ([]UseSpec, error) {
