@@ -46,7 +46,7 @@ func generateDockerfile(in dockerfileInput) string {
 	fmt.Fprintf(&b, "WORKDIR /agent\n")
 
 	// RUNs come BEFORE the source COPY. The common case is
-	// "RUN pip install agentcage-sdk anthropic", a dependency
+	// "RUN pip install mcp anthropic", a dependency
 	// declaration whose inputs are entirely in the line itself,
 	// not in the agent's source tree. Putting RUN first means
 	// editing agent.py only busts the cheap COPY layer, not the

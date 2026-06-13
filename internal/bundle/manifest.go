@@ -28,7 +28,7 @@ type Manifest struct {
 //
 // Today the catalog holds only the MAIN and EXPOSE tools, with name and
 // visibility set. Build-time introspection enriches each entry with a
-// description and schema and adds the private tools the SDK registered.
+// description and schema and adds the private tools the agent serves.
 type Tool struct {
 	Name        string         `json:"name"`
 	Visibility  Visibility     `json:"visibility"`

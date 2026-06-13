@@ -27,7 +27,7 @@ type RunInput struct {
 	Tool string
 
 	// Args is the MCP tools/call argument map. Marshaled to JSON by
-	// the SDK and validated against the agent's input schema.
+	// the MCP client and validated against the agent's input schema.
 	Args map[string]any
 
 	// RunID names the containerd container; if empty Run derives one

@@ -300,7 +300,7 @@ func usesToSpec(uses []agentfile.Use, resolve func(agentfile.Use) (string, error
 // catalogFromAgentfile builds the tool catalog from the Agentfile's MAIN
 // and EXPOSE directives: names and visibility, nothing more. Build-time
 // introspection later enriches each entry with a description and schema
-// and adds the private tools the SDK registered.
+// and adds the private tools the agent serves.
 func catalogFromAgentfile(af *agentfile.Agentfile) []Tool {
 	if af.Main == "" && len(af.Expose) == 0 {
 		return nil

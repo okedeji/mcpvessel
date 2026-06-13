@@ -15,9 +15,9 @@ import (
 // booted and completed the MCP handshake by then, so listing its tools is
 // a metadata round-trip that should return in well under a second; a
 // minute is generous headroom that still stops a wedged agent from hanging
-// the build forever. The handshake itself is not bounded here: the SDK
-// ties the session's lifetime to its connect context, so timing that out
-// would kill the session we are about to use.
+// the build forever. The handshake itself is not bounded here: the MCP
+// client library ties the session's lifetime to its connect context, so
+// timing that out would kill the session we are about to use.
 const listToolsTimeout = 60 * time.Second
 
 // IntrospectInput drives Introspect. ImageRef should be the same ref the

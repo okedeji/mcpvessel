@@ -2,9 +2,10 @@ package env
 
 import "testing"
 
-// UsesURL is one half of a cross-language contract: the SDK's _env_var_for
-// derives the same name on the agent side. These cases mirror the SDK's
-// own test (sdk/python/tests/test_agents.py), so the two stay in lockstep.
+// UsesURL is one half of a cross-language contract: an agent derives the
+// same variable name from the same ref on its side (sample/caller reads
+// AGENTCAGE_USES_ECHO_URL for `USES @okedeji/echo`). The rule is uppercase
+// with dashes turned to underscores; these cases pin it.
 func TestUsesURL(t *testing.T) {
 	cases := map[string]string{
 		"web-search": "AGENTCAGE_USES_WEB_SEARCH_URL",
