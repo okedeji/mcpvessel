@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -46,28 +47,16 @@ type RunInput struct {
 	Verbose bool
 }
 
-// Run is the end-to-end flow behind `agentcage run`. It:
-//
-//  1. Extracts the bundle into a temp directory.
-//  2. Asks the platform provisioner to make sure containerd and
-//     buildkitd are reachable (provisioning the macOS Lima VM the
-//     first time it sees one).
-//  3. Builds the agent's image into containerd's local image store.
-//  4. Creates a container + task with the agent's stdio piped.
-//  5. Speaks MCP to the agent: lists its tools, picks one based on
-//     input.Tool and pickTool's rules, calls it.
-//  6. Prints the tool's text response to stdout.
-//  7. Tears the task and container down cleanly.
-//
-// Every step that allocates external state (temp dir, task, container)
-// installs its own cleanup; Run returns the first error it sees but
-// always runs cleanups to completion so the host is left clean.
+// Run is the end-to-end flow behind `agentcage run`. It extracts the
+// bundle, boots the agent (provision, build image, start container, open
+// an MCP session via bootAgent), calls the requested tool, prints the
+// result, and tears the agent down. A non-zero container exit surfaces
+// through teardown.
 func Run(ctx context.Context, in RunInput) error {
 	if err := validateRunInput(&in); err != nil {
 		return err
 	}
 
-	// 1. Extract bundle.
 	srcDir, err := os.MkdirTemp("", "agentcage-run-*")
 	if err != nil {
 		return fmt.Errorf("temp dir: %w", err)
@@ -81,111 +70,161 @@ func Run(ctx context.Context, in RunInput) error {
 
 	// Reparse the Agentfile from the materialized source so we get the
 	// in-memory Agentfile struct the build path expects. The manifest's
-	// AgentfileSpec is the wire format; deriving back to the struct
-	// would mean carrying the conversion in two places.
+	// AgentfileSpec is the wire format; deriving back to the struct would
+	// mean carrying the conversion in two places.
 	af, err := agentfile.ParseFile(filepath.Join(srcDir, "Agentfile"))
 	if err != nil {
 		return fmt.Errorf("re-parsing bundled Agentfile: %w", err)
 	}
 
-	// 2. Provisioner up. When the runtime is not yet provisioned
-	//    (first run), show a phase-aware setup UI rather than dumping
-	//    Lima's raw output at the operator. The UI is suppressed when
-	//    the runtime is already ready, so subsequent runs show nothing
-	//    here at all.
-	provisioner, err := DefaultProvisioner()
-	if err != nil {
-		return err
-	}
-	defer func() { _ = provisioner.Close() }()
-
-	if !SetupAlreadyReady(ctx, provisioner) {
-		var ui = NewSetupUI(in.Stderr)
-		if err := EnsureBootstrap(ctx, provisioner, ui, in.Verbose, in.Stderr); err != nil {
-			return err
-		}
-	}
-
-	// 3. Build the image via BuildKit. BuildKit's gRPC API is
-	//    namespace-mount-agnostic, so this works through the
-	//    forwarded socket without any of the cross-host snapshot
-	//    pain that container lifecycle would hit.
-	bk, err := DialBuildKit(ctx, provisioner.BuildKitAddress())
-	if err != nil {
-		return err
-	}
-	defer func() { _ = bk.Close() }()
-
-	imageRef := deriveImageRef(in.BundlePath)
-	if err := buildWithProgress(ctx, bk, BuildInput{
-		Agentfile: af,
-		Manifest:  manifest,
-		SourceDir: srcDir,
-		ImageRef:  imageRef,
-	}, in.Stderr); err != nil {
-		return err
-	}
-
-	// 4. Run the container via the provisioner. On macOS this enters
-	//    the Lima VM's rootless mount namespace via `limactl shell
-	//    agentcage nerdctl run`, sidestepping the namespace barrier
-	//    the containerd Go client cannot cross from outside the VM.
-	//    On Linux we shell out to nerdctl on the host directly.
 	runID := in.RunID
 	if runID == "" {
 		runID = deriveRunID(in.BundlePath, manifest.FilesHash)
 	}
 
-	cmd := provisioner.PrepareRunContainer(ctx, runID, imageRef)
-	stdinPipe, err := cmd.StdinPipe()
-	if err != nil {
-		return fmt.Errorf("stdin pipe: %w", err)
-	}
-	stdoutPipe, err := cmd.StdoutPipe()
-	if err != nil {
-		return fmt.Errorf("stdout pipe: %w", err)
-	}
-	cmd.Stderr = in.Stderr
-
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("starting container subprocess: %w", err)
-	}
-
-	// 5. MCP session over the subprocess's stdio.
-	mcpClient, err := mcp.Connect(ctx, stdoutPipe, stdinPipe)
-	if err != nil {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
-		return fmt.Errorf("MCP connect: %w", err)
-	}
-	defer func() { _ = mcpClient.Close() }()
-
-	// 7. Call the tool. The CLI already resolved which one to use
-	//    (run → manifest.Main; call → operator's explicit name).
-	result, err := mcpClient.CallTool(ctx, in.Tool, in.Args)
+	client, teardown, err := bootAgent(ctx, bootInput{
+		Agentfile: af,
+		Manifest:  manifest,
+		SourceDir: srcDir,
+		ImageRef:  deriveImageRef(in.BundlePath),
+		RunID:     runID,
+		Stdout:    in.Stdout,
+		Stderr:    in.Stderr,
+		Verbose:   in.Verbose,
+	})
 	if err != nil {
 		return err
 	}
 
-	// 8. Print result. Trailing newline only if the tool did not.
+	// The CLI already resolved which tool to call (run -> manifest.Main;
+	// call -> the operator's explicit name).
+	result, err := client.CallTool(ctx, in.Tool, in.Args)
+	if err != nil {
+		_ = teardown()
+		return err
+	}
+
+	// Trailing newline only if the tool did not supply one.
 	if !strings.HasSuffix(result, "\n") {
 		result += "\n"
 	}
 	if _, err := io.WriteString(in.Stdout, result); err != nil {
+		_ = teardown()
 		return fmt.Errorf("writing result: %w", err)
 	}
 
-	// 6. Tear down. Closing the MCP client closes stdin to the agent,
-	//    which is the agent's signal to exit cleanly. nerdctl's --rm
-	//    flag then removes the container. Wait reaps the subprocess
-	//    so the host does not leak a zombie.
-	_ = mcpClient.Close()
-	_ = stdinPipe.Close()
-	if err := cmd.Wait(); err != nil {
-		return fmt.Errorf("container subprocess exited with error: %w", err)
+	return teardown()
+}
+
+// bootInput carries everything bootAgent needs to build an agent's image
+// and start it speaking MCP. Manifest is optional and used only for the
+// image's provenance labels.
+type bootInput struct {
+	Agentfile *agentfile.Agentfile
+	Manifest  *bundle.Manifest
+	SourceDir string
+	ImageRef  string
+	RunID     string
+	Stdout    io.Writer
+	Stderr    io.Writer
+	Verbose   bool
+}
+
+// bootAgent provisions the runtime, builds the agent's image, starts its
+// container, and opens an MCP session to it. It returns the connected
+// client and a teardown closure the caller runs when finished.
+//
+// teardown reverses the boot: it closes the MCP session (the agent's
+// signal to exit), waits for the container, then releases BuildKit and the
+// provisioner, joining any errors. A non-zero container exit surfaces
+// here. If boot fails partway, bootAgent runs the teardown it has
+// accumulated so far before returning, so a failed boot leaks nothing.
+func bootAgent(ctx context.Context, in bootInput) (*mcp.Client, func() error, error) {
+	var cleanups []func() error
+	teardown := func() error {
+		var errs []error
+		for i := len(cleanups) - 1; i >= 0; i-- {
+			if err := cleanups[i](); err != nil {
+				errs = append(errs, err)
+			}
+		}
+		return errors.Join(errs...)
+	}
+	booted := false
+	defer func() {
+		if !booted {
+			_ = teardown()
+		}
+	}()
+
+	// Provisioner up. On first run this provisions the macOS Lima VM
+	// behind a phase-aware setup UI; when already ready it shows nothing.
+	provisioner, err := DefaultProvisioner()
+	if err != nil {
+		return nil, nil, err
+	}
+	cleanups = append(cleanups, provisioner.Close)
+	if !SetupAlreadyReady(ctx, provisioner) {
+		ui := NewSetupUI(in.Stderr)
+		if err := EnsureBootstrap(ctx, provisioner, ui, in.Verbose, in.Stderr); err != nil {
+			return nil, nil, err
+		}
 	}
 
-	return nil
+	// Build the image via BuildKit's gRPC API over the forwarded socket,
+	// which sidesteps the cross-host snapshot pain container lifecycle hits.
+	bk, err := DialBuildKit(ctx, provisioner.BuildKitAddress())
+	if err != nil {
+		return nil, nil, err
+	}
+	cleanups = append(cleanups, bk.Close)
+	if err := buildWithProgress(ctx, bk, BuildInput{
+		Agentfile: in.Agentfile,
+		Manifest:  in.Manifest,
+		SourceDir: in.SourceDir,
+		ImageRef:  in.ImageRef,
+	}, in.Stderr); err != nil {
+		return nil, nil, err
+	}
+
+	// Start the container. On macOS this enters the Lima VM's rootless
+	// mount namespace via limactl shell; on Linux it shells out to nerdctl
+	// directly.
+	cmd := provisioner.PrepareRunContainer(ctx, in.RunID, in.ImageRef)
+	stdinPipe, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, nil, fmt.Errorf("stdin pipe: %w", err)
+	}
+	stdoutPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, nil, fmt.Errorf("stdout pipe: %w", err)
+	}
+	cmd.Stderr = in.Stderr
+	if err := cmd.Start(); err != nil {
+		return nil, nil, fmt.Errorf("starting container subprocess: %w", err)
+	}
+	cleanups = append(cleanups, func() error {
+		// Closing stdin is the agent's signal to exit; --rm then removes
+		// the container and Wait reaps the subprocess.
+		_ = stdinPipe.Close()
+		if err := cmd.Wait(); err != nil {
+			return fmt.Errorf("container subprocess exited with error: %w", err)
+		}
+		return nil
+	})
+
+	// MCP session over the container's stdio.
+	client, err := mcp.Connect(ctx, stdoutPipe, stdinPipe)
+	if err != nil {
+		// The container is live but will not get its stdin EOF through the
+		// normal path; kill it so the deferred teardown's Wait reaps it.
+		_ = cmd.Process.Kill()
+		return nil, nil, fmt.Errorf("MCP connect: %w", err)
+	}
+	cleanups = append(cleanups, client.Close)
+
+	booted = true
+	return client, teardown, nil
 }
 
 // validateRunInput rejects calls that cannot reach the start of the
