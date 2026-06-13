@@ -122,9 +122,9 @@ func Build(srcDir, outPath string, opts ...Option) error {
 	skip := bundleSkip(srcDir, outAbs)
 
 	notify(2, "Hashing source tree")
-	hash, err := hashFiles(srcDir, skip)
+	hash, err := HashSource(srcDir, outPath)
 	if err != nil {
-		return fmt.Errorf("hashing source tree: %w", err)
+		return err
 	}
 
 	manifest, err := buildManifest(af, hash, cfg)
@@ -134,6 +134,24 @@ func Build(srcDir, outPath string, opts ...Option) error {
 
 	notify(3, "Sealing bundle → "+outPath)
 	return writeBundle(outAbs, srcDir, skip, manifest)
+}
+
+// HashSource returns the sha256 over srcDir's canonical file tree, with
+// outPath (the bundle being written) excluded. It is the same files_hash the
+// manifest records, exported so the build's introspection step and a later
+// run derive the same content-addressed image tag from the same source, and
+// the agent is built once rather than rebuilt per command.
+func HashSource(srcDir, outPath string) (string, error) {
+	srcDir = filepath.Clean(srcDir)
+	outAbs, err := filepath.Abs(outPath)
+	if err != nil {
+		return "", fmt.Errorf("resolving output path: %w", err)
+	}
+	hash, err := hashFiles(srcDir, bundleSkip(srcDir, outAbs))
+	if err != nil {
+		return "", fmt.Errorf("hashing source tree: %w", err)
+	}
+	return hash, nil
 }
 
 // readAgentfile locates and parses the Agentfile at the root of srcDir.
