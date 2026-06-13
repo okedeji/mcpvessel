@@ -97,7 +97,7 @@ func printManifest(w io.Writer, path string, m *bundle.Manifest) {
 	if len(m.Tools) > 0 {
 		_, _ = fmt.Fprintln(w, "\nTools:")
 		for _, t := range m.Tools {
-			line := fmt.Sprintf("  %-24s %-8s", t.Name, t.Visibility)
+			line := fmt.Sprintf("  %-28s %-8s", t.Name+schemaSignature(t.Schema), t.Visibility)
 			if t.Description != "" {
 				line += " " + t.Description
 			}
@@ -132,4 +132,51 @@ func sortedKeys(m map[string]string) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// schemaSignature renders a tool's input schema as a compact parameter
+// list, like a function signature: (message: string, depth?: string). An
+// optional parameter (not in the schema's required set) gets a "?". A tool
+// with a schema but no parameters reads "()"; a tool with no captured
+// schema (a declared-only catalog) gets no signature at all. The full
+// schema stays in --json; this is the readable summary.
+func schemaSignature(schema map[string]any) string {
+	if schema == nil {
+		return ""
+	}
+	props, ok := schema["properties"].(map[string]any)
+	if !ok || len(props) == 0 {
+		return "()"
+	}
+
+	required := map[string]bool{}
+	if req, ok := schema["required"].([]any); ok {
+		for _, r := range req {
+			if name, ok := r.(string); ok {
+				required[name] = true
+			}
+		}
+	}
+
+	names := make([]string, 0, len(props))
+	for name := range props {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	parts := make([]string, 0, len(names))
+	for _, name := range names {
+		typ := "any"
+		if prop, ok := props[name].(map[string]any); ok {
+			if t, ok := prop["type"].(string); ok {
+				typ = t
+			}
+		}
+		optional := ""
+		if !required[name] {
+			optional = "?"
+		}
+		parts = append(parts, name+optional+": "+typ)
+	}
+	return "(" + strings.Join(parts, ", ") + ")"
 }

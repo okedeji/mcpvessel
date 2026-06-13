@@ -61,6 +61,51 @@ func TestPrintManifest_RendersCatalogAndUses(t *testing.T) {
 	}
 }
 
+func TestSchemaSignature(t *testing.T) {
+	cases := []struct {
+		name   string
+		schema map[string]any
+		want   string
+	}{
+		{"no schema", nil, ""},
+		{"no params", map[string]any{"type": "object", "properties": map[string]any{}}, "()"},
+		{
+			"one required param",
+			map[string]any{
+				"properties": map[string]any{"message": map[string]any{"type": "string"}},
+				"required":   []any{"message"},
+			},
+			"(message: string)",
+		},
+		{
+			"required and optional, sorted",
+			map[string]any{
+				"properties": map[string]any{
+					"message": map[string]any{"type": "string"},
+					"depth":   map[string]any{"type": "string"},
+				},
+				"required": []any{"message"},
+			},
+			"(depth?: string, message: string)",
+		},
+		{
+			"param without a type",
+			map[string]any{
+				"properties": map[string]any{"thing": map[string]any{}},
+				"required":   []any{"thing"},
+			},
+			"(thing: any)",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := schemaSignature(tc.schema); got != tc.want {
+				t.Errorf("schemaSignature = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestInspectCmd_MissingBundleErrors(t *testing.T) {
 	cmd := newInspectCmd()
 	cmd.SilenceUsage = true
