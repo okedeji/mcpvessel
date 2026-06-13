@@ -7,6 +7,8 @@ import (
 	"io"
 	"strconv"
 	"strings"
+
+	"github.com/okedeji/agentcage/internal/env"
 )
 
 // LLM providers the runtime knows in v0.
@@ -14,11 +16,6 @@ var validProviders = map[string]ModelProvider{
 	"openai":    ProviderOpenAI,
 	"anthropic": ProviderAnthropic,
 }
-
-// envReservedPrefix is reserved for env vars the runtime injects itself.
-// Author-supplied keys starting with this are rejected so an Agentfile
-// cannot accidentally shadow what the cage sets.
-const envReservedPrefix = "AGENTCAGE_"
 
 func parse(r io.Reader) (*Agentfile, error) {
 	af := &Agentfile{
@@ -292,8 +289,8 @@ func parseEnv(af *Agentfile, rest string, lineNo int) error {
 	if len(parts) != 2 || parts[0] == "" {
 		return fmt.Errorf("line %d: ENV must be KEY=VALUE", lineNo)
 	}
-	if strings.HasPrefix(parts[0], envReservedPrefix) {
-		return fmt.Errorf("line %d: ENV key %q uses reserved %s prefix", lineNo, parts[0], envReservedPrefix)
+	if strings.HasPrefix(parts[0], env.Prefix) {
+		return fmt.Errorf("line %d: ENV key %q uses reserved %s prefix", lineNo, parts[0], env.Prefix)
 	}
 	af.Env[parts[0]] = parts[1]
 	return nil

@@ -29,6 +29,7 @@ import (
 	"oras.land/oras-go/v2/registry/remote/credentials"
 	"oras.land/oras-go/v2/registry/remote/retry"
 
+	"github.com/okedeji/agentcage/internal/env"
 	"github.com/okedeji/agentcage/internal/reference"
 )
 
@@ -293,7 +294,7 @@ func fileExists(path string) bool {
 // cacheDir is the root of agentcage's on-disk cache, ~/.agentcage/cache,
 // overridable via AGENTCAGE_HOME for operators who keep state elsewhere.
 func cacheDir() (string, error) {
-	if home := strings.TrimSpace(os.Getenv("AGENTCAGE_HOME")); home != "" {
+	if home := strings.TrimSpace(os.Getenv(env.Home)); home != "" {
 		return filepath.Join(home, "cache"), nil
 	}
 	home, err := os.UserHomeDir()

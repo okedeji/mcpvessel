@@ -26,6 +26,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/okedeji/agentcage/internal/env"
 )
 
 // fallbackRegistry is where host-less references resolve unless
@@ -127,7 +129,7 @@ func resolveHost(name string, shorthand bool) (registry, repository string, err 
 // defaultRegistry is where host-less references land. AGENTCAGE_REGISTRY
 // overrides it for operators running against a private host.
 func defaultRegistry() string {
-	if v := strings.TrimSpace(os.Getenv("AGENTCAGE_REGISTRY")); v != "" {
+	if v := strings.TrimSpace(os.Getenv(env.Registry)); v != "" {
 		return v
 	}
 	return fallbackRegistry
