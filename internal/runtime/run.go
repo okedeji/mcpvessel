@@ -45,6 +45,10 @@ type RunInput struct {
 	// the clean phase UI. Operators set this with `--verbose` when
 	// the polite renderer is hiding something they need to see.
 	Verbose bool
+
+	// NoCache forces every image to rebuild from scratch, ignoring both an
+	// already-built content-addressed image and BuildKit's layer cache.
+	NoCache bool
 }
 
 // Run is the end-to-end flow behind `agentcage run`. It extracts the
@@ -91,6 +95,7 @@ func Run(ctx context.Context, in RunInput) error {
 		Stdout:    in.Stdout,
 		Stderr:    in.Stderr,
 		Verbose:   in.Verbose,
+		NoCache:   in.NoCache,
 	}
 	client, teardown, err := bootRun(ctx, in, boot, runID)
 	if err != nil {
@@ -235,6 +240,7 @@ func buildImage(ctx context.Context, sess *bootSession, in BuildInput, noCache b
 	if !noCache && imageExists(ctx, sess.provisioner, in.ImageRef) {
 		return nil
 	}
+	in.NoCache = noCache
 	return buildWithProgress(ctx, sess.bk, in, stderr)
 }
 

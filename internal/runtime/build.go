@@ -37,6 +37,10 @@ type BuildInput struct {
 	// OnStatus, when non-nil, receives every BuildKit status update.
 	// Callers can render this to a TUI or stream it to logs.
 	OnStatus func(*bkclient.SolveStatus)
+
+	// NoCache tells BuildKit to ignore its layer cache and rebuild every
+	// step from scratch.
+	NoCache bool
 }
 
 // BuildAgent runs BuildKit to produce an OCI image from the Agentfile.
@@ -72,7 +76,7 @@ func BuildAgent(ctx context.Context, bk *BuildKit, in BuildInput) error {
 	}
 	defer cleanup()
 
-	return solveImage(ctx, bk, in.SourceDir, buildCtxDir, in.ImageRef, in.OnStatus)
+	return solveImage(ctx, bk, in.SourceDir, buildCtxDir, in.ImageRef, in.NoCache, in.OnStatus)
 }
 
 // solveImage runs the dockerfile.v0 frontend over a build context and a
@@ -85,7 +89,7 @@ func BuildAgent(ctx context.Context, bk *BuildKit, in BuildInput) error {
 // build definition from Agentfile" rather than "from Dockerfile". The
 // frontend still parses Dockerfile syntax (that is its job) but the
 // operator sees agentcage's vocabulary in the build progress.
-func solveImage(ctx context.Context, bk *BuildKit, contextDir, dockerfileDir, imageRef string, onStatus func(*bkclient.SolveStatus)) error {
+func solveImage(ctx context.Context, bk *BuildKit, contextDir, dockerfileDir, imageRef string, noCache bool, onStatus func(*bkclient.SolveStatus)) error {
 	ctxMount, err := fsutil.NewFS(contextDir)
 	if err != nil {
 		return fmt.Errorf("mounting context dir %s: %w", contextDir, err)
@@ -95,11 +99,16 @@ func solveImage(ctx context.Context, bk *BuildKit, contextDir, dockerfileDir, im
 		return fmt.Errorf("mounting definition dir %s: %w", dockerfileDir, err)
 	}
 
+	frontendAttrs := map[string]string{"filename": "Agentfile"}
+	if noCache {
+		// The dockerfile frontend treats a present "no-cache" key as a flag,
+		// rebuilding every step regardless of its layer cache.
+		frontendAttrs["no-cache"] = ""
+	}
+
 	opt := bkclient.SolveOpt{
-		Frontend: "dockerfile.v0",
-		FrontendAttrs: map[string]string{
-			"filename": "Agentfile",
-		},
+		Frontend:      "dockerfile.v0",
+		FrontendAttrs: frontendAttrs,
 		LocalMounts: map[string]fsutil.FS{
 			"context":    ctxMount,
 			"dockerfile": dfMount,

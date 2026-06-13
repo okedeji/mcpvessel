@@ -11,6 +11,7 @@ import (
 
 func newRunCmd() *cobra.Command {
 	var verbose bool
+	var noCache bool
 	cmd := &cobra.Command{
 		Use:   "run BUNDLE [PROMPT]",
 		Short: "Run an agent (routes the prompt to its MAIN tool)",
@@ -72,9 +73,11 @@ Examples:
 				Stdout:     cmd.OutOrStdout(),
 				Stderr:     cmd.ErrOrStderr(),
 				Verbose:    verbose,
+				NoCache:    noCache,
 			})
 		},
 	}
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "stream the underlying provisioner output during first-time setup")
+	cmd.Flags().BoolVar(&noCache, "no-cache", false, "rebuild every image from scratch, ignoring cached and already-built images")
 	return cmd
 }

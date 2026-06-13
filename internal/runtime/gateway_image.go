@@ -54,7 +54,7 @@ func FindGatewayBinary() (string, error) {
 // registered under GatewayImageRef in containerd. The image is the static
 // binary as its only layer, with `agentcage gateway` as the entrypoint;
 // BuildKit caches the COPY so an unchanged binary rebuilds instantly.
-func BuildGatewayImage(ctx context.Context, bk *BuildKit, w io.Writer) error {
+func BuildGatewayImage(ctx context.Context, bk *BuildKit, noCache bool, w io.Writer) error {
 	binaryPath, err := FindGatewayBinary()
 	if err != nil {
 		return err
@@ -96,7 +96,7 @@ func BuildGatewayImage(ctx context.Context, bk *BuildKit, w io.Writer) error {
 		rewriteStatusForAgentcage(s)
 		statusCh <- s
 	}
-	err = solveImage(ctx, bk, dir, dir, GatewayImageRef(), onStatus)
+	err = solveImage(ctx, bk, dir, dir, GatewayImageRef(), noCache, onStatus)
 	close(statusCh)
 	<-displayDone
 	return err

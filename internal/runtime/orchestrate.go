@@ -105,7 +105,7 @@ func bootTree(ctx context.Context, in bootInput, plan *runPlan) (*mcp.Client, fu
 	// sees every call in the tree and enforces every edge's deny. Its image
 	// is keyed by version, so an existing one is current; skip rebuilding it.
 	if in.NoCache || !imageExists(ctx, sess.provisioner, plan.Gateway.ImageRef) {
-		if err := BuildGatewayImage(ctx, sess.bk, in.Stderr); err != nil {
+		if err := BuildGatewayImage(ctx, sess.bk, in.NoCache, in.Stderr); err != nil {
 			return nil, nil, err
 		}
 	}
