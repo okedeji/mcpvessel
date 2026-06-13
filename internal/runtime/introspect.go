@@ -74,9 +74,10 @@ func introspectRunID(imageRef string) string {
 	return fmt.Sprintf("%s-introspect-%d", sanitizeRef(imageRef), os.Getpid())
 }
 
-// ImageRef is the local image tag a bundle builds and runs under. Build
-// introspection and a later run derive the same ref from the bundle path,
-// so the image is built once and the run reuses it.
-func ImageRef(bundlePath string) string {
-	return deriveImageRef(bundlePath)
+// ImageRef is the local image ref a bundle builds and runs under. Build
+// introspection and a later run derive the same content-addressed ref from
+// the same source files hash, so the image is built once and the run reuses
+// it. Callers pass bundle.HashSource of the source tree.
+func ImageRef(bundlePath, filesHash string) string {
+	return deriveImageRef(bundlePath, filesHash)
 }

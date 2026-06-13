@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/okedeji/agentcage/internal/env"
 	"github.com/okedeji/agentcage/internal/gateway"
@@ -112,7 +113,7 @@ func buildRunPlan(tree *runTree, runID string) (*runPlan, error) {
 			Node: tree.Nodes[key],
 			Spec: ContainerSpec{
 				RunID:    containerName(key),
-				ImageRef: agentImageRef(key),
+				ImageRef: agentImageRef(tree.Nodes[key]),
 				Network:  network,
 				Env:      agentEnv,
 				Detached: true,
@@ -191,11 +192,20 @@ func mergeDeny(a, b []string) []string {
 	return out
 }
 
-// agentImageRef is the local image tag a tree node builds into. Keyed by
-// the run-unique node key so two pins of the same agent name stay distinct
-// in containerd's image store.
-func agentImageRef(key string) string {
-	return "agentcage/" + sanitizeRef(key) + ":latest"
+// agentImageRef is the local containerd image ref a tree node builds into:
+// its name from the agent's repository, its tag the locked digest. The
+// digest in the tag keeps two pins of the same agent distinct and lets an
+// already-built image be reused or skipped.
+func agentImageRef(node *agentNode) string {
+	name := node.Ref.Repository
+	if i := strings.LastIndex(name, "/"); i >= 0 {
+		name = name[i+1:]
+	}
+	tag := shortDigest(node.Ref.Digest)
+	if tag == "" {
+		tag = "build"
+	}
+	return "agentcage/" + sanitizeRef(name) + ":" + tag
 }
 
 func sortedNodeKeys(nodes map[string]*agentNode) []string {

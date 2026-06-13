@@ -10,22 +10,28 @@ import (
 )
 
 func TestDeriveImageRef(t *testing.T) {
+	const hash = "sha256:abcdef0123456789abcdef"
 	cases := []struct {
 		in   string
 		want string
 	}{
-		{"researcher.agent", "agentcage/researcher:latest"},
-		{"./researcher.agent", "agentcage/researcher:latest"},
-		{"/tmp/dir/hello.agent", "agentcage/hello:latest"},
-		{"a/b/Researcher.agent", "agentcage/Researcher:latest"},
+		// The name is the basename; the tag is the short files hash.
+		{"researcher.agent", "agentcage/researcher:abcdef012345"},
+		{"./researcher.agent", "agentcage/researcher:abcdef012345"},
+		{"/tmp/dir/hello.agent", "agentcage/hello:abcdef012345"},
+		{"a/b/Researcher.agent", "agentcage/Researcher:abcdef012345"},
 		// Bad characters in the basename get sanitized to dashes.
-		{"my agent.agent", "agentcage/my-agent:latest"},
-		{"weird@name.agent", "agentcage/weird-name:latest"},
+		{"my agent.agent", "agentcage/my-agent:abcdef012345"},
+		{"weird@name.agent", "agentcage/weird-name:abcdef012345"},
 	}
 	for _, tc := range cases {
-		if got := deriveImageRef(tc.in); got != tc.want {
+		if got := deriveImageRef(tc.in, hash); got != tc.want {
 			t.Errorf("deriveImageRef(%q) = %q, want %q", tc.in, got, tc.want)
 		}
+	}
+	// A missing hash still yields a valid ref.
+	if got := deriveImageRef("x.agent", ""); got != "agentcage/x:build" {
+		t.Errorf("deriveImageRef with empty hash = %q, want agentcage/x:build", got)
 	}
 }
 

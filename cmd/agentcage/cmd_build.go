@@ -165,10 +165,17 @@ func introspectionOption(ctx context.Context, stdout, stderr io.Writer, cfg buil
 		return nil, nil
 	}
 
+	// The same source files hash the packed manifest records, so the image
+	// introspection builds here is the one the later run resolves and reuses.
+	hash, err := bundle.HashSource(cfg.srcDir, cfg.outPath)
+	if err != nil {
+		return nil, fmt.Errorf("hashing source for introspection: %w", err)
+	}
+
 	tools, err := runtime.Introspect(ctx, runtime.IntrospectInput{
 		Agentfile: af,
 		SourceDir: cfg.srcDir,
-		ImageRef:  runtime.ImageRef(cfg.outPath),
+		ImageRef:  runtime.ImageRef(cfg.outPath, hash),
 		Stdout:    stderr,
 		Stderr:    stderr,
 	})

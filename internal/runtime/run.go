@@ -86,7 +86,7 @@ func Run(ctx context.Context, in RunInput) error {
 		Agentfile: af,
 		Manifest:  manifest,
 		SourceDir: srcDir,
-		ImageRef:  deriveImageRef(in.BundlePath),
+		ImageRef:  deriveImageRef(in.BundlePath, manifest.FilesHash),
 		RunID:     runID,
 		Stdout:    in.Stdout,
 		Stderr:    in.Stderr,
@@ -304,17 +304,32 @@ func validateRunInput(in *RunInput) error {
 	return nil
 }
 
-// deriveImageRef turns a bundle path into the OCI image tag agentcage
-// uses inside containerd's local image store. Stable across builds of
-// the same agent (same basename → same ref), so re-running an agent
-// reuses the BuildKit cache.
-func deriveImageRef(bundlePath string) string {
+// deriveImageRef is the local containerd image ref for an agent: its name
+// from the bundle basename, its tag the source files hash. Content in the
+// tag means an unchanged agent resolves to the same ref (so a build is
+// reused or skipped) while a changed one gets a new ref and rebuilds. It is
+// not a registry ref and never pushed, so the no-latest rule that governs
+// USES does not apply; the hash tag is the point.
+func deriveImageRef(bundlePath, filesHash string) string {
 	base := filepath.Base(bundlePath)
 	base = strings.TrimSuffix(base, filepath.Ext(base))
 	if base == "" {
 		base = "agent"
 	}
-	return "agentcage/" + sanitizeRef(base) + ":latest"
+	tag := shortDigest(filesHash)
+	if tag == "" {
+		tag = "build"
+	}
+	return "agentcage/" + sanitizeRef(base) + ":" + tag
+}
+
+// shortDigest is the first 12 hex chars of a sha256 ("sha256:abc..." -> "abc").
+func shortDigest(s string) string {
+	s = strings.TrimPrefix(s, "sha256:")
+	if len(s) > 12 {
+		s = s[:12]
+	}
+	return s
 }
 
 // deriveRunID names the containerd container for one run. Uniqueness
