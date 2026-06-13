@@ -138,67 +138,108 @@ type bootInput struct {
 	Verbose bool
 }
 
+// teardown accumulates cleanup steps and runs them in reverse on stop,
+// joining every error so one failed step never strands the rest. Boot
+// helpers push to it as they bring resources up, so a boot that fails
+// partway still releases what it already acquired.
+type teardown struct {
+	steps []func() error
+}
+
+func (t *teardown) push(step func() error) { t.steps = append(t.steps, step) }
+
+func (t *teardown) run() error {
+	var errs []error
+	for i := len(t.steps) - 1; i >= 0; i-- {
+		if err := t.steps[i](); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// bootSession is the provisioned runtime a boot builds and starts
+// containers against: the platform provisioner and a BuildKit client. Both
+// the single-container and the tree boot share it.
+type bootSession struct {
+	provisioner Provisioner
+	bk          *BuildKit
+}
+
 // bootAgent provisions the runtime, builds the agent's image, starts its
 // container, and opens an MCP session to it. It returns the connected
-// client and a teardown closure the caller runs when finished.
-//
-// teardown reverses the boot: it closes the MCP session (the agent's
-// signal to exit), waits for the container, then releases BuildKit and the
-// provisioner, joining any errors. A non-zero container exit surfaces
-// here. If boot fails partway, bootAgent runs the teardown it has
-// accumulated so far before returning, so a failed boot leaks nothing.
+// client and a teardown the caller runs when finished. A boot that fails
+// partway runs the teardown it accumulated before returning, so a failed
+// boot leaks nothing.
 func bootAgent(ctx context.Context, in bootInput) (*mcp.Client, func() error, error) {
-	var cleanups []func() error
-	teardown := func() error {
-		var errs []error
-		for i := len(cleanups) - 1; i >= 0; i-- {
-			if err := cleanups[i](); err != nil {
-				errs = append(errs, err)
-			}
-		}
-		return errors.Join(errs...)
-	}
+	td := &teardown{}
 	booted := false
 	defer func() {
 		if !booted {
-			_ = teardown()
+			_ = td.run()
 		}
 	}()
 
-	// Provisioner up. On first run this provisions the macOS Lima VM
-	// behind a phase-aware setup UI; when already ready it shows nothing.
-	provisioner, err := DefaultProvisioner()
+	sess, err := newBootSession(ctx, in, td)
 	if err != nil {
 		return nil, nil, err
 	}
-	cleanups = append(cleanups, provisioner.Close)
+
+	client, err := startAttachedAgent(ctx, sess, in, td)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	booted = true
+	return client, td.run, nil
+}
+
+// newBootSession brings up the provisioner and a BuildKit client, pushing
+// their Close onto td. On first run the provisioner provisions the macOS
+// Lima VM behind a phase-aware setup UI; when already ready it shows
+// nothing.
+func newBootSession(ctx context.Context, in bootInput, td *teardown) (*bootSession, error) {
+	provisioner, err := DefaultProvisioner()
+	if err != nil {
+		return nil, err
+	}
+	td.push(provisioner.Close)
 	if !SetupAlreadyReady(ctx, provisioner) {
 		ui := NewSetupUI(in.Stderr)
 		if err := EnsureBootstrap(ctx, provisioner, ui, in.Verbose, in.Stderr); err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 	}
 
-	// Build the image via BuildKit's gRPC API over the forwarded socket,
-	// which sidesteps the cross-host snapshot pain container lifecycle hits.
+	// BuildKit's gRPC API works over the forwarded socket, which sidesteps
+	// the cross-host snapshot pain container lifecycle hits.
 	bk, err := DialBuildKit(ctx, provisioner.BuildKitAddress())
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	cleanups = append(cleanups, bk.Close)
-	if err := buildWithProgress(ctx, bk, BuildInput{
+	td.push(bk.Close)
+
+	return &bootSession{provisioner: provisioner, bk: bk}, nil
+}
+
+// startAttachedAgent builds the agent's image and starts its container
+// attached over stdio, opening an MCP session the runtime drives. The
+// container's stdin EOF is its signal to exit, so this is the parent the
+// host speaks to; sub-agents start detached and speak HTTP instead. Its
+// cleanups push onto td.
+func startAttachedAgent(ctx context.Context, sess *bootSession, in bootInput, td *teardown) (*mcp.Client, error) {
+	if err := buildWithProgress(ctx, sess.bk, BuildInput{
 		Agentfile: in.Agentfile,
 		Manifest:  in.Manifest,
 		SourceDir: in.SourceDir,
 		ImageRef:  in.ImageRef,
 	}, in.Stderr); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
-	// Start the container. On macOS this enters the Lima VM's rootless
-	// mount namespace via limactl shell; on Linux it shells out to nerdctl
-	// directly.
-	cmd := provisioner.Nerdctl(ctx, nerdctlRunArgs(ContainerSpec{
+	// On macOS this enters the Lima VM's rootless mount namespace via
+	// limactl shell; on Linux it shells out to nerdctl directly.
+	cmd := sess.provisioner.Nerdctl(ctx, nerdctlRunArgs(ContainerSpec{
 		RunID:    in.RunID,
 		ImageRef: in.ImageRef,
 		Network:  in.Network,
@@ -206,17 +247,17 @@ func bootAgent(ctx context.Context, in bootInput) (*mcp.Client, func() error, er
 	})...)
 	stdinPipe, err := cmd.StdinPipe()
 	if err != nil {
-		return nil, nil, fmt.Errorf("stdin pipe: %w", err)
+		return nil, fmt.Errorf("stdin pipe: %w", err)
 	}
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
-		return nil, nil, fmt.Errorf("stdout pipe: %w", err)
+		return nil, fmt.Errorf("stdout pipe: %w", err)
 	}
 	cmd.Stderr = in.Stderr
 	if err := cmd.Start(); err != nil {
-		return nil, nil, fmt.Errorf("starting container subprocess: %w", err)
+		return nil, fmt.Errorf("starting container subprocess: %w", err)
 	}
-	cleanups = append(cleanups, func() error {
+	td.push(func() error {
 		// Closing stdin is the agent's signal to exit; --rm then removes
 		// the container and Wait reaps the subprocess.
 		_ = stdinPipe.Close()
@@ -226,18 +267,16 @@ func bootAgent(ctx context.Context, in bootInput) (*mcp.Client, func() error, er
 		return nil
 	})
 
-	// MCP session over the container's stdio.
 	client, err := mcp.Connect(ctx, stdoutPipe, stdinPipe)
 	if err != nil {
 		// The container is live but will not get its stdin EOF through the
 		// normal path; kill it so the deferred teardown's Wait reaps it.
 		_ = cmd.Process.Kill()
-		return nil, nil, fmt.Errorf("MCP connect: %w", err)
+		return nil, fmt.Errorf("MCP connect: %w", err)
 	}
-	cleanups = append(cleanups, client.Close)
+	td.push(client.Close)
 
-	booted = true
-	return client, teardown, nil
+	return client, nil
 }
 
 // validateRunInput rejects calls that cannot reach the start of the
