@@ -101,6 +101,42 @@ func TestBuildRunPlan_SingleEdge(t *testing.T) {
 	}
 }
 
+func TestBuildRunPlan_InjectsLLMURLForReasoningAgents(t *testing.T) {
+	withModel := func(m string, budget int64) *bundle.Manifest {
+		return &bundle.Manifest{Agentfile: bundle.AgentfileSpec{Model: m, Budget: budget}}
+	}
+	tree := &runTree{
+		Root: "root",
+		Nodes: map[string]*agentNode{
+			"root":   {Key: "root", Manifest: withModel("anthropic/claude-3.5", 5_000_000)},
+			"sub-ab": {Key: "sub-ab", Manifest: withModel("openai/gpt-4o", 0)},
+		},
+		Edges: []usesEdge{{Caller: "root", Sub: "sub-ab", Alias: "sub"}},
+	}
+
+	plan, err := buildRunPlan(tree, "run1")
+	if err != nil {
+		t.Fatalf("buildRunPlan: %v", err)
+	}
+
+	// Each reasoning agent gets its own per-agent LLM URL and lands in the
+	// gateway's per-agent model map; the root's budget becomes the run's.
+	if got := plan.RootEnv["AGENTCAGE_LLM_URL"]; got != "http://run1-llm:9001/root" {
+		t.Errorf("root LLM url = %q, want http://run1-llm:9001/root", got)
+	}
+	if plan.LLMAgents["root"] != "anthropic/claude-3.5" || plan.LLMAgents["sub-ab"] != "openai/gpt-4o" {
+		t.Errorf("LLMAgents = %v", plan.LLMAgents)
+	}
+	if plan.Budget != 5_000_000 {
+		t.Errorf("budget = %d, want 5000000", plan.Budget)
+	}
+	for _, a := range plan.Agents {
+		if a.Spec.RunID == "run1-sub-ab" && a.Spec.Env["AGENTCAGE_LLM_URL"] != "http://run1-llm:9001/sub-ab" {
+			t.Errorf("sub LLM url = %q", a.Spec.Env["AGENTCAGE_LLM_URL"])
+		}
+	}
+}
+
 func TestBuildRunPlan_WholeAgentBan(t *testing.T) {
 	// root BANs @org/weird; it appears as a sub-agent and must not run, and
 	// its edge must be rejected at the gateway.

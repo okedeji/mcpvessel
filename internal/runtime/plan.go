@@ -35,6 +35,14 @@ type runPlan struct {
 	Gateway    ContainerSpec
 	Agents     []plannedAgent
 	RootEnv    map[string]string
+
+	// LLMAgents maps each reasoning agent's key to its advisory model, the
+	// per-agent map the LLM gateway routes by. Empty when nothing in the tree
+	// reasons, which tells the orchestrator no LLM gateway is needed. Budget is
+	// the root's advisory cap in micro-USD, the run's shared pool unless the
+	// operator overrides it.
+	LLMAgents map[string]string
+	Budget    int64
 }
 
 // plannedAgent pairs a non-root tree node with the detached container spec
@@ -65,6 +73,8 @@ func buildRunPlan(tree *runTree, runID string) (*runPlan, error) {
 		Network:    network,
 		GatewayCfg: mcpgateway.Config{Edges: map[string]mcpgateway.Edge{}},
 		RootEnv:    map[string]string{},
+		LLMAgents:  map[string]string{},
+		Budget:     nodeBudget(tree.Nodes[tree.Root]),
 	}
 
 	wholeBanned, toolBanned, err := classifyBans(tree)
@@ -109,6 +119,10 @@ func buildRunPlan(tree *runTree, runID string) (*runPlan, error) {
 		for k, v := range callerEnv[key] {
 			agentEnv[k] = v
 		}
+		if model := nodeModel(tree.Nodes[key]); model != "" {
+			agentEnv[env.LLMURL] = llmURL(runID, key)
+			plan.LLMAgents[key] = model
+		}
 		plan.Agents = append(plan.Agents, plannedAgent{
 			Node: tree.Nodes[key],
 			Spec: ContainerSpec{
@@ -119,6 +133,13 @@ func buildRunPlan(tree *runTree, runID string) (*runPlan, error) {
 				Detached: true,
 			}.withCap(defaultAgentCap),
 		})
+	}
+
+	// The root reasons over its own LLM URL too. It is not in the sub-agent
+	// loop above (it runs attached, not detached), so inject it here.
+	if model := nodeModel(tree.Nodes[tree.Root]); model != "" {
+		plan.RootEnv[env.LLMURL] = llmURL(runID, tree.Root)
+		plan.LLMAgents[tree.Root] = model
 	}
 
 	cfgJSON, err := json.Marshal(plan.GatewayCfg)

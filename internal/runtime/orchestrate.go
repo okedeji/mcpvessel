@@ -41,7 +41,7 @@ func bootRun(ctx context.Context, in RunInput, boot bootInput, runID string) (*m
 	if err != nil {
 		return nil, nil, err
 	}
-	return bootTree(ctx, boot, plan)
+	return bootTree(ctx, boot, plan, runID)
 }
 
 // resolveRunTree walks the root's transitive USES graph, pulling each
@@ -71,7 +71,7 @@ func resolveRunTree(ctx context.Context, runID, rootBundle string, root *bundle.
 // stdio with its sub-agent URLs. The order matters: the network exists
 // before anything joins it, and the root boots last so the gateway and
 // sub-agents it calls are already listening. Teardown reverses all of it.
-func bootTree(ctx context.Context, in bootInput, plan *runPlan) (*mcp.Client, func() error, error) {
+func bootTree(ctx context.Context, in bootInput, plan *runPlan, runID string) (*mcp.Client, func() error, error) {
 	td := &teardown{}
 	booted := false
 	defer func() {
@@ -113,6 +113,19 @@ func bootTree(ctx context.Context, in bootInput, plan *runPlan) (*mcp.Client, fu
 		return nil, nil, err
 	}
 	td.push(func() error { return removeContainer(sess.provisioner, plan.Gateway.RunID) })
+
+	// The LLM gateway boots after the MCP gateway and before the root, so a
+	// reasoning root finds its AGENTCAGE_LLM_URL already listening. It is
+	// skipped entirely when nothing in the tree reasons.
+	if len(plan.LLMAgents) > 0 {
+		llmCfg, err := buildLLMConfig(plan.LLMAgents, plan.Budget)
+		if err != nil {
+			return nil, nil, err
+		}
+		if err := startLLMGateway(ctx, sess, runID, plan.Network, llmCfg, in, td); err != nil {
+			return nil, nil, err
+		}
+	}
 
 	in.Network = plan.Network
 	in.Env = plan.RootEnv

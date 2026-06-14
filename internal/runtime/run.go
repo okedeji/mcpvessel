@@ -11,6 +11,7 @@ import (
 
 	"github.com/okedeji/agentcage/internal/agentfile"
 	"github.com/okedeji/agentcage/internal/bundle"
+	"github.com/okedeji/agentcage/internal/env"
 	"github.com/okedeji/agentcage/internal/mcp"
 )
 
@@ -193,6 +194,30 @@ func bootAgent(ctx context.Context, in bootInput) (*mcp.Client, func() error, er
 	sess, err := newBootSession(ctx, in, td)
 	if err != nil {
 		return nil, nil, err
+	}
+
+	// A lone agent with no USES still reasons if it declares a MODEL, so it
+	// needs its own per-run network and LLM gateway, the same as the root of
+	// a tree. Without a MODEL it stays on the default network, unchanged.
+	if model := manifestModel(in.Manifest); model != "" {
+		network := in.RunID + "-net"
+		if err := createNetwork(ctx, sess.provisioner, network); err != nil {
+			return nil, nil, err
+		}
+		td.push(func() error { return removeNetwork(sess.provisioner, network) })
+
+		llmCfg, err := buildLLMConfig(map[string]string{rootAgentKey: model}, manifestBudget(in.Manifest))
+		if err != nil {
+			return nil, nil, err
+		}
+		if err := startLLMGateway(ctx, sess, in.RunID, network, llmCfg, in, td); err != nil {
+			return nil, nil, err
+		}
+		in.Network = network
+		if in.Env == nil {
+			in.Env = map[string]string{}
+		}
+		in.Env[env.LLMURL] = llmURL(in.RunID, rootAgentKey)
 	}
 
 	client, err := startAttachedAgent(ctx, sess, in, td)
