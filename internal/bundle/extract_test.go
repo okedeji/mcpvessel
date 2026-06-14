@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -85,6 +86,71 @@ func TestExtract_RefusesPathTraversal(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "escapes") {
 		t.Errorf("error %q should name the traversal", err.Error())
+	}
+}
+
+func TestExtract_RejectsTamperedFiles(t *testing.T) {
+	src := t.TempDir()
+	writeFile(t, filepath.Join(src, "Agentfile"), "FROM x\nENTRYPOINT y\n")
+	writeFile(t, filepath.Join(src, "agent.py"), "print('original')\n")
+
+	out := filepath.Join(t.TempDir(), "a.agent")
+	if err := Build(src, out); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	// Rewrite one source file while keeping the original manifest (and its
+	// files_hash), the shape of a tampered local bundle.
+	tampered := filepath.Join(t.TempDir(), "tampered.agent")
+	repackReplacing(t, out, tampered, "files/agent.py", []byte("print('tampered')\n"))
+
+	_, err := Extract(tampered, t.TempDir())
+	if err == nil || !strings.Contains(err.Error(), "integrity check") {
+		t.Fatalf("expected an integrity-check error, got %v", err)
+	}
+}
+
+// repackReplacing copies a bundle, swapping the body of one tar entry while
+// leaving every other entry (the manifest included) untouched.
+func repackReplacing(t *testing.T, in, out, name string, body []byte) {
+	t.Helper()
+	inF, err := os.Open(in)
+	if err != nil {
+		t.Fatalf("open %s: %v", in, err)
+	}
+	defer func() { _ = inF.Close() }()
+	gz, err := gzip.NewReader(inF)
+	if err != nil {
+		t.Fatalf("gunzip: %v", err)
+	}
+	tr := tar.NewReader(gz)
+
+	outF, err := os.Create(out)
+	if err != nil {
+		t.Fatalf("create %s: %v", out, err)
+	}
+	defer func() { _ = outF.Close() }()
+	gw := gzip.NewWriter(outF)
+	defer func() { _ = gw.Close() }()
+	tw := tar.NewWriter(gw)
+	defer func() { _ = tw.Close() }()
+
+	for {
+		hdr, err := tr.Next()
+		if err != nil {
+			break
+		}
+		content, _ := io.ReadAll(tr)
+		if hdr.Name == name {
+			content = body
+			hdr.Size = int64(len(body))
+		}
+		if err := tw.WriteHeader(hdr); err != nil {
+			t.Fatalf("write header: %v", err)
+		}
+		if _, err := tw.Write(content); err != nil {
+			t.Fatalf("write body: %v", err)
+		}
 	}
 }
 

@@ -77,6 +77,23 @@ func Extract(bundlePath, destDir string) (*Manifest, error) {
 	if manifest == nil {
 		return nil, fmt.Errorf("bundle %s is missing %s", bundlePath, manifestFilename)
 	}
+
+	// Re-hash the extracted tree against the manifest's files_hash. A registry
+	// pull is digest-verified by the OCI client, but a local .agent file is
+	// not, so this is where a corrupted or tampered source tree is caught
+	// before any of it is built or run. The hash cannot stop an attacker who
+	// rewrites files_hash to match, only a signature can, but it catches
+	// corruption and a tamper that left the manifest alone. An empty hash is a
+	// pre-hash bundle with nothing to check against, not a pass.
+	if manifest.FilesHash != "" {
+		got, err := hashFiles(destAbs, nil)
+		if err != nil {
+			return nil, fmt.Errorf("verifying bundle %s: %w", bundlePath, err)
+		}
+		if got != manifest.FilesHash {
+			return nil, fmt.Errorf("bundle %s failed integrity check: extracted files hash %s, manifest records %s", bundlePath, got, manifest.FilesHash)
+		}
+	}
 	return manifest, nil
 }
 
