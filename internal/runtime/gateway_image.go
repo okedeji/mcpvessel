@@ -103,12 +103,17 @@ func BuildGatewayImage(ctx context.Context, bk *BuildKit, noCache bool, w io.Wri
 }
 
 // gatewayDockerfile is the definition the gateway image builds from: the
-// static binary on an empty base. The entrypoint is the bare binary; the
-// runtime passes the mode (mcp-gateway, llm-gateway, egress) as container
-// args, so one image serves all three. Scratch keeps the image to one layer
-// with no shell or package surface inside the run network.
+// static binary on an empty base, plus the system CA bundle. The entrypoint
+// is the bare binary; the runtime passes the mode (mcp-gateway, llm-gateway,
+// egress) as container args, so one image serves all three. The certs are for
+// the llm-gateway mode, which makes an HTTPS request to the provider and on
+// scratch would have no trust roots; the cert-builder stage is discarded, so
+// the final image stays the binary plus one file, no shell or package surface.
 func gatewayDockerfile() string {
-	return "FROM scratch\n" +
+	return "FROM alpine:3 AS certs\n" +
+		"RUN apk add --no-cache ca-certificates\n" +
+		"FROM scratch\n" +
+		"COPY --from=certs /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt\n" +
 		"COPY agentcage /agentcage\n" +
 		"ENTRYPOINT [\"/agentcage\"]\n"
 }
