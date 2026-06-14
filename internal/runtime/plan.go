@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/okedeji/agentcage/internal/config"
 	"github.com/okedeji/agentcage/internal/env"
 	"github.com/okedeji/agentcage/internal/mcpgateway"
 	"github.com/okedeji/agentcage/internal/reference"
@@ -48,6 +49,11 @@ type runPlan struct {
 	// reach. Empty when nothing in the tree declares allow:, which tells the
 	// orchestrator no egress proxy is needed.
 	EgressAgents map[string][]string
+
+	// RootCap is the attached root's resolved resource cap. The root runs
+	// outside the sub-agent loop, so its cap is resolved here too rather than
+	// left to the runtime default, which would silently ignore the operator.
+	RootCap config.Cap
 }
 
 // plannedAgent pairs a non-root tree node with the detached container spec
@@ -155,8 +161,9 @@ func buildRunPlan(tree *runTree, runID string, ops operatorInputs) (*runPlan, er
 	// loop above (it runs attached, not detached), so inject it here.
 	if model := nodeModel(tree.Nodes[tree.Root]); model != "" {
 		plan.RootEnv[env.LLMURL] = llmURL(runID, tree.Root)
-		plan.LLMAgents[tree.Root] = model
+		plan.LLMAgents[tree.Root] = effectiveModel(model, tree.Nodes[tree.Root], ops.models)
 	}
+	plan.RootCap = agentCap(tree.Nodes[tree.Root], ops.resources)
 	if hosts := egressHosts(nodeEgress(tree.Nodes[tree.Root])); len(hosts) > 0 {
 		plan.EgressAgents[containerName(tree.Root)] = hosts
 		for k, v := range egressProxyEnv(runID) {

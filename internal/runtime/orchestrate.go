@@ -30,7 +30,16 @@ const containerStopTimeout = 30 * time.Second
 // dependencies takes today's single-container path unchanged; one or more
 // takes the tree path that starts every sub-agent behind the gateway.
 func bootRun(ctx context.Context, in RunInput, boot bootInput, runID string) (*mcp.Client, func() error, error) {
+	cfg, err := config.Load()
+	if err != nil {
+		return nil, nil, err
+	}
+	ops := operatorInputs{env: in.Env, secrets: in.Secrets, models: cfg.Models, resources: cfg.Resources}
+
 	if len(boot.Manifest.Agentfile.Uses) == 0 {
+		// A directly-run agent has no registry ref, so per-agent overrides do
+		// not key it; the operator default cap and the runtime default still do.
+		boot.Cap = agentCap(nil, ops.resources)
 		return bootAgent(ctx, boot)
 	}
 
@@ -38,15 +47,11 @@ func bootRun(ctx context.Context, in RunInput, boot bootInput, runID string) (*m
 	if err != nil {
 		return nil, nil, err
 	}
-	cfg, err := config.Load()
-	if err != nil {
-		return nil, nil, err
-	}
-	ops := operatorInputs{env: in.Env, secrets: in.Secrets, models: cfg.Models, resources: cfg.Resources}
 	plan, err := buildRunPlan(tree, runID, ops)
 	if err != nil {
 		return nil, nil, err
 	}
+	boot.Cap = plan.RootCap
 	return bootTree(ctx, boot, plan, runID)
 }
 

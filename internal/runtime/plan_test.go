@@ -5,9 +5,43 @@ import (
 	"testing"
 
 	"github.com/okedeji/agentcage/internal/bundle"
+	"github.com/okedeji/agentcage/internal/config"
 	"github.com/okedeji/agentcage/internal/mcpgateway"
 	"github.com/okedeji/agentcage/internal/reference"
 )
+
+func TestBuildRunPlan_RootCapAndModelHonorOperatorConfig(t *testing.T) {
+	tree := &runTree{
+		Root: "root",
+		Nodes: map[string]*agentNode{
+			"root": {
+				Key:      "root",
+				Ref:      reference.Reference{Repository: "okedeji/boss"},
+				Manifest: &bundle.Manifest{Agentfile: bundle.AgentfileSpec{Model: "openai/gpt-4o"}},
+			},
+		},
+	}
+	ops := operatorInputs{
+		models: map[string]string{"@okedeji/boss": "openai/gpt-4o-mini"},
+		resources: config.Resources{
+			Defaults: config.Cap{CPUs: "8", Mem: "8g", Pids: 4096},
+			Agents:   map[string]config.Cap{"@okedeji/boss": {Mem: "512m"}},
+		},
+	}
+	plan, err := buildRunPlan(tree, "run1", ops)
+	if err != nil {
+		t.Fatalf("buildRunPlan: %v", err)
+	}
+
+	// The root is no longer special-cased to the runtime default: its per-agent
+	// mem override wins, and cpus/pids fall through to the operator default.
+	if plan.RootCap.Mem != "512m" || plan.RootCap.CPUs != "8" || plan.RootCap.Pids != 4096 {
+		t.Errorf("RootCap = %+v, want mem 512m / cpus 8 / pids 4096", plan.RootCap)
+	}
+	if plan.LLMAgents["root"] != "openai/gpt-4o-mini" {
+		t.Errorf("root model = %q, want the operator override openai/gpt-4o-mini", plan.LLMAgents["root"])
+	}
+}
 
 func mustParseRef(t *testing.T, s string) reference.Reference {
 	t.Helper()

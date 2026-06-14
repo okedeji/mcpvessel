@@ -11,6 +11,7 @@ import (
 
 	"github.com/okedeji/agentcage/internal/agentfile"
 	"github.com/okedeji/agentcage/internal/bundle"
+	"github.com/okedeji/agentcage/internal/config"
 	"github.com/okedeji/agentcage/internal/env"
 	"github.com/okedeji/agentcage/internal/mcp"
 )
@@ -157,6 +158,12 @@ type bootInput struct {
 	// Budget is the operator's --budget override in micro-USD; 0 falls back
 	// to the agent's advisory BUDGET.
 	Budget int64
+
+	// Cap is the attached agent's resolved resource cap, already through the
+	// operator's config. Empty only when a caller bypasses bootRun, in which
+	// case startAttachedAgent falls back to the runtime default rather than
+	// running the agent uncapped.
+	Cap config.Cap
 
 	// OpEnv and OpSecrets are the operator's value pools, injected into an
 	// agent only for the names it declares.
@@ -345,6 +352,13 @@ func startAttachedAgent(ctx context.Context, sess *bootSession, in bootInput, td
 		return nil, err
 	}
 
+	// A caller that bypassed bootRun leaves Cap empty; fall back to the runtime
+	// default so the root is never started uncapped.
+	cap := in.Cap
+	if cap == (config.Cap{}) {
+		cap = defaultAgentCap
+	}
+
 	// On macOS this enters the Lima VM's rootless mount namespace via
 	// limactl shell; on Linux it shells out to nerdctl directly.
 	cmd := sess.provisioner.Nerdctl(ctx, nerdctlRunArgs(ContainerSpec{
@@ -352,7 +366,7 @@ func startAttachedAgent(ctx context.Context, sess *bootSession, in bootInput, td
 		ImageRef: in.ImageRef,
 		Network:  in.Network,
 		Env:      in.Env,
-	}.withCap(defaultAgentCap))...)
+	}.withCap(cap))...)
 	stdinPipe, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, fmt.Errorf("stdin pipe: %w", err)
