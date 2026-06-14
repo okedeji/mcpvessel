@@ -30,6 +30,7 @@ type Endpoint struct {
 	Name     string `json:"name"`
 	BaseURL  string `json:"base_url"`
 	KeyRef   string `json:"key_ref,omitempty"`
+	Model    string `json:"model,omitempty"` // model name to send; used on fallback when an agent's provider is not this one
 	PriceIn  int64  `json:"price_in,omitempty"`
 	PriceOut int64  `json:"price_out,omitempty"`
 	Default  bool   `json:"default,omitempty"`

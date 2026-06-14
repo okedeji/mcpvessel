@@ -37,7 +37,7 @@ func newConfigProviderCmd() *cobra.Command {
 }
 
 func newConfigProviderSetCmd() *cobra.Command {
-	var baseURL, keyRef, priceIn, priceOut string
+	var baseURL, keyRef, model, priceIn, priceOut string
 	var isDefault bool
 	cmd := &cobra.Command{
 		Use:   "set NAME",
@@ -47,7 +47,7 @@ func newConfigProviderSetCmd() *cobra.Command {
 			if baseURL == "" {
 				return fmt.Errorf("--base-url is required")
 			}
-			e := config.Endpoint{Name: args[0], BaseURL: baseURL, KeyRef: keyRef, Default: isDefault}
+			e := config.Endpoint{Name: args[0], BaseURL: baseURL, KeyRef: keyRef, Model: model, Default: isDefault}
 			if priceIn != "" {
 				m, err := parseUSDMicros(priceIn)
 				if err != nil {
@@ -76,6 +76,7 @@ func newConfigProviderSetCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&baseURL, "base-url", "", "OpenAI-compatible base URL (required)")
 	cmd.Flags().StringVar(&keyRef, "key-ref", "", "name of a secret (agentcage secrets) holding the API key")
+	cmd.Flags().StringVar(&model, "model", "", "model name to send to this endpoint, used on fallback")
 	cmd.Flags().StringVar(&priceIn, "price-in", "", "USD per million input tokens, e.g. 2.50")
 	cmd.Flags().StringVar(&priceOut, "price-out", "", "USD per million output tokens")
 	cmd.Flags().BoolVar(&isDefault, "default", false, "use this endpoint when an agent's provider is not configured")
