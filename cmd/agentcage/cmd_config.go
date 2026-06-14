@@ -31,6 +31,11 @@ func newConfigModelsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "models",
 		Short: "Override an agent's model by ref, e.g. to pin an expensive agent cheaper",
+		Long: `Override an agent's model by ref, e.g. to pin an expensive agent cheaper.
+
+An override keys on the agent's @org/name registry ref, so it targets a pulled
+USES dependency. An agent you run directly from a .agent file has no registry
+ref to match; its model comes from its own MODEL and the default provider.`,
 	}
 	set := &cobra.Command{
 		Use:   "set REF PROVIDER/MODEL",
@@ -195,6 +200,12 @@ func newConfigResourcesCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "resources",
 		Short: "Set per-agent or default resource caps",
+		Long: `Set per-agent or default resource caps.
+
+A per-agent cap keys on the agent's @org/name registry ref, so it targets a
+pulled USES dependency. An agent you run directly from a .agent file has no
+registry ref to match; it takes the default cap ('resources default'), or the
+runtime default when none is set. Every cage is capped one way or another.`,
 	}
 	cmd.AddCommand(newConfigResourcesSetCmd(), newConfigResourcesDefaultCmd(), newConfigResourcesLsCmd(), newConfigResourcesRmCmd())
 	return cmd
