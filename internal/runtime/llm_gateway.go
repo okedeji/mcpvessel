@@ -1,10 +1,12 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
 
 	"github.com/okedeji/agentcage/internal/bundle"
 	"github.com/okedeji/agentcage/internal/config"
@@ -152,5 +154,56 @@ func startLLMGateway(ctx context.Context, sess *bootSession, runID, network, egr
 		return err
 	}
 	td.push(func() error { return removeContainer(sess.provisioner, spec.RunID) })
+	// Pushed after the remove so it runs before it: the spend summary is read
+	// from the gateway's logs while the container is still there.
+	td.push(func() error { return printSpendSummary(sess.provisioner, spec.RunID, in.Stderr) })
 	return nil
+}
+
+// printSpendSummary reads the run's final spend off the LLM gateway's logs and
+// prints the operator's end-of-run summary. The gateway is reaped with rm -f,
+// so its last logged snapshot is the source of truth. It is best-effort: a run
+// that did no metered call, or a log read that fails, prints nothing and never
+// fails teardown, which still has a container to remove.
+func printSpendSummary(p Provisioner, name string, w io.Writer) error {
+	ctx, cancel := context.WithTimeout(context.Background(), containerStopTimeout)
+	defer cancel()
+	cmd := p.Nerdctl(ctx, "logs", name)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	if cmd.Run() != nil {
+		return nil
+	}
+	report, ok := llmgateway.ParseSpendLine(out.String())
+	if !ok {
+		return nil
+	}
+	writeSpendSummary(w, report)
+	return nil
+}
+
+func writeSpendSummary(w io.Writer, r llmgateway.SpendReport) {
+	if r.BudgetMicroUSD > 0 {
+		_, _ = fmt.Fprintf(w, "LLM spend: $%s of $%s budget\n", formatMicrosUSD(r.TotalMicroUSD), formatMicrosUSD(r.BudgetMicroUSD))
+	} else {
+		_, _ = fmt.Fprintf(w, "LLM spend: $%s (no budget set)\n", formatMicrosUSD(r.TotalMicroUSD))
+	}
+	for _, key := range sortedSpendKeys(r.Agents) {
+		a := r.Agents[key]
+		unit := "calls"
+		if a.Calls == 1 {
+			unit = "call"
+		}
+		_, _ = fmt.Fprintf(w, "  %-12s $%s  (%d %s)\n", key, formatMicrosUSD(a.SpentMicroUSD), a.Calls, unit)
+	}
+}
+
+func sortedSpendKeys(m map[string]llmgateway.AgentSpend) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
