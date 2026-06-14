@@ -17,8 +17,9 @@ import (
 
 // Config is the on-disk ~/.agentcage/config.json.
 type Config struct {
-	Providers []Endpoint `json:"providers,omitempty"`
-	Resources Resources  `json:"resources,omitempty"`
+	Providers []Endpoint        `json:"providers,omitempty"`
+	Resources Resources         `json:"resources,omitempty"`
+	Models    map[string]string `json:"models,omitempty"` // agent ref (@org/name) -> provider/model override
 }
 
 // Endpoint is one operator-configured OpenAI-compatible LLM endpoint. KeyRef
@@ -150,6 +151,19 @@ func (c *Config) RemoveProvider(name string) bool {
 		}
 	}
 	return false
+}
+
+// SetModel pins an agent ref to a provider/model, overriding its advisory
+// MODEL. An empty model clears the override.
+func (c *Config) SetModel(ref, model string) {
+	if model == "" {
+		delete(c.Models, ref)
+		return
+	}
+	if c.Models == nil {
+		c.Models = map[string]string{}
+	}
+	c.Models[ref] = model
 }
 
 // SetCap sets the resource cap for an agent ref, or the default cap when ref

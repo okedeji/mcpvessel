@@ -58,7 +58,7 @@ type plannedAgent struct {
 // not collide. Each USES edge becomes one gateway route (target plus deny)
 // and one injected AGENTCAGE_USES_<ALIAS>_URL on the caller pointing at the
 // gateway, so every call in the tree passes the referee that enforces deny.
-func buildRunPlan(tree *runTree, runID string, opEnv, opSecrets map[string]string) (*runPlan, error) {
+func buildRunPlan(tree *runTree, runID string, ops operatorInputs) (*runPlan, error) {
 	network := runID + "-net"
 	gatewayName := runID + "-gw"
 
@@ -119,22 +119,23 @@ func buildRunPlan(tree *runTree, runID string, opEnv, opSecrets map[string]strin
 		for k, v := range callerEnv[key] {
 			agentEnv[k] = v
 		}
-		if model := nodeModel(tree.Nodes[key]); model != "" {
+		node := tree.Nodes[key]
+		if model := nodeModel(node); model != "" {
 			agentEnv[env.LLMURL] = llmURL(runID, key)
-			plan.LLMAgents[key] = model
+			plan.LLMAgents[key] = effectiveModel(model, node, ops.models)
 		}
-		if err := injectOperatorValues(agentEnv, tree.Nodes[key].Manifest, opEnv, opSecrets); err != nil {
+		if err := injectOperatorValues(agentEnv, node.Manifest, ops.env, ops.secrets); err != nil {
 			return nil, fmt.Errorf("agent %s: %w", key, err)
 		}
 		plan.Agents = append(plan.Agents, plannedAgent{
-			Node: tree.Nodes[key],
+			Node: node,
 			Spec: ContainerSpec{
 				RunID:    containerName(key),
-				ImageRef: agentImageRef(tree.Nodes[key]),
+				ImageRef: agentImageRef(node),
 				Network:  network,
 				Env:      agentEnv,
 				Detached: true,
-			}.withCap(defaultAgentCap),
+			}.withCap(agentCap(node, ops.resources)),
 		})
 	}
 
@@ -144,7 +145,7 @@ func buildRunPlan(tree *runTree, runID string, opEnv, opSecrets map[string]strin
 		plan.RootEnv[env.LLMURL] = llmURL(runID, tree.Root)
 		plan.LLMAgents[tree.Root] = model
 	}
-	if err := injectOperatorValues(plan.RootEnv, tree.Nodes[tree.Root].Manifest, opEnv, opSecrets); err != nil {
+	if err := injectOperatorValues(plan.RootEnv, tree.Nodes[tree.Root].Manifest, ops.env, ops.secrets); err != nil {
 		return nil, fmt.Errorf("agent %s: %w", tree.Root, err)
 	}
 

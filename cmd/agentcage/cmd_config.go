@@ -23,7 +23,65 @@ and point an endpoint at it with --key-ref. The config file never holds a secret
   agentcage config resources set @okedeji/researcher:0.1 --memory 2g --cpus 2
   agentcage config path`,
 	}
-	cmd.AddCommand(newConfigProviderCmd(), newConfigResourcesCmd(), newConfigPathCmd())
+	cmd.AddCommand(newConfigProviderCmd(), newConfigResourcesCmd(), newConfigModelsCmd(), newConfigPathCmd())
+	return cmd
+}
+
+func newConfigModelsCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "models",
+		Short: "Override an agent's model by ref, e.g. to pin an expensive agent cheaper",
+	}
+	set := &cobra.Command{
+		Use:   "set REF PROVIDER/MODEL",
+		Short: "Pin an agent (by @org/name) to a model, overriding its advisory MODEL",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := config.Load()
+			if err != nil {
+				return err
+			}
+			c.SetModel(args[0], args[1])
+			if err := c.Save(); err != nil {
+				return err
+			}
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Pinned %s to %s\n", args[0], args[1])
+			return nil
+		},
+	}
+	ls := &cobra.Command{
+		Use:   "ls",
+		Short: "List per-agent model overrides",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := config.Load()
+			if err != nil {
+				return err
+			}
+			for ref, model := range c.Models {
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%-32s %s\n", ref, model)
+			}
+			return nil
+		},
+	}
+	rm := &cobra.Command{
+		Use:   "rm REF",
+		Short: "Remove an agent's model override",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := config.Load()
+			if err != nil {
+				return err
+			}
+			c.SetModel(args[0], "")
+			if err := c.Save(); err != nil {
+				return err
+			}
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Removed override for %s\n", args[0])
+			return nil
+		},
+	}
+	cmd.AddCommand(set, ls, rm)
 	return cmd
 }
 
