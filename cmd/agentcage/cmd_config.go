@@ -239,11 +239,11 @@ func newConfigResourcesDefaultCmd() *cobra.Command {
 }
 
 func saveCap(cmd *cobra.Command, ref, cpu, mem string, pids int) error {
+	if cmd.Flags().Changed("pids") && pids <= 0 {
+		return fmt.Errorf("--pids must be positive")
+	}
 	if cpu == "" && mem == "" && pids == 0 {
 		return fmt.Errorf("set at least one of --cpus, --memory, --pids")
-	}
-	if pids < 0 {
-		return fmt.Errorf("--pids must be positive")
 	}
 	c, err := config.Load()
 	if err != nil {

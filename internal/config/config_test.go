@@ -77,6 +77,12 @@ func TestValidate_Rejects(t *testing.T) {
 		{"duplicate name", Config{Providers: []Endpoint{{Name: "a"}, {Name: "a"}}}, "declared twice"},
 		{"negative price", Config{Providers: []Endpoint{{Name: "a", PriceIn: -1}}}, "negative pricing"},
 		{"missing name", Config{Providers: []Endpoint{{BaseURL: "x"}}}, "name is required"},
+		{"negative cpus", Config{Resources: Resources{Defaults: Cap{CPUs: "-1"}}}, "cpus must be a positive number"},
+		{"zero cpus", Config{Resources: Resources{Defaults: Cap{CPUs: "0"}}}, "cpus must be a positive number"},
+		{"garbage cpus", Config{Resources: Resources{Agents: map[string]Cap{"@o/a": {CPUs: "lots"}}}}, "cpus must be a positive number"},
+		{"negative mem", Config{Resources: Resources{Agents: map[string]Cap{"@o/a": {Mem: "-2g"}}}}, "memory must be a positive size"},
+		{"garbage mem", Config{Resources: Resources{Defaults: Cap{Mem: "big"}}}, "memory must be a positive size"},
+		{"negative pids", Config{Resources: Resources{Defaults: Cap{Pids: -1}}}, "pids must be positive"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -85,6 +91,16 @@ func TestValidate_Rejects(t *testing.T) {
 				t.Fatalf("expected error containing %q", tc.want)
 			}
 		})
+	}
+}
+
+func TestValidate_AcceptsValidCaps(t *testing.T) {
+	c := Config{Resources: Resources{
+		Defaults: Cap{CPUs: "1.5", Mem: "512m", Pids: 1024},
+		Agents:   map[string]Cap{"@o/a": {CPUs: "2", Mem: "2g"}, "@o/b": {Pids: 256}},
+	}}
+	if err := c.Validate(); err != nil {
+		t.Fatalf("valid caps rejected: %v", err)
 	}
 }
 

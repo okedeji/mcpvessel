@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/okedeji/agentcage/internal/env"
@@ -121,6 +122,36 @@ func (c *Config) Validate() error {
 	}
 	if defaults > 1 {
 		return errors.New("only one provider may be the default")
+	}
+	if err := c.Resources.Defaults.validate(); err != nil {
+		return fmt.Errorf("default resource cap: %w", err)
+	}
+	for ref, cap := range c.Resources.Agents {
+		if err := cap.validate(); err != nil {
+			return fmt.Errorf("resource cap for %q: %w", ref, err)
+		}
+	}
+	return nil
+}
+
+// validate rejects a cap a cage must never run with: a non-positive cpu or
+// memory, or a negative pids limit. Zero in a field means "no operator value
+// here," so the runtime falls back to its default; a negative or malformed
+// value is fail-closed, never treated as unlimited.
+func (cap Cap) validate() error {
+	if cap.Pids < 0 {
+		return fmt.Errorf("pids must be positive, got %d", cap.Pids)
+	}
+	if cap.CPUs != "" {
+		if v, err := strconv.ParseFloat(cap.CPUs, 64); err != nil || v <= 0 {
+			return fmt.Errorf("cpus must be a positive number, got %q", cap.CPUs)
+		}
+	}
+	if cap.Mem != "" {
+		num := strings.TrimRight(cap.Mem, "bBkKmMgG")
+		if v, err := strconv.ParseFloat(num, 64); err != nil || v <= 0 {
+			return fmt.Errorf("memory must be a positive size like 512m or 2g, got %q", cap.Mem)
+		}
 	}
 	return nil
 }
