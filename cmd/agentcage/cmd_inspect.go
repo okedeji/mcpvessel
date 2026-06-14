@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -118,10 +119,13 @@ func printManifest(w io.Writer, path string, m *bundle.Manifest) {
 		_, _ = fmt.Fprintf(w, "  EXPOSE      %s\n", strings.Join(af.Expose, ", "))
 	}
 	if af.Budget != 0 {
-		_, _ = fmt.Fprintf(w, "  BUDGET      %d\n", af.Budget)
+		_, _ = fmt.Fprintf(w, "  BUDGET      $%s\n", formatUSDMicros(af.Budget))
 	}
-	if af.Network != "" {
-		_, _ = fmt.Fprintf(w, "  NETWORK     %s\n", af.Network)
+	if af.Resources != nil {
+		_, _ = fmt.Fprintf(w, "  RESOURCES   %s\n", resourcesLine(af.Resources))
+	}
+	if af.Egress != "" {
+		_, _ = fmt.Fprintf(w, "  EGRESS      %s\n", af.Egress)
 	}
 	if len(af.Secrets) > 0 {
 		_, _ = fmt.Fprintf(w, "  SECRETS     %s\n", strings.Join(af.Secrets, ", "))
@@ -221,4 +225,36 @@ func schemaSignature(schema map[string]any) string {
 		parts = append(parts, name+optional+": "+typ)
 	}
 	return "(" + strings.Join(parts, ", ") + ")"
+}
+
+// formatUSDMicros renders integer micro-USD as a dollar string, trimming
+// trailing zeros past two decimals so $5.00 reads as "5.00" and a
+// sub-cent budget keeps its precision.
+func formatUSDMicros(m int64) string {
+	s := fmt.Sprintf("%d.%06d", m/1_000_000, m%1_000_000)
+	s = strings.TrimRight(s, "0")
+	switch dot := strings.IndexByte(s, '.'); {
+	case dot == len(s)-1:
+		return s + "00"
+	case len(s)-dot-1 < 2:
+		return s + "0"
+	default:
+		return s
+	}
+}
+
+// resourcesLine renders a RESOURCES spec as the cpu/mem/pids fields that
+// are set, for the inspect and tree views.
+func resourcesLine(r *bundle.ResourcesSpec) string {
+	var parts []string
+	if r.CPUs != "" {
+		parts = append(parts, "cpu="+r.CPUs)
+	}
+	if r.Mem != "" {
+		parts = append(parts, "mem="+r.Mem)
+	}
+	if r.Pids != 0 {
+		parts = append(parts, "pids="+strconv.Itoa(r.Pids))
+	}
+	return strings.Join(parts, " ")
 }

@@ -11,12 +11,6 @@ import (
 	"github.com/okedeji/agentcage/internal/env"
 )
 
-// LLM providers the runtime knows in v0.
-var validProviders = map[string]ModelProvider{
-	"openai":    ProviderOpenAI,
-	"anthropic": ProviderAnthropic,
-}
-
 func parse(r io.Reader) (*Agentfile, error) {
 	af := &Agentfile{
 		Env:  make(map[string]string),
@@ -64,12 +58,14 @@ func parseLine(af *Agentfile, line string, lineNo int) error {
 		return parseBan(af, rest, lineNo)
 	case "BUDGET":
 		return parseBudget(af, rest, lineNo)
+	case "RESOURCES":
+		return parseResources(af, rest, lineNo)
 	case "ENV":
 		return parseEnv(af, rest, lineNo)
 	case "SECRETS":
 		return parseSecrets(af, rest, lineNo)
-	case "NETWORK":
-		return parseNetwork(af, rest, lineNo)
+	case "EGRESS":
+		return parseEgress(af, rest, lineNo)
 	case "META":
 		return parseMeta(af, rest, lineNo)
 	case "EVAL":
@@ -129,11 +125,7 @@ func parseModel(af *Agentfile, rest string, lineNo int) error {
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
 		return fmt.Errorf("line %d: MODEL must be provider/model-name (got %q)", lineNo, rest)
 	}
-	provider, ok := validProviders[parts[0]]
-	if !ok {
-		return fmt.Errorf("line %d: unknown provider %q (v0 supports openai, anthropic)", lineNo, parts[0])
-	}
-	af.Model = &Model{Provider: provider, Name: parts[1]}
+	af.Model = &Model{Provider: parts[0], Name: parts[1]}
 	return nil
 }
 
@@ -315,16 +307,83 @@ func parseBudget(af *Agentfile, rest string, lineNo int) error {
 	}
 	fields := strings.Fields(rest)
 	if len(fields) != 1 {
-		return fmt.Errorf("line %d: BUDGET takes a single token count like 100000", lineNo)
+		return fmt.Errorf("line %d: BUDGET takes a single USD amount like 5.00", lineNo)
 	}
-	tokens, err := strconv.Atoi(fields[0])
+	micros, err := parseUSDMicros(fields[0])
 	if err != nil {
-		return fmt.Errorf("line %d: BUDGET %q is not a token count", lineNo, fields[0])
+		return fmt.Errorf("line %d: BUDGET %q is not a USD amount", lineNo, fields[0])
 	}
-	if tokens <= 0 {
+	if micros <= 0 {
 		return fmt.Errorf("line %d: BUDGET must be positive", lineNo)
 	}
-	af.Budget = tokens
+	af.Budget = micros
+	return nil
+}
+
+// parseUSDMicros turns a USD amount like "5", "5.00", or "0.003" into
+// integer micro-USD (millionths of a dollar) so budgets accumulate without
+// float drift. More than six fractional digits is finer than we track and
+// is rejected.
+func parseUSDMicros(s string) (int64, error) {
+	whole, frac, hasFrac := strings.Cut(s, ".")
+	var dollars int64
+	if whole != "" {
+		d, err := strconv.ParseInt(whole, 10, 64)
+		if err != nil || d < 0 {
+			return 0, errors.New("invalid USD amount")
+		}
+		dollars = d
+	}
+	micros := dollars * 1_000_000
+	if hasFrac {
+		if len(frac) > 6 {
+			return 0, errors.New("USD amount has more than six decimal places")
+		}
+		for len(frac) < 6 {
+			frac += "0"
+		}
+		f, err := strconv.ParseInt(frac, 10, 64)
+		if err != nil || f < 0 {
+			return 0, errors.New("invalid USD amount")
+		}
+		micros += f
+	}
+	return micros, nil
+}
+
+// parseResources records the advisory RESOURCES hint. It captures
+// well-formed cpu/mem/pids values and rejects unknown keys; the operator,
+// not these numbers, sets the enforced cap.
+func parseResources(af *Agentfile, rest string, lineNo int) error {
+	if af.Resources != nil {
+		return fmt.Errorf("line %d: RESOURCES declared twice", lineNo)
+	}
+	fields := strings.Fields(rest)
+	if len(fields) == 0 {
+		return fmt.Errorf("line %d: RESOURCES requires at least one of cpu=, mem=, pids=", lineNo)
+	}
+	res := &Resources{}
+	for _, field := range fields {
+		key, val, ok := strings.Cut(field, "=")
+		if !ok || val == "" {
+			return fmt.Errorf("line %d: RESOURCES expects key=value (got %q)", lineNo, field)
+		}
+		switch key {
+		case "cpu":
+			res.CPUs = val
+		case "mem":
+			res.Mem = val
+		case "pids":
+			n, err := strconv.Atoi(val)
+			if err != nil || n <= 0 {
+				return fmt.Errorf("line %d: RESOURCES pids must be a positive integer (got %q)", lineNo, val)
+			}
+			res.Pids = n
+		default:
+			return fmt.Errorf("line %d: RESOURCES unknown key %q (want cpu, mem, pids)", lineNo, key)
+		}
+	}
+	af.Resources = res
 	return nil
 }
 
@@ -349,17 +408,17 @@ func parseSecrets(af *Agentfile, rest string, lineNo int) error {
 	return nil
 }
 
-func parseNetwork(af *Agentfile, rest string, lineNo int) error {
-	if af.Network != "" {
-		return fmt.Errorf("line %d: NETWORK declared twice", lineNo)
+func parseEgress(af *Agentfile, rest string, lineNo int) error {
+	if af.Egress != "" {
+		return fmt.Errorf("line %d: EGRESS declared twice", lineNo)
 	}
 	if rest == "" {
-		return fmt.Errorf("line %d: NETWORK requires a policy", lineNo)
+		return fmt.Errorf("line %d: EGRESS requires a policy", lineNo)
 	}
 	if rest != "deny-default" && !strings.HasPrefix(rest, "allow:") {
-		return fmt.Errorf("line %d: NETWORK must be deny-default or allow:<domains> (got %q)", lineNo, rest)
+		return fmt.Errorf("line %d: EGRESS must be deny-default or allow:<domains> (got %q)", lineNo, rest)
 	}
-	af.Network = rest
+	af.Egress = rest
 	return nil
 }
 

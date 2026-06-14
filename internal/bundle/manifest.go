@@ -64,13 +64,22 @@ type AgentfileSpec struct {
 	Main       string            `json:"main,omitempty"`  // name of the tool that runs on `agentcage run`; omitted for tool collections
 	Expose     []string          `json:"expose,omitempty"`
 	Uses       []UseSpec         `json:"uses,omitempty"`
-	Ban        []BanSpec         `json:"ban,omitempty"` // agents (or their tools) forbidden anywhere in the subtree
-	Budget     int               `json:"budget,omitempty"`
+	Ban        []BanSpec         `json:"ban,omitempty"`    // agents (or their tools) forbidden anywhere in the subtree
+	Budget     int64             `json:"budget,omitempty"` // USD cost cap per run in micro-USD
+	Resources  *ResourcesSpec    `json:"resources,omitempty"`
 	Env        map[string]string `json:"env,omitempty"`
 	Secrets    []string          `json:"secrets,omitempty"`
-	Network    string            `json:"network,omitempty"`
+	Egress     string            `json:"egress,omitempty"`
 	Meta       map[string]string `json:"meta,omitempty"`
 	Eval       string            `json:"eval,omitempty"`
+}
+
+// ResourcesSpec is the wire form of the advisory RESOURCES directive. The
+// operator sets the concrete enforced cap; these are the author's hint.
+type ResourcesSpec struct {
+	CPUs string `json:"cpus,omitempty"`
+	Mem  string `json:"mem,omitempty"`
+	Pids int    `json:"pids,omitempty"`
 }
 
 // UseSpec is one entry in AgentfileSpec.Uses. Public mirrors the

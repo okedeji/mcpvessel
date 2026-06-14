@@ -218,12 +218,15 @@ func buildManifest(af *agentfile.Agentfile, hash string, cfg options) (*Manifest
 		Budget:     af.Budget,
 		Env:        af.Env,
 		Secrets:    af.Secrets,
-		Network:    af.Network,
+		Egress:     af.Egress,
 		Meta:       af.Meta,
 		Eval:       af.Eval,
 	}
+	if af.Resources != nil {
+		spec.Resources = &ResourcesSpec{CPUs: af.Resources.CPUs, Mem: af.Resources.Mem, Pids: af.Resources.Pids}
+	}
 	if af.Model != nil {
-		spec.Model = string(af.Model.Provider) + "/" + af.Model.Name
+		spec.Model = af.Model.Provider + "/" + af.Model.Name
 	}
 	return &Manifest{
 		SpecVersion: specVersion,

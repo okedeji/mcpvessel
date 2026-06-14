@@ -31,10 +31,11 @@ MODEL anthropic/claude-3.5
 
 USES @anthropic/web-search:1.2.0
 USES PUBLIC @user/web-tool:0.5.0
-BUDGET 100000
+BUDGET 5.00
+RESOURCES cpu=2 mem=2g pids=1024
 ENV LOG_LEVEL=info
 SECRETS anthropic_api_key
-NETWORK allow:api.example.com,docs.example.com
+EGRESS allow:api.example.com,docs.example.com
 META description "A research agent"
 META license "MIT"
 EVAL ./tests/eval.yaml
@@ -44,7 +45,7 @@ ENTRYPOINT python3 -m researcher
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-	wantModel := &Model{Provider: ProviderAnthropic, Name: "claude-3.5"}
+	wantModel := &Model{Provider: "anthropic", Name: "claude-3.5"}
 	if !reflect.DeepEqual(got.Model, wantModel) {
 		t.Errorf("Model = %+v, want %+v", got.Model, wantModel)
 	}
@@ -64,8 +65,12 @@ ENTRYPOINT python3 -m researcher
 	if !reflect.DeepEqual(got.Uses[1], Use{Ref: "@user/web-tool", Version: "0.5.0", Public: true}) {
 		t.Errorf("Uses[1] = %+v", got.Uses[1])
 	}
-	if got.Budget != 100000 {
-		t.Errorf("Budget = %d, want 100000", got.Budget)
+	if got.Budget != 5_000_000 {
+		t.Errorf("Budget = %d, want 5000000 micro-USD", got.Budget)
+	}
+	wantResources := &Resources{CPUs: "2", Mem: "2g", Pids: 1024}
+	if !reflect.DeepEqual(got.Resources, wantResources) {
+		t.Errorf("Resources = %+v, want %+v", got.Resources, wantResources)
 	}
 	if got.Env["LOG_LEVEL"] != "info" {
 		t.Errorf("Env[LOG_LEVEL] = %q", got.Env["LOG_LEVEL"])
@@ -73,8 +78,8 @@ ENTRYPOINT python3 -m researcher
 	if !reflect.DeepEqual(got.Secrets, []string{"anthropic_api_key"}) {
 		t.Errorf("Secrets = %v", got.Secrets)
 	}
-	if got.Network != "allow:api.example.com,docs.example.com" {
-		t.Errorf("Network = %q", got.Network)
+	if got.Egress != "allow:api.example.com,docs.example.com" {
+		t.Errorf("Egress = %q", got.Egress)
 	}
 	if got.Meta["description"] != "A research agent" {
 		t.Errorf("Meta[description] = %q", got.Meta["description"])
@@ -282,11 +287,6 @@ func TestParse_Errors(t *testing.T) {
 			"ENTRYPOINT declared twice",
 		},
 		{
-			"unknown model provider",
-			"FROM x\nENTRYPOINT y\nMODEL google/gemini",
-			"unknown provider",
-		},
-		{
 			"model bad form",
 			"FROM x\nENTRYPOINT y\nMODEL just-a-name",
 			"MODEL must be provider/model-name",
@@ -354,17 +354,32 @@ func TestParse_Errors(t *testing.T) {
 		{
 			"budget negative",
 			"FROM x\nENTRYPOINT y\nBUDGET -1",
-			"must be positive",
+			"is not a USD amount",
 		},
 		{
 			"budget extra args",
 			"FROM x\nENTRYPOINT y\nBUDGET 1 USD",
-			"takes a single token count",
+			"takes a single USD amount",
 		},
 		{
 			"budget bad form",
 			"FROM x\nENTRYPOINT y\nBUDGET notanumber",
-			"is not a token count",
+			"is not a USD amount",
+		},
+		{
+			"budget too many decimals",
+			"FROM x\nENTRYPOINT y\nBUDGET 5.0000001",
+			"is not a USD amount",
+		},
+		{
+			"resources unknown key",
+			"FROM x\nENTRYPOINT y\nRESOURCES gpu=1",
+			"unknown key",
+		},
+		{
+			"resources bad pids",
+			"FROM x\nENTRYPOINT y\nRESOURCES pids=0",
+			"pids must be a positive integer",
 		},
 		{
 			"reserved env prefix",
@@ -377,8 +392,8 @@ func TestParse_Errors(t *testing.T) {
 			"ENV must be KEY=VALUE",
 		},
 		{
-			"network bad format",
-			"FROM x\nENTRYPOINT y\nNETWORK something",
+			"egress bad format",
+			"FROM x\nENTRYPOINT y\nEGRESS something",
 			"must be deny-default or allow:",
 		},
 		{

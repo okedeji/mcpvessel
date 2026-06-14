@@ -22,10 +22,11 @@ type Agentfile struct {
 	Expose     []string          // EXPOSE: tool names that are publicly callable from outside the cage
 	Uses       []Use             // USES: registry sub-agent dependencies
 	Ban        []Ban             // BAN: agents (or their tools) forbidden anywhere in this agent's subtree
-	Budget     int               // BUDGET: max LLM tokens per run, 0 when unset
-	Env        map[string]string // ENV: author-supplied environment variables
+	Budget     int64             // BUDGET: advisory USD cost cap per run in micro-USD; the operator's --budget is the enforced cap. 0 when unset
+	Resources  *Resources        // RESOURCES: advisory cpu/mem/pids hint; nil when unset
+	Env        map[string]string // ENV: author-supplied environment variables, or value-less operator-required inputs
 	Secrets    []string          // SECRETS: secret keys to inject at runtime
-	Network    string            // NETWORK: egress policy ("deny-default" or "allow:domain,domain")
+	Egress     string            // EGRESS: egress policy ("deny-default" or "allow:domain,domain")
 	Meta       map[string]string // META: registry discovery metadata
 	Eval       string            // EVAL: path to the eval suite
 }
@@ -58,20 +59,23 @@ type Ban struct {
 	Tools []string // tool names from the ONLY clause; nil means the whole agent
 }
 
-// Model is the parsed MODEL directive.
+// Model is the parsed MODEL directive. It is advisory: the LLM gateway
+// resolves the provider against the operator's configured endpoints and
+// falls back when it is not configured, so any provider name is valid and
+// the parser does not check it against a fixed list.
 type Model struct {
-	Provider ModelProvider // "openai", "anthropic"
-	Name     string        // e.g. "claude-opus-4-8", "gpt-5.5"
+	Provider string // e.g. "openai", "anthropic", "openrouter"
+	Name     string // e.g. "claude-opus-4-8", "gpt-5.5"
 }
 
-// ModelProvider names the LLM provider the runtime routes to. Parser
-// only emits the constants below.
-type ModelProvider string
-
-const (
-	ProviderOpenAI    ModelProvider = "openai"
-	ProviderAnthropic ModelProvider = "anthropic"
-)
+// Resources is the parsed RESOURCES directive: an advisory hint of what
+// the agent needs. The operator sets the concrete enforced cap, so these
+// numbers are surfaced to the operator but never applied directly.
+type Resources struct {
+	CPUs string // nerdctl --cpus value, e.g. "2", "0.5"; empty when unset
+	Mem  string // nerdctl --memory value, e.g. "2g", "512m"; empty when unset
+	Pids int    // nerdctl --pids-limit value; 0 when unset
+}
 
 // Parse reads an Agentfile from r and returns the validated result.
 // Errors name the offending line number when possible.
