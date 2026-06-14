@@ -17,7 +17,7 @@ The runtime injects these. Your agent reads them; it never sets them.
 |---|---|---|
 | `AGENTCAGE_SERVE_HTTP` | every sub-agent | A bind address (`:8000`). When set, serve MCP over streamable-HTTP on it instead of stdio. |
 | `AGENTCAGE_USES_<NAME>_URL` | a parent, one per `USES` | The URL to reach that sub-agent. `<NAME>` is the dependency name uppercased with dashes turned to underscores: `USES @org/web-search` gives `AGENTCAGE_USES_WEB_SEARCH_URL`. |
-| `AGENTCAGE_LLM_URL` | every reasoning agent | An OpenAI-compatible endpoint. Call it instead of a provider directly; agentcage holds the keys and meters the tokens. (Arrives with the LLM gateway milestone.) |
+| `AGENTCAGE_LLM_URL` | every reasoning agent | An OpenAI-compatible endpoint. Call it instead of a provider directly; agentcage holds the keys and meters the cost. One URL per agent, so the gateway knows whose call it is. |
 
 A `USES_<NAME>_URL` points at the gateway, not at the sub-agent directly. The
 gateway routes to the real sub-agent and enforces any `DENY`/`BAN` policy on
@@ -105,6 +105,36 @@ async def call_sub(env_var: str, tool: str, args: dict) -> str:
     except BaseException as err:
         raise RuntimeError(_root_cause(err)) from None
 ```
+
+## Reaching the LLM
+
+A reasoning agent calls the model through `AGENTCAGE_LLM_URL` with any
+OpenAI-compatible client. agentcage holds the provider key, so your code never
+sees one; the gateway routes the call to the operator's configured endpoint,
+meters the cost, and debits the run's budget. You send a model name, but the
+gateway decides which model actually runs (the operator can pin one, or fall
+back when your provider is not configured), so treat your `MODEL` as advisory.
+
+```python
+import os
+from openai import OpenAI
+
+client = OpenAI(base_url=os.environ["AGENTCAGE_LLM_URL"], api_key="unused")
+resp = client.chat.completions.create(
+    model="gpt-4o",  # advisory; the gateway routes by the operator's config
+    messages=[{"role": "user", "content": "..."}],
+)
+```
+
+The `api_key` is ignored: the gateway attaches the real one. Speaking the
+OpenAI completions surface is the requirement for using the gateway. An agent
+that needs a provider or protocol agentcage does not proxy opts out with
+bring-your-own: declare `SECRETS my_key` and `EGRESS allow:host`, and call that
+provider directly. Its spend is outside the run's budget.
+
+There is no `PROMPT` directive. If you want the operator to tune your system
+prompt, read it from an `ENV` input (run-scoped) or take it as a tool argument
+(per call), the same as any other application config.
 
 ## Own your logging
 
