@@ -47,12 +47,14 @@ type runPlan struct {
 	AgentNets map[string]string
 	RootNet   string
 
-	// LLMAgents maps each reasoning agent's key to its advisory model, the
-	// per-agent map the LLM gateway routes by. Empty when nothing in the tree
-	// reasons, which tells the orchestrator no LLM gateway is needed. Budget is
-	// the root's advisory cap in micro-USD, the run's shared pool unless the
-	// operator overrides it.
+	// LLMAgents maps each reasoning agent's key to its advisory model. Empty
+	// when nothing in the tree reasons, which tells the orchestrator no LLM
+	// gateway is needed. LLMTokens maps each reasoning agent's key to the
+	// unguessable token its AGENTCAGE_LLM_URL carries, so the gateway routes by
+	// the token, not the guessable agent key. Budget is the root's advisory cap
+	// in micro-USD, the run's shared pool unless the operator overrides it.
 	LLMAgents map[string]string
+	LLMTokens map[string]string
 	Budget    int64
 
 	// EgressAgents maps each allow: agent's container name to its network and
@@ -105,6 +107,7 @@ func buildRunPlan(tree *runTree, runID string, ops operatorInputs) (*runPlan, er
 		RootEnv:      map[string]string{},
 		AgentNets:    map[string]string{},
 		LLMAgents:    map[string]string{},
+		LLMTokens:    map[string]string{},
 		EgressAgents: map[string]egressAgent{},
 		Budget:       nodeBudget(tree.Nodes[tree.Root]),
 	}
@@ -118,7 +121,7 @@ func buildRunPlan(tree *runTree, runID string, ops operatorInputs) (*runPlan, er
 	// with; the root's go straight into plan.RootEnv.
 	callerEnv := map[string]map[string]string{}
 	for _, e := range tree.Edges {
-		edgeKey, err := edgeToken()
+		edgeKey, err := capabilityToken()
 		if err != nil {
 			return nil, err
 		}
@@ -157,7 +160,12 @@ func buildRunPlan(tree *runTree, runID string, ops operatorInputs) (*runPlan, er
 		node := tree.Nodes[key]
 		plan.AgentNets[key] = nodeNet(key)
 		if model := nodeModel(node); model != "" {
-			agentEnv[env.LLMURL] = llmURL(runID, key)
+			token, err := capabilityToken()
+			if err != nil {
+				return nil, err
+			}
+			plan.LLMTokens[key] = token
+			agentEnv[env.LLMURL] = llmURL(runID, token)
 			plan.LLMAgents[key] = effectiveModel(model, node, ops.models)
 		}
 		if hosts := egressHosts(nodeEgress(node)); len(hosts) > 0 {
@@ -186,7 +194,12 @@ func buildRunPlan(tree *runTree, runID string, ops operatorInputs) (*runPlan, er
 	plan.AgentNets[tree.Root] = nodeNet(tree.Root)
 	plan.RootNet = nodeNet(tree.Root)
 	if model := nodeModel(tree.Nodes[tree.Root]); model != "" {
-		plan.RootEnv[env.LLMURL] = llmURL(runID, tree.Root)
+		token, err := capabilityToken()
+		if err != nil {
+			return nil, err
+		}
+		plan.LLMTokens[tree.Root] = token
+		plan.RootEnv[env.LLMURL] = llmURL(runID, token)
 		plan.LLMAgents[tree.Root] = effectiveModel(model, tree.Nodes[tree.Root], ops.models)
 	}
 	plan.RootCap = agentCap(tree.Nodes[tree.Root], ops.resources)
@@ -295,16 +308,16 @@ func agentImageRef(node *agentNode) string {
 	return "agentcage/" + sanitizeRef(name) + ":" + tag
 }
 
-// edgeToken is the unguessable capability a caller addresses one USES edge by.
-// It replaces a guessable <alias>-<index> key: the routing table holds every
-// edge in the tree, and the gateway authenticates no caller, so a predictable
-// key let any cage reach any sub-agent by enumerating keys. The token goes only
-// into the owning caller's injected URL, and per-agent networks keep a sibling
-// from observing it, so an edge is reachable only by the caller it was granted.
-func edgeToken() (string, error) {
+// capabilityToken is the unguessable path a caller addresses one gateway route
+// by, a USES edge or an LLM route. It replaces a guessable key: a gateway's
+// table holds every route in the run and authenticates no caller, so a
+// predictable key let any cage reach a route by enumerating keys. The token
+// goes only into the owning caller's injected URL, and per-agent networks keep
+// a sibling from observing it, so a route is reachable only by its grantee.
+func capabilityToken() (string, error) {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {
-		return "", fmt.Errorf("generating edge token: %w", err)
+		return "", fmt.Errorf("generating capability token: %w", err)
 	}
 	return hex.EncodeToString(b[:]), nil
 }

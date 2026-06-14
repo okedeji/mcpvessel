@@ -258,15 +258,19 @@ func bootAgent(ctx context.Context, in bootInput) (*mcp.Client, func() error, er
 		}
 
 		if model != "" {
+			token, err := capabilityToken()
+			if err != nil {
+				return nil, nil, err
+			}
 			budget := resolveBudget(in.Budget, manifestBudget(in.Manifest), in.Stderr)
-			llmCfg, err := buildLLMConfig(map[string]string{rootAgentKey: model}, budget)
+			llmCfg, err := buildLLMConfig(map[string]string{rootAgentKey: model}, map[string]string{rootAgentKey: token}, budget)
 			if err != nil {
 				return nil, nil, err
 			}
 			if err := startLLMGateway(ctx, sess, in.RunID, []string{network}, egressNet, llmCfg, in, td); err != nil {
 				return nil, nil, err
 			}
-			in.Env[env.LLMURL] = llmURL(in.RunID, rootAgentKey)
+			in.Env[env.LLMURL] = llmURL(in.RunID, token)
 		}
 
 		if len(allowHosts) > 0 {

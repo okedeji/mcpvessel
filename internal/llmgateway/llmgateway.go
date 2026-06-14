@@ -74,14 +74,23 @@ type Endpoint struct {
 }
 
 // Config is what the runtime injects into the gateway: the configured
-// endpoints by provider name, the default provider for fallback, each agent's
-// resolved provider/model (operator overrides already applied upstream), and
-// the run's shared budget in micro-USD (0 means unbounded).
+// endpoints by provider name, the default provider for fallback, each reasoning
+// agent's route keyed by an unguessable capability token, and the run's shared
+// budget in micro-USD (0 means unbounded).
 type Config struct {
-	Endpoints      map[string]Endpoint `json:"endpoints"`
-	Default        string              `json:"default"`
-	Agents         map[string]string   `json:"agents"`
-	BudgetMicroUSD int64               `json:"budget_micro_usd,omitempty"`
+	Endpoints      map[string]Endpoint   `json:"endpoints"`
+	Default        string                `json:"default"`
+	Agents         map[string]AgentRoute `json:"agents"`
+	BudgetMicroUSD int64                 `json:"budget_micro_usd,omitempty"`
+}
+
+// AgentRoute is one reasoning agent's LLM route. The gateway addresses it by the
+// capability token (the map key) injected only into that agent's URL, so a
+// sibling cannot forge another agent's path to use its model or misattribute
+// spend. Key is the real agent key, kept for the per-agent spend tally.
+type AgentRoute struct {
+	Key   string `json:"key"`
+	Model string `json:"model"`
 }
 
 // SpendReport is the cumulative spend the gateway emits after each metered
@@ -118,9 +127,12 @@ func Handler(cfg Config, report func(SpendReport)) http.Handler {
 		calls:  map[string]int64{},
 		report: report,
 	}
+	// Keyed by the capability token a caller addresses, but metered by the real
+	// agent key, so the spend tally still attributes to the agent and a forged
+	// path cannot be guessed.
 	routes := make(map[string]route, len(cfg.Agents))
-	for agentKey, advisory := range cfg.Agents {
-		provider, model := splitModel(advisory)
+	for token, ar := range cfg.Agents {
+		provider, model := splitModel(ar.Model)
 		ep, matched := cfg.Endpoints[provider]
 		if !matched {
 			ep = cfg.Endpoints[cfg.Default]
@@ -130,7 +142,7 @@ func Handler(cfg Config, report func(SpendReport)) http.Handler {
 				model = ep.Model
 			}
 		}
-		routes[agentKey] = route{proxy: newProxy(ep, m, agentKey), model: model}
+		routes[token] = route{proxy: newProxy(ep, m, ar.Key), model: model}
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

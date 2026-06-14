@@ -189,10 +189,15 @@ func TestBuildRunPlan_InjectsLLMURLForReasoningAgents(t *testing.T) {
 		t.Fatalf("buildRunPlan: %v", err)
 	}
 
-	// Each reasoning agent gets its own per-agent LLM URL and lands in the
-	// gateway's per-agent model map; the root's budget becomes the run's.
-	if got := plan.RootEnv["AGENTCAGE_LLM_URL"]; got != "http://run1-llm:9001/root" {
-		t.Errorf("root LLM url = %q, want http://run1-llm:9001/root", got)
+	// Each reasoning agent's LLM URL carries its unguessable capability token,
+	// not the guessable agent key, and lands in the gateway's per-agent map.
+	rootURL := plan.RootEnv["AGENTCAGE_LLM_URL"]
+	if !strings.HasPrefix(rootURL, "http://run1-llm:9001/") {
+		t.Errorf("root LLM url = %q, want the gateway prefix", rootURL)
+	}
+	rootTok := rootURL[strings.LastIndexByte(rootURL, '/')+1:]
+	if rootTok != plan.LLMTokens["root"] || len(rootTok) != 32 {
+		t.Errorf("root LLM token %q is not the unguessable capability token", rootTok)
 	}
 	if plan.LLMAgents["root"] != "anthropic/claude-3.5" || plan.LLMAgents["sub-ab"] != "openai/gpt-4o" {
 		t.Errorf("LLMAgents = %v", plan.LLMAgents)
@@ -201,8 +206,12 @@ func TestBuildRunPlan_InjectsLLMURLForReasoningAgents(t *testing.T) {
 		t.Errorf("budget = %d, want 5000000", plan.Budget)
 	}
 	for _, a := range plan.Agents {
-		if a.Spec.RunID == "run1-sub-ab" && a.Spec.Env["AGENTCAGE_LLM_URL"] != "http://run1-llm:9001/sub-ab" {
-			t.Errorf("sub LLM url = %q", a.Spec.Env["AGENTCAGE_LLM_URL"])
+		if a.Spec.RunID == "run1-sub-ab" {
+			subURL := a.Spec.Env["AGENTCAGE_LLM_URL"]
+			tok := subURL[strings.LastIndexByte(subURL, '/')+1:]
+			if tok != plan.LLMTokens["sub-ab"] || len(tok) != 32 {
+				t.Errorf("sub LLM url = %q, token must be the capability token", subURL)
+			}
 		}
 	}
 }

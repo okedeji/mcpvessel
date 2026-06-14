@@ -156,7 +156,7 @@ func bootTree(ctx context.Context, in bootInput, plan *runPlan, runID string) (*
 	// skipped entirely when nothing in the tree reasons.
 	if len(plan.LLMAgents) > 0 {
 		budget := resolveBudget(in.Budget, plan.Budget, in.Stderr)
-		llmCfg, err := buildLLMConfig(plan.LLMAgents, budget)
+		llmCfg, err := buildLLMConfig(plan.LLMAgents, plan.LLMTokens, budget)
 		if err != nil {
 			return nil, nil, err
 		}

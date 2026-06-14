@@ -19,11 +19,11 @@ import (
 // agents reach it at on the run network.
 func llmGatewayName(runID string) string { return runID + "-llm" }
 
-// llmURL is the AGENTCAGE_LLM_URL one reasoning agent is injected with: the
-// LLM gateway at that agent's own path, so the gateway knows whose call it is
-// and meters it against that agent.
-func llmURL(runID, agentKey string) string {
-	return "http://" + llmGatewayName(runID) + ":" + env.DefaultLLMGatewayPort + "/" + agentKey
+// llmURL is the AGENTCAGE_LLM_URL one reasoning agent is injected with: the LLM
+// gateway at an unguessable per-agent token, so a sibling cannot forge another
+// agent's path to use its model or misattribute its spend.
+func llmURL(runID, token string) string {
+	return "http://" + llmGatewayName(runID) + ":" + env.DefaultLLMGatewayPort + "/" + token
 }
 
 // rootAgentKey is the agent key for a lone agent and for a tree's root: the
@@ -82,7 +82,7 @@ func resolveBudget(operator, advisory int64, stderr io.Writer) int64 {
 // shared budget. It fails closed: an endpoint that names a secret the store
 // does not have, or a run whose agents reason with no provider configured,
 // stops the boot rather than starting a gateway that can answer nothing.
-func buildLLMConfig(agents map[string]string, budgetMicroUSD int64) (llmgateway.Config, error) {
+func buildLLMConfig(agents, tokens map[string]string, budgetMicroUSD int64) (llmgateway.Config, error) {
 	cfg, err := config.Load()
 	if err != nil {
 		return llmgateway.Config{}, err
@@ -116,7 +116,13 @@ func buildLLMConfig(agents map[string]string, budgetMicroUSD int64) (llmgateway.
 	if len(endpoints) == 0 {
 		return llmgateway.Config{}, fmt.Errorf("a reasoning agent needs an LLM provider: run 'agentcage config provider set'")
 	}
-	return llmgateway.Config{Endpoints: endpoints, Default: def, Agents: agents, BudgetMicroUSD: budgetMicroUSD}, nil
+	// The gateway routes by each agent's capability token but meters by its real
+	// key, so a forged path is unguessable and spend still attributes correctly.
+	routes := make(map[string]llmgateway.AgentRoute, len(agents))
+	for key, model := range agents {
+		routes[tokens[key]] = llmgateway.AgentRoute{Key: key, Model: model}
+	}
+	return llmgateway.Config{Endpoints: endpoints, Default: def, Agents: routes, BudgetMicroUSD: budgetMicroUSD}, nil
 }
 
 // startLLMGateway builds the LLM gateway container from llmCfg, ensures the

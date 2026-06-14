@@ -41,13 +41,13 @@ func TestHandler_RoutesAttachesKeyOverridesModelAndEnforcesBudget(t *testing.T) 
 			"openai": {BaseURL: provider.URL + "/v1", Key: "sk-secret", PriceIn: 2_500_000, PriceOut: 10_000_000},
 		},
 		Default:        "openai",
-		Agents:         map[string]string{"researcher": "openai/gpt-4o"},
+		Agents:         map[string]AgentRoute{"tok-r": {Key: "researcher", Model: "openai/gpt-4o"}},
 		BudgetMicroUSD: 5000,
 	}
 	gw := httptest.NewServer(Handler(cfg, nil))
 	defer gw.Close()
 
-	resp := post(t, gw.URL+"/researcher/chat/completions", `{"model":"placeholder","messages":[]}`)
+	resp := post(t, gw.URL+"/tok-r/chat/completions", `{"model":"placeholder","messages":[]}`)
 	if resp != http.StatusOK {
 		t.Fatalf("first call status = %d, want 200", resp)
 	}
@@ -61,7 +61,7 @@ func TestHandler_RoutesAttachesKeyOverridesModelAndEnforcesBudget(t *testing.T) 
 		t.Errorf("model = %q, want gpt-4o (overridden from placeholder)", seen.model)
 	}
 
-	if resp := post(t, gw.URL+"/researcher/chat/completions", `{"messages":[]}`); resp != http.StatusPaymentRequired {
+	if resp := post(t, gw.URL+"/tok-r/chat/completions", `{"messages":[]}`); resp != http.StatusPaymentRequired {
 		t.Errorf("second call status = %d, want 402 (over budget after metering)", resp)
 	}
 }
@@ -78,19 +78,19 @@ func TestHandler_FallbackUsesDefaultEndpointModel(t *testing.T) {
 			"openai": {BaseURL: provider.URL + "/v1", Key: "k", Model: "gpt-4o-mini"},
 		},
 		Default: "openai",
-		Agents:  map[string]string{"x": "anthropic/claude-3.5"},
+		Agents:  map[string]AgentRoute{"tok-x": {Key: "x", Model: "anthropic/claude-3.5"}},
 	}
 	gw := httptest.NewServer(Handler(cfg, nil))
 	defer gw.Close()
 
-	post(t, gw.URL+"/x/chat/completions", `{"messages":[]}`)
+	post(t, gw.URL+"/tok-x/chat/completions", `{"messages":[]}`)
 	if seen.model != "gpt-4o-mini" {
 		t.Errorf("fallback model = %q, want gpt-4o-mini", seen.model)
 	}
 }
 
 func TestHandler_UnknownAgent(t *testing.T) {
-	gw := httptest.NewServer(Handler(Config{Agents: map[string]string{}}, nil))
+	gw := httptest.NewServer(Handler(Config{Agents: map[string]AgentRoute{}}, nil))
 	defer gw.Close()
 	if got := post(t, gw.URL+"/ghost/chat/completions", `{}`); got != http.StatusNotFound {
 		t.Errorf("unknown agent status = %d, want 404", got)
@@ -109,16 +109,16 @@ func TestHandler_ReportsPerAgentSpend(t *testing.T) {
 			"openai": {BaseURL: provider.URL + "/v1", Key: "k", PriceIn: 2_500_000, PriceOut: 10_000_000},
 		},
 		Default:        "openai",
-		Agents:         map[string]string{"a": "openai/gpt-4o", "b": "openai/gpt-4o"},
+		Agents:         map[string]AgentRoute{"tok-a": {Key: "a", Model: "openai/gpt-4o"}, "tok-b": {Key: "b", Model: "openai/gpt-4o"}},
 		BudgetMicroUSD: 1_000_000,
 	}
 	gw := httptest.NewServer(Handler(cfg, func(r SpendReport) { last, reports = r, reports+1 }))
 	defer gw.Close()
 
-	// 7500 micro-USD per call: agent a twice, agent b once.
-	post(t, gw.URL+"/a/chat/completions", `{"messages":[]}`)
-	post(t, gw.URL+"/a/chat/completions", `{"messages":[]}`)
-	post(t, gw.URL+"/b/chat/completions", `{"messages":[]}`)
+	// Routed by the opaque token, but metered by the real agent key: a twice, b once.
+	post(t, gw.URL+"/tok-a/chat/completions", `{"messages":[]}`)
+	post(t, gw.URL+"/tok-a/chat/completions", `{"messages":[]}`)
+	post(t, gw.URL+"/tok-b/chat/completions", `{"messages":[]}`)
 
 	if reports != 3 {
 		t.Fatalf("report callbacks = %d, want 3", reports)
