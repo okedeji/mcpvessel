@@ -58,7 +58,7 @@ type plannedAgent struct {
 // not collide. Each USES edge becomes one gateway route (target plus deny)
 // and one injected AGENTCAGE_USES_<ALIAS>_URL on the caller pointing at the
 // gateway, so every call in the tree passes the referee that enforces deny.
-func buildRunPlan(tree *runTree, runID string) (*runPlan, error) {
+func buildRunPlan(tree *runTree, runID string, opEnv, opSecrets map[string]string) (*runPlan, error) {
 	network := runID + "-net"
 	gatewayName := runID + "-gw"
 
@@ -123,6 +123,9 @@ func buildRunPlan(tree *runTree, runID string) (*runPlan, error) {
 			agentEnv[env.LLMURL] = llmURL(runID, key)
 			plan.LLMAgents[key] = model
 		}
+		if err := injectOperatorValues(agentEnv, tree.Nodes[key].Manifest, opEnv, opSecrets); err != nil {
+			return nil, fmt.Errorf("agent %s: %w", key, err)
+		}
 		plan.Agents = append(plan.Agents, plannedAgent{
 			Node: tree.Nodes[key],
 			Spec: ContainerSpec{
@@ -140,6 +143,9 @@ func buildRunPlan(tree *runTree, runID string) (*runPlan, error) {
 	if model := nodeModel(tree.Nodes[tree.Root]); model != "" {
 		plan.RootEnv[env.LLMURL] = llmURL(runID, tree.Root)
 		plan.LLMAgents[tree.Root] = model
+	}
+	if err := injectOperatorValues(plan.RootEnv, tree.Nodes[tree.Root].Manifest, opEnv, opSecrets); err != nil {
+		return nil, fmt.Errorf("agent %s: %w", tree.Root, err)
 	}
 
 	cfgJSON, err := json.Marshal(plan.GatewayCfg)

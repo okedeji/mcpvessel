@@ -36,6 +36,12 @@ type RunInput struct {
 	// operator set none and the advisory (or unbounded) applies.
 	Budget int64
 
+	// Env and Secrets are the operator's value pools for the run. The runtime
+	// injects into each agent only the names that agent's manifest declares,
+	// so a value is never visible to an agent that did not ask for it.
+	Env     map[string]string
+	Secrets map[string]string
+
 	// RunID names the containerd container; if empty Run derives one
 	// from the bundle's hash plus a unique suffix.
 	RunID string
@@ -99,6 +105,8 @@ func Run(ctx context.Context, in RunInput) error {
 		ImageRef:  deriveImageRef(in.BundlePath, manifest.FilesHash),
 		RunID:     runID,
 		Budget:    in.Budget,
+		OpEnv:     in.Env,
+		OpSecrets: in.Secrets,
 		Stdout:    in.Stdout,
 		Stderr:    in.Stderr,
 		Verbose:   in.Verbose,
@@ -149,6 +157,11 @@ type bootInput struct {
 	// Budget is the operator's --budget override in micro-USD; 0 falls back
 	// to the agent's advisory BUDGET.
 	Budget int64
+
+	// OpEnv and OpSecrets are the operator's value pools, injected into an
+	// agent only for the names it declares.
+	OpEnv     map[string]string
+	OpSecrets map[string]string
 
 	// NoCache forces every image to rebuild even when a content-addressed
 	// image of the same source is already present.
@@ -235,6 +248,16 @@ func bootAgent(ctx context.Context, in bootInput) (*mcp.Client, func() error, er
 			in.Env = map[string]string{}
 		}
 		in.Env[env.LLMURL] = llmURL(in.RunID, rootAgentKey)
+	}
+
+	// Operator env overrides and declared secrets, scoped to this agent's own
+	// declarations. Runs for a tool collection too, which may declare secrets
+	// without reasoning.
+	if in.Env == nil {
+		in.Env = map[string]string{}
+	}
+	if err := injectOperatorValues(in.Env, in.Manifest, in.OpEnv, in.OpSecrets); err != nil {
+		return nil, nil, fmt.Errorf("agent %s: %w", rootAgentKey, err)
 	}
 
 	client, err := startAttachedAgent(ctx, sess, in, td)

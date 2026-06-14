@@ -34,7 +34,7 @@ func TestBuildRunPlan_SingleEdge(t *testing.T) {
 		},
 	}
 
-	plan, err := buildRunPlan(tree, "run1")
+	plan, err := buildRunPlan(tree, "run1", nil, nil)
 	if err != nil {
 		t.Fatalf("buildRunPlan: %v", err)
 	}
@@ -114,7 +114,7 @@ func TestBuildRunPlan_InjectsLLMURLForReasoningAgents(t *testing.T) {
 		Edges: []usesEdge{{Caller: "root", Sub: "sub-ab", Alias: "sub"}},
 	}
 
-	plan, err := buildRunPlan(tree, "run1")
+	plan, err := buildRunPlan(tree, "run1", nil, nil)
 	if err != nil {
 		t.Fatalf("buildRunPlan: %v", err)
 	}
@@ -149,7 +149,7 @@ func TestBuildRunPlan_WholeAgentBan(t *testing.T) {
 		Edges: []usesEdge{{Caller: "root", Sub: "weird-ab", Alias: "weird"}},
 	}
 
-	plan, err := buildRunPlan(tree, "run1")
+	plan, err := buildRunPlan(tree, "run1", nil, nil)
 	if err != nil {
 		t.Fatalf("buildRunPlan: %v", err)
 	}
@@ -179,7 +179,7 @@ func TestBuildRunPlan_ToolBanMergesIntoEdgeDeny(t *testing.T) {
 		Edges: []usesEdge{{Caller: "root", Sub: "web-1", Alias: "web", Deny: []string{"other"}}},
 	}
 
-	plan, err := buildRunPlan(tree, "run1")
+	plan, err := buildRunPlan(tree, "run1", nil, nil)
 	if err != nil {
 		t.Fatalf("buildRunPlan: %v", err)
 	}
@@ -216,7 +216,7 @@ func TestBuildRunPlan_NestedCallerServesAndCalls(t *testing.T) {
 		},
 	}
 
-	plan, err := buildRunPlan(tree, "run9")
+	plan, err := buildRunPlan(tree, "run9", nil, nil)
 	if err != nil {
 		t.Fatalf("buildRunPlan: %v", err)
 	}

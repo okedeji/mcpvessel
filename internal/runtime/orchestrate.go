@@ -37,7 +37,7 @@ func bootRun(ctx context.Context, in RunInput, boot bootInput, runID string) (*m
 	if err != nil {
 		return nil, nil, err
 	}
-	plan, err := buildRunPlan(tree, runID)
+	plan, err := buildRunPlan(tree, runID, in.Env, in.Secrets)
 	if err != nil {
 		return nil, nil, err
 	}

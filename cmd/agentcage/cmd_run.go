@@ -2,17 +2,21 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/okedeji/agentcage/internal/bundle"
 	"github.com/okedeji/agentcage/internal/runtime"
+	"github.com/okedeji/agentcage/internal/secrets"
 )
 
 func newRunCmd() *cobra.Command {
 	var verbose bool
 	var noCache bool
-	var budget string
+	var budget, envFile string
+	var envFlags, secretFlags []string
 	cmd := &cobra.Command{
 		Use:   "run BUNDLE [PROMPT]",
 		Short: "Run an agent (routes the prompt to its MAIN tool)",
@@ -75,11 +79,17 @@ Examples:
 				}
 				budgetMicros = m
 			}
+			envPool, secretPool, err := buildInputPools(envFlags, envFile, secretFlags)
+			if err != nil {
+				return err
+			}
 			return runtime.Run(cmd.Context(), runtime.RunInput{
 				BundlePath: bundlePath,
 				Tool:       manifest.Agentfile.Main,
 				Args:       toolArgs,
 				Budget:     budgetMicros,
+				Env:        envPool,
+				Secrets:    secretPool,
 				Stdout:     cmd.OutOrStdout(),
 				Stderr:     cmd.ErrOrStderr(),
 				Verbose:    verbose,
@@ -90,5 +100,59 @@ Examples:
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "stream the underlying provisioner output during first-time setup")
 	cmd.Flags().BoolVar(&noCache, "no-cache", false, "rebuild every image from scratch, ignoring cached and already-built images")
 	cmd.Flags().StringVar(&budget, "budget", "", "cap the run's LLM spend in USD, e.g. 5.00 (overrides the agent's advisory BUDGET)")
+	cmd.Flags().StringArrayVar(&envFlags, "env", nil, "supply an env value: KEY=VALUE, or KEY to pass it through from your environment (repeatable)")
+	cmd.Flags().StringVar(&envFile, "env-file", "", "read env values (KEY=VALUE per line) from a file")
+	cmd.Flags().StringArrayVar(&secretFlags, "secret", nil, "supply a secret NAME, resolved from your environment or the agentcage secret store (repeatable)")
 	return cmd
+}
+
+// buildInputPools resolves the operator's --env / --env-file / --secret flags
+// into the value pools the runtime injects per agent. Secret values come from
+// the environment or the agentcage store, never the command line, so they
+// stay out of the process table. A --secret with no value anywhere is a
+// fail-closed error.
+func buildInputPools(envFlags []string, envFile string, secretFlags []string) (envPool, secretPool map[string]string, err error) {
+	envPool = map[string]string{}
+	if envFile != "" {
+		data, err := os.ReadFile(envFile)
+		if err != nil {
+			return nil, nil, fmt.Errorf("reading --env-file: %w", err)
+		}
+		for _, line := range strings.Split(string(data), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			k, v, ok := strings.Cut(line, "=")
+			if !ok {
+				return nil, nil, fmt.Errorf("--env-file line %q is not KEY=VALUE", line)
+			}
+			envPool[k] = v
+		}
+	}
+	for _, e := range envFlags {
+		if k, v, ok := strings.Cut(e, "="); ok {
+			envPool[k] = v
+		} else {
+			envPool[e] = os.Getenv(e)
+		}
+	}
+
+	secretPool = map[string]string{}
+	if len(secretFlags) > 0 {
+		store, err := secrets.Load()
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, name := range secretFlags {
+			if v, ok := os.LookupEnv(name); ok {
+				secretPool[name] = v
+			} else if v, ok := store.Get(name); ok {
+				secretPool[name] = v
+			} else {
+				return nil, nil, fmt.Errorf("--secret %q is not in your environment or the secret store", name)
+			}
+		}
+	}
+	return envPool, secretPool, nil
 }
