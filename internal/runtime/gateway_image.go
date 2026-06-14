@@ -103,11 +103,12 @@ func BuildGatewayImage(ctx context.Context, bk *BuildKit, noCache bool, w io.Wri
 }
 
 // gatewayDockerfile is the definition the gateway image builds from: the
-// static binary on an empty base, entered as the gateway. Scratch keeps
-// the image to one layer with no shell or package surface inside the run
-// network.
+// static binary on an empty base. The entrypoint is the bare binary; the
+// runtime passes the mode (mcp-gateway, llm-gateway, egress) as container
+// args, so one image serves all three. Scratch keeps the image to one layer
+// with no shell or package surface inside the run network.
 func gatewayDockerfile() string {
 	return "FROM scratch\n" +
 		"COPY agentcage /agentcage\n" +
-		"ENTRYPOINT [\"/agentcage\", \"mcp-gateway\"]\n"
+		"ENTRYPOINT [\"/agentcage\"]\n"
 }

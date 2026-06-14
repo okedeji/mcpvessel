@@ -15,12 +15,12 @@ func TestGatewayImageRef_TaggedByVersion(t *testing.T) {
 	}
 }
 
-func TestGatewayDockerfile_ScratchEntersGateway(t *testing.T) {
+func TestGatewayDockerfile_ScratchEntersBareBinary(t *testing.T) {
 	df := gatewayDockerfile()
 	for _, want := range []string{
 		"FROM scratch",
 		"COPY agentcage /agentcage",
-		`ENTRYPOINT ["/agentcage", "mcp-gateway"]`,
+		`ENTRYPOINT ["/agentcage"]`,
 	} {
 		if !strings.Contains(df, want) {
 			t.Errorf("gateway definition missing %q:\n%s", want, df)

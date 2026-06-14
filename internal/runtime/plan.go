@@ -128,6 +128,7 @@ func buildRunPlan(tree *runTree, runID string) (*runPlan, error) {
 	plan.Gateway = ContainerSpec{
 		RunID:    gatewayName,
 		ImageRef: GatewayImageRef(),
+		Args:     []string{"mcp-gateway"},
 		Network:  network,
 		Env: map[string]string{
 			env.MCPConfig: string(cfgJSON),

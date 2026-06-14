@@ -79,6 +79,9 @@ func TestBuildRunPlan_SingleEdge(t *testing.T) {
 	if got := plan.Gateway.Env["AGENTCAGE_MCP_ADDR"]; got != ":9000" {
 		t.Errorf("gateway addr = %q, want :9000", got)
 	}
+	if len(plan.Gateway.Args) != 1 || plan.Gateway.Args[0] != "mcp-gateway" {
+		t.Errorf("gateway args = %v, want [mcp-gateway]", plan.Gateway.Args)
+	}
 	// The routing table the gateway serves round-trips back to what we
 	// planned, so the container and the plan cannot disagree.
 	var served gateway.Config

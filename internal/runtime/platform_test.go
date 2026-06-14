@@ -62,11 +62,25 @@ func TestNerdctlRunArgs_DetachedNetworkedWithEnv(t *testing.T) {
 		},
 	}), " ")
 	// Env keys are sorted, so the order is deterministic regardless of map
-	// iteration. The image ref is always last.
+	// iteration. With no mode args the image ref is last.
 	want := "run --name cg-sub -d --network run-net " +
 		"--env AGENTCAGE_SERVE_HTTP=:8000 " +
 		"--env AGENTCAGE_USES_ECHO_URL=http://gw/echo/mcp " +
 		"agentcage/sub:latest"
+	if got != want {
+		t.Errorf("nerdctlRunArgs = %q, want %q", got, want)
+	}
+}
+
+func TestNerdctlRunArgs_ModeArgsFollowImage(t *testing.T) {
+	got := strings.Join(nerdctlRunArgs(ContainerSpec{
+		RunID:    "run-gw",
+		ImageRef: "agentcage/gateway:0.1.0",
+		Args:     []string{"mcp-gateway"},
+		Network:  "run-net",
+		Detached: true,
+	}), " ")
+	want := "run --name run-gw -d --network run-net agentcage/gateway:0.1.0 mcp-gateway"
 	if got != want {
 		t.Errorf("nerdctlRunArgs = %q, want %q", got, want)
 	}

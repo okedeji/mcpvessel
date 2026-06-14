@@ -54,6 +54,7 @@ type Provisioner interface {
 type ContainerSpec struct {
 	RunID    string
 	ImageRef string
+	Args     []string // command args after the image; the gateway image's mode (mcp-gateway, llm-gateway, egress)
 	Network  string
 	Env      map[string]string
 	Detached bool
@@ -83,7 +84,8 @@ func nerdctlRunArgs(spec ContainerSpec) []string {
 	for _, k := range keys {
 		args = append(args, "--env", k+"="+spec.Env[k])
 	}
-	return append(args, spec.ImageRef)
+	args = append(args, spec.ImageRef)
+	return append(args, spec.Args...)
 }
 
 // DefaultProvisioner returns the right Provisioner for the host OS,
