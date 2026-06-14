@@ -44,7 +44,7 @@ func TestHandler_RoutesAttachesKeyOverridesModelAndEnforcesBudget(t *testing.T) 
 		Agents:         map[string]string{"researcher": "openai/gpt-4o"},
 		BudgetMicroUSD: 5000,
 	}
-	gw := httptest.NewServer(Handler(cfg))
+	gw := httptest.NewServer(Handler(cfg, nil))
 	defer gw.Close()
 
 	resp := post(t, gw.URL+"/researcher/chat/completions", `{"model":"placeholder","messages":[]}`)
@@ -80,7 +80,7 @@ func TestHandler_FallbackUsesDefaultEndpointModel(t *testing.T) {
 		Default: "openai",
 		Agents:  map[string]string{"x": "anthropic/claude-3.5"},
 	}
-	gw := httptest.NewServer(Handler(cfg))
+	gw := httptest.NewServer(Handler(cfg, nil))
 	defer gw.Close()
 
 	post(t, gw.URL+"/x/chat/completions", `{"messages":[]}`)
@@ -90,10 +90,72 @@ func TestHandler_FallbackUsesDefaultEndpointModel(t *testing.T) {
 }
 
 func TestHandler_UnknownAgent(t *testing.T) {
-	gw := httptest.NewServer(Handler(Config{Agents: map[string]string{}}))
+	gw := httptest.NewServer(Handler(Config{Agents: map[string]string{}}, nil))
 	defer gw.Close()
 	if got := post(t, gw.URL+"/ghost/chat/completions", `{}`); got != http.StatusNotFound {
 		t.Errorf("unknown agent status = %d, want 404", got)
+	}
+}
+
+func TestHandler_ReportsPerAgentSpend(t *testing.T) {
+	var seen providerCall
+	provider := fakeProvider(t, &seen)
+	defer provider.Close()
+
+	var last SpendReport
+	reports := 0
+	cfg := Config{
+		Endpoints: map[string]Endpoint{
+			"openai": {BaseURL: provider.URL + "/v1", Key: "k", PriceIn: 2_500_000, PriceOut: 10_000_000},
+		},
+		Default:        "openai",
+		Agents:         map[string]string{"a": "openai/gpt-4o", "b": "openai/gpt-4o"},
+		BudgetMicroUSD: 1_000_000,
+	}
+	gw := httptest.NewServer(Handler(cfg, func(r SpendReport) { last, reports = r, reports+1 }))
+	defer gw.Close()
+
+	// 7500 micro-USD per call: agent a twice, agent b once.
+	post(t, gw.URL+"/a/chat/completions", `{"messages":[]}`)
+	post(t, gw.URL+"/a/chat/completions", `{"messages":[]}`)
+	post(t, gw.URL+"/b/chat/completions", `{"messages":[]}`)
+
+	if reports != 3 {
+		t.Fatalf("report callbacks = %d, want 3", reports)
+	}
+	if last.TotalMicroUSD != 22_500 {
+		t.Errorf("total = %d, want 22500", last.TotalMicroUSD)
+	}
+	if last.BudgetMicroUSD != 1_000_000 {
+		t.Errorf("budget = %d, want 1000000", last.BudgetMicroUSD)
+	}
+	if got := last.Agents["a"]; got.SpentMicroUSD != 15_000 || got.Calls != 2 {
+		t.Errorf("agent a = %+v, want spent 15000 calls 2", got)
+	}
+	if got := last.Agents["b"]; got.SpentMicroUSD != 7_500 || got.Calls != 1 {
+		t.Errorf("agent b = %+v, want spent 7500 calls 1", got)
+	}
+}
+
+func TestSpendLine_RoundTrips(t *testing.T) {
+	want := SpendReport{
+		TotalMicroUSD:  22_500,
+		BudgetMicroUSD: 1_000_000,
+		Agents:         map[string]AgentSpend{"a": {SpentMicroUSD: 15_000, Calls: 2}},
+	}
+	var buf strings.Builder
+	WriteSpendLine(&buf, SpendReport{TotalMicroUSD: 1}) // an earlier, stale snapshot
+	WriteSpendLine(&buf, want)
+
+	got, ok := ParseSpendLine("some other gateway log line\n" + buf.String())
+	if !ok {
+		t.Fatal("ParseSpendLine found nothing")
+	}
+	if got.TotalMicroUSD != want.TotalMicroUSD || got.Agents["a"].Calls != 2 {
+		t.Errorf("parsed last snapshot = %+v, want %+v", got, want)
+	}
+	if _, ok := ParseSpendLine("nothing here\n"); ok {
+		t.Error("ParseSpendLine reported a snapshot from logs with none")
 	}
 }
 

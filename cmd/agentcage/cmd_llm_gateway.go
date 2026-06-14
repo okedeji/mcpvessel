@@ -34,7 +34,8 @@ func newLLMGatewayCmd() *cobra.Command {
 			if addr == "" {
 				addr = ":" + env.DefaultLLMGatewayPort
 			}
-			srv := &http.Server{Addr: addr, Handler: llmgateway.Handler(cfg)}
+			report := func(r llmgateway.SpendReport) { llmgateway.WriteSpendLine(os.Stdout, r) }
+			srv := &http.Server{Addr: addr, Handler: llmgateway.Handler(cfg, report)}
 			return srv.ListenAndServe()
 		},
 	}

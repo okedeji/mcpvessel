@@ -9,14 +9,48 @@ package llmgateway
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"strconv"
 	"strings"
-	"sync/atomic"
+	"sync"
 )
+
+// SpendLogPrefix marks a spend snapshot line in the gateway's stdout. The
+// gateway has no graceful shutdown (the runtime reaps it with rm -f), so it
+// logs the cumulative total after every metered call and the runtime reads the
+// last such line off the captured logs at teardown.
+const SpendLogPrefix = "AGENTCAGE_SPEND "
+
+// WriteSpendLine emits one snapshot as a prefixed JSON line. The cmd wires it
+// to the gateway's stdout as the Handler's report callback.
+func WriteSpendLine(w io.Writer, r SpendReport) {
+	b, err := json.Marshal(r)
+	if err != nil {
+		return
+	}
+	_, _ = fmt.Fprintln(w, SpendLogPrefix+string(b))
+}
+
+// ParseSpendLine returns the last snapshot in the gateway's log output. found
+// is false when no metered call happened (no line was ever written), which the
+// runtime reports as a run that did no measurable spend.
+func ParseSpendLine(logs string) (report SpendReport, found bool) {
+	for _, line := range strings.Split(logs, "\n") {
+		s, ok := strings.CutPrefix(strings.TrimSpace(line), SpendLogPrefix)
+		if !ok {
+			continue
+		}
+		var r SpendReport
+		if json.Unmarshal([]byte(s), &r) == nil {
+			report, found = r, true
+		}
+	}
+	return report, found
+}
 
 // Secret is a provider key. It redacts in logs (%v, %s, %#v) but marshals to
 // its real value, because the Config JSON is the secure transport into this
@@ -50,6 +84,21 @@ type Config struct {
 	BudgetMicroUSD int64               `json:"budget_micro_usd,omitempty"`
 }
 
+// SpendReport is the cumulative spend the gateway emits after each metered
+// call, the run's whole accounting in one snapshot. The runtime reads the last
+// one off the gateway's logs at teardown to print the operator's summary.
+type SpendReport struct {
+	TotalMicroUSD  int64                 `json:"total_micro_usd"`
+	BudgetMicroUSD int64                 `json:"budget_micro_usd"`
+	Agents         map[string]AgentSpend `json:"agents"`
+}
+
+// AgentSpend is one agent's slice of the shared budget.
+type AgentSpend struct {
+	SpentMicroUSD int64 `json:"spent_micro_usd"`
+	Calls         int64 `json:"calls"`
+}
+
 // route is the per-agent decision the gateway compiles once at boot: which
 // endpoint to proxy to and which model name to put in the request.
 type route struct {
@@ -59,9 +108,16 @@ type route struct {
 
 // Handler resolves each agent to an endpoint and model once, then proxies
 // /<agentKey>/... to that endpoint with the key attached, metering cost into
-// the shared budget and refusing new calls once it is spent.
-func Handler(cfg Config) http.Handler {
-	var spent atomic.Int64
+// the shared budget and refusing new calls once it is spent. report, when
+// non-nil, receives the cumulative spend after each metered call; the cmd
+// wires it to the gateway's stdout so the runtime can read the run's total.
+func Handler(cfg Config, report func(SpendReport)) http.Handler {
+	m := &meter{
+		budget: cfg.BudgetMicroUSD,
+		agents: map[string]int64{},
+		calls:  map[string]int64{},
+		report: report,
+	}
 	routes := make(map[string]route, len(cfg.Agents))
 	for agentKey, advisory := range cfg.Agents {
 		provider, model := splitModel(advisory)
@@ -74,7 +130,7 @@ func Handler(cfg Config) http.Handler {
 				model = ep.Model
 			}
 		}
-		routes[agentKey] = route{proxy: newProxy(ep, &spent), model: model}
+		routes[agentKey] = route{proxy: newProxy(ep, m, agentKey), model: model}
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -86,7 +142,7 @@ func Handler(cfg Config) http.Handler {
 		// The gateway is on the wire, so the check is honest: a call only
 		// proceeds while budget remains, and metering happens on the way back.
 		// Worst case is one in-flight call's overshoot.
-		if cfg.BudgetMicroUSD > 0 && spent.Load() >= cfg.BudgetMicroUSD {
+		if cfg.BudgetMicroUSD > 0 && m.spentTotal() >= cfg.BudgetMicroUSD {
 			writeError(w, http.StatusPaymentRequired, "over-budget: the run's LLM budget is spent")
 			return
 		}
@@ -105,10 +161,49 @@ func Handler(cfg Config) http.Handler {
 	})
 }
 
+// meter accumulates per-agent and total spend behind one lock, shared across
+// the run's agents because the gateway serves the whole tree against one
+// budget. It snapshots and reports after each debit so the latest log line is
+// always the run's current total.
+type meter struct {
+	mu     sync.Mutex
+	budget int64
+	total  int64
+	agents map[string]int64
+	calls  map[string]int64
+	report func(SpendReport)
+}
+
+func (m *meter) spentTotal() int64 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.total
+}
+
+func (m *meter) debit(agentKey string, ep Endpoint, u usage) {
+	cost := u.PromptTokens*ep.PriceIn/1_000_000 + u.CompletionTokens*ep.PriceOut/1_000_000
+	m.mu.Lock()
+	m.total += cost
+	m.agents[agentKey] += cost
+	m.calls[agentKey]++
+	snap := SpendReport{
+		TotalMicroUSD:  m.total,
+		BudgetMicroUSD: m.budget,
+		Agents:         make(map[string]AgentSpend, len(m.agents)),
+	}
+	for k, spent := range m.agents {
+		snap.Agents[k] = AgentSpend{SpentMicroUSD: spent, Calls: m.calls[k]}
+	}
+	m.mu.Unlock()
+	if m.report != nil {
+		m.report(snap)
+	}
+}
+
 // newProxy builds the reverse proxy for one endpoint: it forwards to the
 // endpoint's base URL with the agent path segment dropped, attaches the key,
 // streams responses immediately, and meters cost off the way back.
-func newProxy(ep Endpoint, spent *atomic.Int64) *httputil.ReverseProxy {
+func newProxy(ep Endpoint, m *meter, agentKey string) *httputil.ReverseProxy {
 	target, _ := url.Parse(ep.BaseURL)
 	return &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
@@ -119,7 +214,7 @@ func newProxy(ep Endpoint, spent *atomic.Int64) *httputil.ReverseProxy {
 			pr.Out.Header.Set("Authorization", "Bearer "+string(ep.Key))
 		},
 		FlushInterval:  -1,
-		ModifyResponse: meterResponse(ep, spent),
+		ModifyResponse: meterResponse(ep, m, agentKey),
 	}
 }
 
@@ -134,10 +229,10 @@ type usage struct {
 // meterResponse debits the shared counter from the response's usage block.
 // A non-streaming response carries usage in its JSON body; a streamed one
 // carries it in the final SSE chunk, scanned as it flows to the client.
-func meterResponse(ep Endpoint, spent *atomic.Int64) func(*http.Response) error {
+func meterResponse(ep Endpoint, m *meter, agentKey string) func(*http.Response) error {
 	return func(resp *http.Response) error {
 		if strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream") {
-			resp.Body = &streamMeter{src: resp.Body, ep: ep, spent: spent}
+			resp.Body = &streamMeter{src: resp.Body, ep: ep, meter: m, agentKey: agentKey}
 			return nil
 		}
 		body, err := io.ReadAll(resp.Body)
@@ -149,7 +244,7 @@ func meterResponse(ep Endpoint, spent *atomic.Int64) func(*http.Response) error 
 			Usage usage `json:"usage"`
 		}
 		if json.Unmarshal(body, &parsed) == nil {
-			debit(spent, ep, parsed.Usage)
+			m.debit(agentKey, ep, parsed.Usage)
 		}
 		resp.Body = io.NopCloser(bytes.NewReader(body))
 		resp.ContentLength = int64(len(body))
@@ -158,23 +253,17 @@ func meterResponse(ep Endpoint, spent *atomic.Int64) func(*http.Response) error 
 	}
 }
 
-func debit(spent *atomic.Int64, ep Endpoint, u usage) {
-	cost := u.PromptTokens*ep.PriceIn/1_000_000 + u.CompletionTokens*ep.PriceOut/1_000_000
-	if cost > 0 {
-		spent.Add(cost)
-	}
-}
-
 // streamMeter forwards an SSE body to the client unchanged while scanning it
 // for the usage chunk, so a streamed call is metered without buffering. The
 // gateway asks for usage by injecting stream_options.include_usage on the way
 // in (rewriteModel), so a well-behaved endpoint sends it in the last chunk.
 type streamMeter struct {
-	src   io.ReadCloser
-	ep    Endpoint
-	spent *atomic.Int64
-	buf   bytes.Buffer
-	done  bool
+	src      io.ReadCloser
+	ep       Endpoint
+	meter    *meter
+	agentKey string
+	buf      bytes.Buffer
+	done     bool
 }
 
 func (m *streamMeter) Read(p []byte) (int, error) {
@@ -203,7 +292,7 @@ func (m *streamMeter) scan(b []byte) {
 			Usage *usage `json:"usage"`
 		}
 		if json.Unmarshal(data, &parsed) == nil && parsed.Usage != nil {
-			debit(m.spent, m.ep, *parsed.Usage)
+			m.meter.debit(m.agentKey, m.ep, *parsed.Usage)
 			m.done = true
 			return
 		}
