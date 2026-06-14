@@ -20,19 +20,53 @@ const (
 	Home = Prefix + "HOME"
 )
 
-// Gateway variables the runtime injects into the gateway container.
+// MCP gateway variables the runtime injects into the MCP gateway container.
 const (
-	// GatewayConfig is the JSON routing table the gateway serves.
-	GatewayConfig = Prefix + "GATEWAY_CONFIG"
-	// GatewayAddr is the gateway's listen address.
-	GatewayAddr = Prefix + "GATEWAY_ADDR"
+	// MCPConfig is the JSON routing table the MCP gateway serves.
+	MCPConfig = Prefix + "MCP_CONFIG"
+	// MCPAddr is the MCP gateway's listen address.
+	MCPAddr = Prefix + "MCP_ADDR"
 )
 
-// DefaultGatewayPort is where the gateway listens inside the run network
-// and the port the injected AGENTCAGE_USES_<NAME>_URL values point at. The
-// gateway command and the orchestrator both default to it so the listen
-// side and the call side cannot drift.
-const DefaultGatewayPort = "9000"
+// DefaultMCPGatewayPort is where the MCP gateway listens inside the run
+// network and the port the injected AGENTCAGE_USES_<NAME>_URL values point
+// at. The mcp-gateway command and the orchestrator both default to it so the
+// listen side and the call side cannot drift.
+const DefaultMCPGatewayPort = "9000"
+
+// LLM gateway variables. LLMURL is the only one a reasoning cage sees: an
+// OpenAI-compatible endpoint it calls instead of a provider directly.
+// LLMConfig and LLMAddr go into the LLM gateway container, which holds the
+// provider keys and meters cost so the agent never sees a key.
+const (
+	// LLMURL is the per-agent OpenAI-compatible endpoint the runtime injects
+	// into a reasoning cage. The agent side reads it; the runtime points it
+	// at the LLM gateway with the agent's own path.
+	LLMURL = Prefix + "LLM_URL"
+	// LLMConfig is the JSON endpoint set, pricing, budget, and per-agent
+	// models the LLM gateway serves.
+	LLMConfig = Prefix + "LLM_CONFIG"
+	// LLMAddr is the LLM gateway's listen address.
+	LLMAddr = Prefix + "LLM_ADDR"
+)
+
+// DefaultLLMGatewayPort is where the LLM gateway listens, distinct from the
+// MCP gateway's port so both can share the run network.
+const DefaultLLMGatewayPort = "9001"
+
+// Egress proxy variables the runtime injects into the egress container,
+// provisioned only when some agent declares EGRESS allow:. The proxy filters
+// outbound connections by host and holds no secrets.
+const (
+	// EgressConfig is the JSON per-agent host allow-list the proxy enforces.
+	EgressConfig = Prefix + "EGRESS_CONFIG"
+	// EgressAddr is the egress proxy's listen address.
+	EgressAddr = Prefix + "EGRESS_ADDR"
+)
+
+// DefaultEgressPort is where the egress proxy listens, distinct from the two
+// gateways so all three share the run network without colliding.
+const DefaultEgressPort = "9002"
 
 // Sub-agent routing variables the runtime injects into each agent in a
 // USES tree.

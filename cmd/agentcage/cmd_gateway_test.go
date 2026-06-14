@@ -6,14 +6,14 @@ import (
 )
 
 func TestGatewayConfigFromEnv_RequiresConfig(t *testing.T) {
-	t.Setenv("AGENTCAGE_GATEWAY_CONFIG", "")
+	t.Setenv("AGENTCAGE_MCP_CONFIG", "")
 	if _, err := gatewayConfigFromEnv(); err == nil {
-		t.Fatal("expected an error when AGENTCAGE_GATEWAY_CONFIG is unset")
+		t.Fatal("expected an error when AGENTCAGE_MCP_CONFIG is unset")
 	}
 }
 
 func TestGatewayConfigFromEnv_ParsesEdges(t *testing.T) {
-	t.Setenv("AGENTCAGE_GATEWAY_CONFIG", `{"edges":{"web":{"target":"http://web:8000/mcp","deny":["delete_all"]}}}`)
+	t.Setenv("AGENTCAGE_MCP_CONFIG", `{"edges":{"web":{"target":"http://web:8000/mcp","deny":["delete_all"]}}}`)
 	cfg, err := gatewayConfigFromEnv()
 	if err != nil {
 		t.Fatalf("gatewayConfigFromEnv: %v", err)
@@ -28,7 +28,7 @@ func TestGatewayConfigFromEnv_ParsesEdges(t *testing.T) {
 }
 
 func TestGatewayConfigFromEnv_RejectsGarbage(t *testing.T) {
-	t.Setenv("AGENTCAGE_GATEWAY_CONFIG", "not json")
+	t.Setenv("AGENTCAGE_MCP_CONFIG", "not json")
 	if _, err := gatewayConfigFromEnv(); err == nil || !strings.Contains(err.Error(), "parsing") {
 		t.Fatalf("expected a parse error, got %v", err)
 	}

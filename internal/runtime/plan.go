@@ -89,7 +89,7 @@ func buildRunPlan(tree *runTree, runID string) (*runPlan, error) {
 
 		// A banned edge still gets its URL injected, so the caller reaches the
 		// gateway and gets a clean banned error rather than a missing variable.
-		url := "http://" + gatewayName + ":" + env.DefaultGatewayPort + "/" + edgeKey + mcpServePath
+		url := "http://" + gatewayName + ":" + env.DefaultMCPGatewayPort + "/" + edgeKey + mcpServePath
 		if e.Caller == tree.Root {
 			plan.RootEnv[env.UsesURL(e.Alias)] = url
 			continue
@@ -130,8 +130,8 @@ func buildRunPlan(tree *runTree, runID string) (*runPlan, error) {
 		ImageRef: GatewayImageRef(),
 		Network:  network,
 		Env: map[string]string{
-			env.GatewayConfig: string(cfgJSON),
-			env.GatewayAddr:   ":" + env.DefaultGatewayPort,
+			env.MCPConfig: string(cfgJSON),
+			env.MCPAddr:   ":" + env.DefaultMCPGatewayPort,
 		},
 		Detached: true,
 	}

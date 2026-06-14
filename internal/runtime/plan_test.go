@@ -76,13 +76,13 @@ func TestBuildRunPlan_SingleEdge(t *testing.T) {
 		t.Errorf("edge deny = %v, want [danger]", edge.Deny)
 	}
 
-	if got := plan.Gateway.Env["AGENTCAGE_GATEWAY_ADDR"]; got != ":9000" {
+	if got := plan.Gateway.Env["AGENTCAGE_MCP_ADDR"]; got != ":9000" {
 		t.Errorf("gateway addr = %q, want :9000", got)
 	}
 	// The routing table the gateway serves round-trips back to what we
 	// planned, so the container and the plan cannot disagree.
 	var served gateway.Config
-	if err := json.Unmarshal([]byte(plan.Gateway.Env["AGENTCAGE_GATEWAY_CONFIG"]), &served); err != nil {
+	if err := json.Unmarshal([]byte(plan.Gateway.Env["AGENTCAGE_MCP_CONFIG"]), &served); err != nil {
 		t.Fatalf("gateway config not valid json: %v", err)
 	}
 	if served.Edges["sub-0"].Target != edge.Target {

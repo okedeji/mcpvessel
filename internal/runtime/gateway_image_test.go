@@ -20,7 +20,7 @@ func TestGatewayDockerfile_ScratchEntersGateway(t *testing.T) {
 	for _, want := range []string{
 		"FROM scratch",
 		"COPY agentcage /agentcage",
-		`ENTRYPOINT ["/agentcage", "gateway"]`,
+		`ENTRYPOINT ["/agentcage", "mcp-gateway"]`,
 	} {
 		if !strings.Contains(df, want) {
 			t.Errorf("gateway definition missing %q:\n%s", want, df)

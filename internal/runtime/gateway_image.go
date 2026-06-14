@@ -109,5 +109,5 @@ func BuildGatewayImage(ctx context.Context, bk *BuildKit, noCache bool, w io.Wri
 func gatewayDockerfile() string {
 	return "FROM scratch\n" +
 		"COPY agentcage /agentcage\n" +
-		"ENTRYPOINT [\"/agentcage\", \"gateway\"]\n"
+		"ENTRYPOINT [\"/agentcage\", \"mcp-gateway\"]\n"
 }

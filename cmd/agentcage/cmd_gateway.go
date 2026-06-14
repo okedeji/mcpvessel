@@ -17,7 +17,7 @@ import (
 // and listen address arrive as environment the runtime injects.
 func newGatewayCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:    "gateway",
+		Use:    "mcp-gateway",
 		Short:  "Run the in-run MCP gateway (internal)",
 		Hidden: true,
 		Args:   cobra.NoArgs,
@@ -26,9 +26,9 @@ func newGatewayCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			addr := os.Getenv(env.GatewayAddr)
+			addr := os.Getenv(env.MCPAddr)
 			if addr == "" {
-				addr = ":" + env.DefaultGatewayPort
+				addr = ":" + env.DefaultMCPGatewayPort
 			}
 			srv := &http.Server{Addr: addr, Handler: gateway.Handler(cfg)}
 			return srv.ListenAndServe()
@@ -39,9 +39,9 @@ func newGatewayCmd() *cobra.Command {
 
 // gatewayConfigFromEnv reads the routing table the runtime injected.
 func gatewayConfigFromEnv() (gateway.Config, error) {
-	raw := os.Getenv(env.GatewayConfig)
+	raw := os.Getenv(env.MCPConfig)
 	if raw == "" {
-		return gateway.Config{}, fmt.Errorf("%s is required", env.GatewayConfig)
+		return gateway.Config{}, fmt.Errorf("%s is required", env.MCPConfig)
 	}
 	var cfg gateway.Config
 	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
