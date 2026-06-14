@@ -124,7 +124,8 @@ func bootTree(ctx context.Context, in bootInput, plan *runPlan, runID string) (*
 		}
 		td.push(func() error { return removeNetwork(sess.provisioner, egressNet) })
 
-		llmCfg, err := buildLLMConfig(plan.LLMAgents, plan.Budget)
+		budget := resolveBudget(in.Budget, plan.Budget, in.Stderr)
+		llmCfg, err := buildLLMConfig(plan.LLMAgents, budget)
 		if err != nil {
 			return nil, nil, err
 		}

@@ -12,6 +12,7 @@ import (
 func newRunCmd() *cobra.Command {
 	var verbose bool
 	var noCache bool
+	var budget string
 	cmd := &cobra.Command{
 		Use:   "run BUNDLE [PROMPT]",
 		Short: "Run an agent (routes the prompt to its MAIN tool)",
@@ -66,10 +67,19 @@ Examples:
 					{"role": "user", "content": prompt},
 				}
 			}
+			var budgetMicros int64
+			if budget != "" {
+				m, err := parseUSDMicros(budget)
+				if err != nil {
+					return fmt.Errorf("--budget %q is not a USD amount", budget)
+				}
+				budgetMicros = m
+			}
 			return runtime.Run(cmd.Context(), runtime.RunInput{
 				BundlePath: bundlePath,
 				Tool:       manifest.Agentfile.Main,
 				Args:       toolArgs,
+				Budget:     budgetMicros,
 				Stdout:     cmd.OutOrStdout(),
 				Stderr:     cmd.ErrOrStderr(),
 				Verbose:    verbose,
@@ -79,5 +89,6 @@ Examples:
 	}
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "stream the underlying provisioner output during first-time setup")
 	cmd.Flags().BoolVar(&noCache, "no-cache", false, "rebuild every image from scratch, ignoring cached and already-built images")
+	cmd.Flags().StringVar(&budget, "budget", "", "cap the run's LLM spend in USD, e.g. 5.00 (overrides the agent's advisory BUDGET)")
 	return cmd
 }

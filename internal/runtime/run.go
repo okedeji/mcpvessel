@@ -31,6 +31,11 @@ type RunInput struct {
 	// the MCP client and validated against the agent's input schema.
 	Args map[string]any
 
+	// Budget is the operator's concrete cap on the run's LLM spend, in
+	// micro-USD. It overrides the agent's advisory BUDGET; 0 means the
+	// operator set none and the advisory (or unbounded) applies.
+	Budget int64
+
 	// RunID names the containerd container; if empty Run derives one
 	// from the bundle's hash plus a unique suffix.
 	RunID string
@@ -93,6 +98,7 @@ func Run(ctx context.Context, in RunInput) error {
 		SourceDir: srcDir,
 		ImageRef:  deriveImageRef(in.BundlePath, manifest.FilesHash),
 		RunID:     runID,
+		Budget:    in.Budget,
 		Stdout:    in.Stdout,
 		Stderr:    in.Stderr,
 		Verbose:   in.Verbose,
@@ -139,6 +145,10 @@ type bootInput struct {
 	// the default network with no injected environment.
 	Network string
 	Env     map[string]string
+
+	// Budget is the operator's --budget override in micro-USD; 0 falls back
+	// to the agent's advisory BUDGET.
+	Budget int64
 
 	// NoCache forces every image to rebuild even when a content-addressed
 	// image of the same source is already present.
@@ -212,7 +222,8 @@ func bootAgent(ctx context.Context, in bootInput) (*mcp.Client, func() error, er
 		}
 		td.push(func() error { return removeNetwork(sess.provisioner, egressNet) })
 
-		llmCfg, err := buildLLMConfig(map[string]string{rootAgentKey: model}, manifestBudget(in.Manifest))
+		budget := resolveBudget(in.Budget, manifestBudget(in.Manifest), in.Stderr)
+		llmCfg, err := buildLLMConfig(map[string]string{rootAgentKey: model}, budget)
 		if err != nil {
 			return nil, nil, err
 		}

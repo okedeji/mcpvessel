@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 
 	"github.com/okedeji/agentcage/internal/bundle"
 	"github.com/okedeji/agentcage/internal/config"
@@ -58,6 +59,20 @@ func nodeBudget(n *agentNode) int64 {
 		return 0
 	}
 	return manifestBudget(n.Manifest)
+}
+
+// resolveBudget picks the run's shared budget: the operator's --budget when
+// set, otherwise the agent's advisory. It warns when a reasoning run has
+// neither, since that run is unbounded. It is called only on the reasoning
+// path, so the warning never fires for a tool collection.
+func resolveBudget(operator, advisory int64, stderr io.Writer) int64 {
+	if operator > 0 {
+		return operator
+	}
+	if advisory == 0 {
+		_, _ = fmt.Fprintln(stderr, "warning: this run has no LLM budget; spend is unbounded. Set --budget or the agent's BUDGET directive.")
+	}
+	return advisory
 }
 
 // buildLLMConfig assembles the LLM gateway's config from the operator's
