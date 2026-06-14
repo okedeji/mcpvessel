@@ -47,3 +47,15 @@ func TestAgentCap_RuntimeDefaultWhenUnset(t *testing.T) {
 		t.Errorf("cap = %+v, want runtime default %+v", cap, defaultAgentCap)
 	}
 }
+
+func TestOverlayCap_RunFlagsOverrideDefaultPerField(t *testing.T) {
+	base := config.Cap{CPUs: "2", Mem: "1g", Pids: 1024}
+	over := config.Cap{Mem: "512m"} // only --memory passed on the run
+	got := overlayCap(over, base)
+	if got.Mem != "512m" {
+		t.Errorf("mem = %q, want 512m (run flag)", got.Mem)
+	}
+	if got.CPUs != "2" || got.Pids != 1024 {
+		t.Errorf("cpus/pids = %q/%d, want the configured default kept", got.CPUs, got.Pids)
+	}
+}

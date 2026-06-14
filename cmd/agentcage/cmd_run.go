@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/okedeji/agentcage/internal/bundle"
+	"github.com/okedeji/agentcage/internal/config"
 	"github.com/okedeji/agentcage/internal/runtime"
 	"github.com/okedeji/agentcage/internal/secrets"
 )
@@ -15,7 +16,8 @@ import (
 func newRunCmd() *cobra.Command {
 	var verbose bool
 	var noCache bool
-	var budget, envFile string
+	var budget, envFile, memory, cpus string
+	var pids int
 	var envFlags, secretFlags []string
 	cmd := &cobra.Command{
 		Use:   "run BUNDLE [PROMPT]",
@@ -82,6 +84,13 @@ Examples:
 				}
 				budgetMicros = m
 			}
+			if cmd.Flags().Changed("pids") && pids <= 0 {
+				return fmt.Errorf("--pids must be positive")
+			}
+			runCap := config.Cap{CPUs: cpus, Mem: memory, Pids: pids}
+			if err := runCap.Validate(); err != nil {
+				return err
+			}
 			envPool, secretPool, err := buildInputPools(envFlags, envFile, secretFlags)
 			if err != nil {
 				return err
@@ -93,6 +102,7 @@ Examples:
 				Budget:     budgetMicros,
 				Env:        envPool,
 				Secrets:    secretPool,
+				Resources:  runCap,
 				Stdout:     cmd.OutOrStdout(),
 				Stderr:     cmd.ErrOrStderr(),
 				Verbose:    verbose,
@@ -106,6 +116,9 @@ Examples:
 	cmd.Flags().StringArrayVar(&envFlags, "env", nil, "supply an env value: KEY=VALUE, or KEY to pass it through from your environment (repeatable)")
 	cmd.Flags().StringVar(&envFile, "env-file", "", "read env values (KEY=VALUE per line) from a file")
 	cmd.Flags().StringArrayVar(&secretFlags, "secret", nil, "supply a secret NAME, resolved from your environment or the agentcage secret store (repeatable)")
+	cmd.Flags().StringVar(&memory, "memory", "", "per-cage memory cap for this run, e.g. 2g (overrides the configured default)")
+	cmd.Flags().StringVar(&cpus, "cpus", "", "per-cage CPU cap for this run, e.g. 2 or 0.5")
+	cmd.Flags().IntVar(&pids, "pids", 0, "per-cage pids cap for this run")
 	return cmd
 }
 

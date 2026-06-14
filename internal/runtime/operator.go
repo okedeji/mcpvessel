@@ -49,6 +49,16 @@ func agentCap(node *agentNode, res config.Resources) config.Cap {
 	}
 }
 
+// overlayCap layers over onto base per field, so a run's cap flags override the
+// configured default only where they are set, leaving the rest in place.
+func overlayCap(over, base config.Cap) config.Cap {
+	return config.Cap{
+		CPUs: firstNonEmpty(over.CPUs, base.CPUs),
+		Mem:  firstNonEmpty(over.Mem, base.Mem),
+		Pids: firstNonZero(over.Pids, base.Pids),
+	}
+}
+
 func firstNonEmpty(vals ...string) string {
 	for _, v := range vals {
 		if v != "" {

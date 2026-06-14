@@ -34,7 +34,12 @@ func bootRun(ctx context.Context, in RunInput, boot bootInput, runID string) (*m
 	if err != nil {
 		return nil, nil, err
 	}
-	ops := operatorInputs{env: in.Env, secrets: in.Secrets, models: cfg.Models, resources: cfg.Resources}
+	// The run's --memory/--cpus/--pids flags override the configured default
+	// cap per field; a per-agent config cap still wins as the more specific
+	// choice, so this overlays onto Defaults only.
+	res := cfg.Resources
+	res.Defaults = overlayCap(in.Resources, res.Defaults)
+	ops := operatorInputs{env: in.Env, secrets: in.Secrets, models: cfg.Models, resources: res}
 
 	if len(boot.Manifest.Agentfile.Uses) == 0 {
 		// A directly-run agent has no registry ref, so per-agent overrides do

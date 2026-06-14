@@ -43,6 +43,12 @@ type RunInput struct {
 	Env     map[string]string
 	Secrets map[string]string
 
+	// Resources is the operator's --memory/--cpus/--pids cap for this run. It
+	// overrides the configured default cap per field; a per-agent config cap
+	// still wins, since it is the more specific choice. Empty fields leave the
+	// configured (then runtime) default in place.
+	Resources config.Cap
+
 	// RunID names the containerd container; if empty Run derives one
 	// from the bundle's hash plus a unique suffix.
 	RunID string
