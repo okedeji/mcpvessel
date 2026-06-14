@@ -103,14 +103,35 @@ func Handler(cfg Config) http.Handler {
 	})
 }
 
-// deniedCall reports whether body is a tools/call to a denied tool. A body
-// that is not a parseable tools/call is not denied: the gateway only
-// blocks calls it positively recognizes as targeting a denied tool. (Batch
-// JSON-RPC arrays are not inspected; MCP clients send one request per POST.)
+// deniedCall reports whether body is a tools/call to a denied tool. A
+// JSON-RPC message is either one request object or a batch array of them, and
+// both are inspected: a batch was a way to smuggle a denied call past a
+// single-object check, and the gateway must enforce deny in any shape it would
+// forward rather than trust the sub-agent to reject it. Any denied element
+// denies the whole forward. A body that is neither is not denied; it is not a
+// tools/call the gateway recognizes, and the sub-agent rejects garbage.
 func deniedCall(body []byte, deny map[string]bool) (string, bool) {
 	if len(deny) == 0 {
 		return "", false
 	}
+	if trimmed := bytes.TrimSpace(body); len(trimmed) > 0 && trimmed[0] == '[' {
+		var batch []json.RawMessage
+		if json.Unmarshal(trimmed, &batch) != nil {
+			return "", false
+		}
+		for _, el := range batch {
+			if tool, denied := deniedOne(el, deny); denied {
+				return tool, true
+			}
+		}
+		return "", false
+	}
+	return deniedOne(body, deny)
+}
+
+// deniedOne reports whether a single JSON-RPC request object is a tools/call to
+// a denied tool.
+func deniedOne(body []byte, deny map[string]bool) (string, bool) {
 	var req struct {
 		Method string `json:"method"`
 		Params struct {

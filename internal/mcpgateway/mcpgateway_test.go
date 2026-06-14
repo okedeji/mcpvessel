@@ -21,6 +21,10 @@ func TestDeniedCall(t *testing.T) {
 		{"allowed call", `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search"}}`, "", false},
 		{"tools list", `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`, "", false},
 		{"garbage", `not json`, "", false},
+		// A batch must not smuggle a denied call past the single-object check.
+		{"batch with denied", `[{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"delete_all"}}]`, "delete_all", true},
+		{"batch denied behind allowed", `[{"method":"tools/call","params":{"name":"search"}},{"method":"tools/call","params":{"name":"delete_all"}}]`, "delete_all", true},
+		{"batch all allowed", `[{"method":"tools/call","params":{"name":"search"}}]`, "", false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
