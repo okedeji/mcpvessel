@@ -117,7 +117,7 @@ func buildRunPlan(tree *runTree, runID string) (*runPlan, error) {
 				Network:  network,
 				Env:      agentEnv,
 				Detached: true,
-			},
+			}.withCap(defaultAgentCap),
 		})
 	}
 
@@ -135,7 +135,7 @@ func buildRunPlan(tree *runTree, runID string) (*runPlan, error) {
 			env.MCPAddr:   ":" + env.DefaultMCPGatewayPort,
 		},
 		Detached: true,
-	}
+	}.withCap(defaultGatewayCap)
 	return plan, nil
 }
 

@@ -72,6 +72,20 @@ func TestNerdctlRunArgs_DetachedNetworkedWithEnv(t *testing.T) {
 	}
 }
 
+func TestNerdctlRunArgs_ResourceCaps(t *testing.T) {
+	got := strings.Join(nerdctlRunArgs(ContainerSpec{
+		RunID:    "cg-1",
+		ImageRef: "agentcage/echo:latest",
+		Memory:   "1g",
+		CPUs:     "2",
+		Pids:     1024,
+	}), " ")
+	want := "run --name cg-1 --rm -i --memory 1g --cpus 2 --pids-limit 1024 agentcage/echo:latest"
+	if got != want {
+		t.Errorf("nerdctlRunArgs = %q, want %q", got, want)
+	}
+}
+
 func TestNerdctlRunArgs_ModeArgsFollowImage(t *testing.T) {
 	got := strings.Join(nerdctlRunArgs(ContainerSpec{
 		RunID:    "run-gw",

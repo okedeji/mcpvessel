@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 )
 
 // Provisioner is the platform-specific gate to a Linux container
@@ -57,6 +58,9 @@ type ContainerSpec struct {
 	Args     []string // command args after the image; the gateway image's mode (mcp-gateway, llm-gateway, egress)
 	Network  string
 	Env      map[string]string
+	Memory   string // nerdctl --memory cap; the runtime sets one on every cage so none runs uncapped
+	CPUs     string // nerdctl --cpus cap
+	Pids     int    // nerdctl --pids-limit cap
 	Detached bool
 }
 
@@ -75,6 +79,15 @@ func nerdctlRunArgs(spec ContainerSpec) []string {
 	}
 	if spec.Network != "" {
 		args = append(args, "--network", spec.Network)
+	}
+	if spec.Memory != "" {
+		args = append(args, "--memory", spec.Memory)
+	}
+	if spec.CPUs != "" {
+		args = append(args, "--cpus", spec.CPUs)
+	}
+	if spec.Pids != 0 {
+		args = append(args, "--pids-limit", strconv.Itoa(spec.Pids))
 	}
 	keys := make([]string, 0, len(spec.Env))
 	for k := range spec.Env {

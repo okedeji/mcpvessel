@@ -62,6 +62,11 @@ func TestBuildRunPlan_SingleEdge(t *testing.T) {
 	if got := sub.Spec.Env["AGENTCAGE_SERVE_HTTP"]; got != ":8000" {
 		t.Errorf("sub SERVE_HTTP = %q, want :8000", got)
 	}
+	// Every cage is capped. Sub-agents get the agent default, the gateway the
+	// tighter gateway default, so none runs uncapped.
+	if sub.Spec.Memory != defaultAgentCap.Mem || sub.Spec.Pids != defaultAgentCap.Pids {
+		t.Errorf("sub cap = %q/%d, want %q/%d", sub.Spec.Memory, sub.Spec.Pids, defaultAgentCap.Mem, defaultAgentCap.Pids)
+	}
 
 	// The gateway routes the edge to the sub-agent's own container and
 	// carries the deny list, so the referee is in the path.
@@ -81,6 +86,9 @@ func TestBuildRunPlan_SingleEdge(t *testing.T) {
 	}
 	if len(plan.Gateway.Args) != 1 || plan.Gateway.Args[0] != "mcp-gateway" {
 		t.Errorf("gateway args = %v, want [mcp-gateway]", plan.Gateway.Args)
+	}
+	if plan.Gateway.Memory != defaultGatewayCap.Mem || plan.Gateway.Pids != defaultGatewayCap.Pids {
+		t.Errorf("gateway cap = %q/%d, want %q/%d", plan.Gateway.Memory, plan.Gateway.Pids, defaultGatewayCap.Mem, defaultGatewayCap.Pids)
 	}
 	// The routing table the gateway serves round-trips back to what we
 	// planned, so the container and the plan cannot disagree.

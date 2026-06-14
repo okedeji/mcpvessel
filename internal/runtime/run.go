@@ -266,7 +266,7 @@ func startAttachedAgent(ctx context.Context, sess *bootSession, in bootInput, td
 		ImageRef: in.ImageRef,
 		Network:  in.Network,
 		Env:      in.Env,
-	})...)
+	}.withCap(defaultAgentCap))...)
 	stdinPipe, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, fmt.Errorf("stdin pipe: %w", err)
