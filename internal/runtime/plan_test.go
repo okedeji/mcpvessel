@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"encoding/json"
+	"slices"
 	"testing"
 
 	"github.com/okedeji/agentcage/internal/bundle"
@@ -73,8 +74,20 @@ func TestBuildRunPlan_SingleEdge(t *testing.T) {
 		t.Fatalf("buildRunPlan: %v", err)
 	}
 
-	if plan.Network != "run1-net" {
-		t.Errorf("network = %q, want run1-net", plan.Network)
+	// The security property: the sub sits on its own network, distinct from the
+	// root's, so the root cannot reach it directly. The gateway is the only host
+	// on both, so it is the sole path between them.
+	if plan.RootNet == "" || plan.AgentNets["sub-abc"] == "" {
+		t.Fatalf("missing nets: root %q sub %q", plan.RootNet, plan.AgentNets["sub-abc"])
+	}
+	if plan.RootNet == plan.AgentNets["sub-abc"] {
+		t.Errorf("root and sub share a network %q; they must be isolated", plan.RootNet)
+	}
+	if got := plan.Agents[0].Spec.Networks; len(got) != 1 || got[0] != plan.AgentNets["sub-abc"] {
+		t.Errorf("sub networks = %v, want [%q]", got, plan.AgentNets["sub-abc"])
+	}
+	if !slices.Contains(plan.Gateway.Networks, plan.RootNet) || !slices.Contains(plan.Gateway.Networks, plan.AgentNets["sub-abc"]) {
+		t.Errorf("gateway networks = %v, must include both the root and sub nets", plan.Gateway.Networks)
 	}
 
 	// The root calls the gateway, never the sub-agent directly.
@@ -195,12 +208,18 @@ func TestBuildRunPlan_EgressAllowAgentsGetProxyEnv(t *testing.T) {
 
 	// Only the allow: agents are recorded, keyed by container name, and a
 	// deny-default agent never appears, so the orchestrator never opens it a
-	// route out.
-	if got := plan.EgressAgents["run1"]; len(got) != 1 || got[0] != "api.openai.com" {
-		t.Errorf("root egress hosts = %v, want [api.openai.com]", got)
+	// route out. Each carries the network the proxy joins to reach it, and those
+	// networks are distinct so the proxy keys each by its own address.
+	root := plan.EgressAgents["run1"]
+	if len(root.Hosts) != 1 || root.Hosts[0] != "api.openai.com" {
+		t.Errorf("root egress hosts = %v, want [api.openai.com]", root.Hosts)
 	}
-	if got := plan.EgressAgents["run1-sub-ab"]; len(got) != 2 || got[0] != "example.com" || got[1] != "foo.test" {
-		t.Errorf("sub-ab egress hosts = %v, want [example.com foo.test]", got)
+	subAB := plan.EgressAgents["run1-sub-ab"]
+	if len(subAB.Hosts) != 2 || subAB.Hosts[0] != "example.com" || subAB.Hosts[1] != "foo.test" {
+		t.Errorf("sub-ab egress hosts = %v, want [example.com foo.test]", subAB.Hosts)
+	}
+	if root.Network == "" || subAB.Network == "" || root.Network == subAB.Network {
+		t.Errorf("egress agent nets must be present and distinct: root %q sub-ab %q", root.Network, subAB.Network)
 	}
 	if _, ok := plan.EgressAgents["run1-sub-cd"]; ok {
 		t.Errorf("deny-default agent must not be in EgressAgents: %v", plan.EgressAgents)
@@ -225,6 +244,50 @@ func TestBuildRunPlan_EgressAllowAgentsGetProxyEnv(t *testing.T) {
 			if _, ok := a.Spec.Env["HTTP_PROXY"]; ok {
 				t.Errorf("deny-default agent must get no proxy env: %v", a.Spec.Env)
 			}
+		}
+	}
+}
+
+func TestBuildRunPlan_PerAgentNetworkIsolation(t *testing.T) {
+	tree := &runTree{
+		Root: "root",
+		Nodes: map[string]*agentNode{
+			"root":  {Key: "root", Ref: mustParseRef(t, "@o/root:1.0"), Manifest: rootWithBans(bundle.BanSpec{Ref: "@o/bad"})},
+			"web-1": {Key: "web-1", Ref: mustParseRef(t, "@o/web:1.0")},
+			"bad-2": {Key: "bad-2", Ref: mustParseRef(t, "@o/bad:1.0")},
+		},
+		Edges: []usesEdge{
+			{Caller: "root", Sub: "web-1", Alias: "web"},
+			{Caller: "root", Sub: "bad-2", Alias: "bad"},
+		},
+	}
+
+	plan, err := buildRunPlan(tree, "run1", operatorInputs{})
+	if err != nil {
+		t.Fatalf("buildRunPlan: %v", err)
+	}
+
+	// Every started agent sits on its own distinct network; no two share one.
+	// This is the property that stops a hostile cage reaching a sibling.
+	seen := map[string]string{}
+	for key, net := range plan.AgentNets {
+		if prev, ok := seen[net]; ok {
+			t.Errorf("agents %s and %s share network %s", prev, key, net)
+		}
+		seen[net] = key
+	}
+	// The banned agent never starts, so it gets no network at all.
+	if _, ok := plan.AgentNets["bad-2"]; ok {
+		t.Error("banned agent bad-2 must have no network")
+	}
+	// The gateway is on every started agent's network and only those, so it is
+	// the sole host that can reach all of them.
+	if len(plan.Gateway.Networks) != len(plan.AgentNets) {
+		t.Errorf("gateway nets = %v, want one per started agent %v", plan.Gateway.Networks, plan.AgentNets)
+	}
+	for key, net := range plan.AgentNets {
+		if !slices.Contains(plan.Gateway.Networks, net) {
+			t.Errorf("gateway missing net %s for agent %s", net, key)
 		}
 	}
 }

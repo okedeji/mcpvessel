@@ -54,7 +54,7 @@ func TestNerdctlRunArgs_DetachedNetworkedWithEnv(t *testing.T) {
 	got := strings.Join(nerdctlRunArgs(ContainerSpec{
 		RunID:    "cg-sub",
 		ImageRef: "agentcage/sub:latest",
-		Network:  "run-net",
+		Networks: []string{"run-net"},
 		Detached: true,
 		Env: map[string]string{
 			"AGENTCAGE_SERVE_HTTP":    ":8000",
@@ -91,7 +91,7 @@ func TestNerdctlRunArgs_ModeArgsFollowImage(t *testing.T) {
 		RunID:    "run-gw",
 		ImageRef: "agentcage/gateway:0.1.0",
 		Args:     []string{"mcp-gateway"},
-		Network:  "run-net",
+		Networks: []string{"run-net"},
 		Detached: true,
 	}), " ")
 	want := "run --name run-gw -d --network run-net agentcage/gateway:0.1.0 mcp-gateway"
@@ -100,16 +100,17 @@ func TestNerdctlRunArgs_ModeArgsFollowImage(t *testing.T) {
 	}
 }
 
-func TestNerdctlRunArgs_DualHomedDoor(t *testing.T) {
+func TestNerdctlRunArgs_MultiHomed(t *testing.T) {
+	// A gateway joins many networks in order: the run's per-agent nets plus the
+	// egress door. Each becomes one --network, preserving order.
 	got := strings.Join(nerdctlRunArgs(ContainerSpec{
-		RunID:         "run-llm",
-		ImageRef:      "agentcage/gateway:0.1.0",
-		Args:          []string{"llm-gateway"},
-		Network:       "run-net",
-		EgressNetwork: "run-egress",
-		Detached:      true,
+		RunID:    "run-llm",
+		ImageRef: "agentcage/gateway:0.1.0",
+		Args:     []string{"llm-gateway"},
+		Networks: []string{"run-root-net", "run-sub-net", "run-egress"},
+		Detached: true,
 	}), " ")
-	want := "run --name run-llm -d --network run-net --network run-egress agentcage/gateway:0.1.0 llm-gateway"
+	want := "run --name run-llm -d --network run-root-net --network run-sub-net --network run-egress agentcage/gateway:0.1.0 llm-gateway"
 	if got != want {
 		t.Errorf("nerdctlRunArgs = %q, want %q", got, want)
 	}

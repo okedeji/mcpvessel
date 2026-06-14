@@ -101,10 +101,18 @@ func bootTree(ctx context.Context, in bootInput, plan *runPlan, runID string) (*
 		return nil, nil, err
 	}
 
-	if err := createNetwork(ctx, sess.provisioner, plan.Network, true); err != nil {
-		return nil, nil, err
+	// One internal network per agent, created up front because the gateway
+	// joins all of them and starts after this loop. Each agent is alone on its
+	// own network, so no cage can reach a sibling directly and bypass the
+	// gateway's deny. Pushed before the containers that join them, so teardown
+	// (reverse order) removes the containers first.
+	for _, key := range sortedStringKeys(plan.AgentNets) {
+		net := plan.AgentNets[key]
+		if err := createNetwork(ctx, sess.provisioner, net, true); err != nil {
+			return nil, nil, err
+		}
+		td.push(func() error { return removeNetwork(sess.provisioner, net) })
 	}
-	td.push(func() error { return removeNetwork(sess.provisioner, plan.Network) })
 
 	for _, a := range plan.Agents {
 		if err := buildAgentImage(ctx, sess, a.Node, a.Spec.ImageRef, in.NoCache, in.Stderr); err != nil {
@@ -152,12 +160,16 @@ func bootTree(ctx context.Context, in bootInput, plan *runPlan, runID string) (*
 		if err != nil {
 			return nil, nil, err
 		}
-		if err := startLLMGateway(ctx, sess, runID, plan.Network, egressNet, llmCfg, in, td); err != nil {
+		reasoningNets := make([]string, 0, len(plan.LLMAgents))
+		for _, key := range sortedStringKeys(plan.LLMAgents) {
+			reasoningNets = append(reasoningNets, plan.AgentNets[key])
+		}
+		if err := startLLMGateway(ctx, sess, runID, reasoningNets, egressNet, llmCfg, in, td); err != nil {
 			return nil, nil, err
 		}
 	}
 
-	in.Network = plan.Network
+	in.Network = plan.RootNet
 	in.Env = plan.RootEnv
 	client, err := startAttachedAgent(ctx, sess, in, td)
 	if err != nil {
@@ -168,7 +180,7 @@ func bootTree(ctx context.Context, in bootInput, plan *runPlan, runID string) (*
 	// last, so this is the first point every allow: agent in the tree, the root
 	// included, has an address to key its allow-list by.
 	if len(plan.EgressAgents) > 0 {
-		if err := startEgressProxy(ctx, sess, runID, plan.Network, egressNet, plan.EgressAgents, in, td); err != nil {
+		if err := startEgressProxy(ctx, sess, runID, egressNet, plan.EgressAgents, in, td); err != nil {
 			return nil, nil, err
 		}
 	}

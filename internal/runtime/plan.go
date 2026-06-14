@@ -24,18 +24,26 @@ const (
 	mcpServePath = "/mcp"
 )
 
-// runPlan is everything the orchestrator needs to start a USES tree: the
-// per-run network, a detached container spec for each non-root agent and
-// for the gateway, the gateway's routing table, and the sub-agent URLs the
-// root parent gets injected. It is derived purely from the resolved tree,
-// so the security-load-bearing wiring (which edge denies what, which URL
-// reaches which sub) is unit tested without starting a container.
+// runPlan is everything the orchestrator needs to start a USES tree: a network
+// per agent, a detached container spec for each non-root agent and for the
+// gateway, the gateway's routing table, and the sub-agent URLs the root parent
+// gets injected. It is derived purely from the resolved tree, so the
+// security-load-bearing wiring (which agent sits on which network, which edge
+// denies what) is unit tested without starting a container.
 type runPlan struct {
-	Network    string
 	GatewayCfg mcpgateway.Config
 	Gateway    ContainerSpec
 	Agents     []plannedAgent
 	RootEnv    map[string]string
+
+	// AgentNets maps each started agent's key (the root included) to its own
+	// internal network, shared only with the gateways. A banned agent never
+	// starts, so it has no entry and no network. RootNet is the attached root's,
+	// carried out because the root starts outside the sub-agent loop. Each agent
+	// alone on its own network is what stops a cage from reaching a sibling
+	// directly and bypassing the gateway's deny.
+	AgentNets map[string]string
+	RootNet   string
 
 	// LLMAgents maps each reasoning agent's key to its advisory model, the
 	// per-agent map the LLM gateway routes by. Empty when nothing in the tree
@@ -45,15 +53,23 @@ type runPlan struct {
 	LLMAgents map[string]string
 	Budget    int64
 
-	// EgressAgents maps each allow: agent's container name to the hosts it may
-	// reach. Empty when nothing in the tree declares allow:, which tells the
-	// orchestrator no egress proxy is needed.
-	EgressAgents map[string][]string
+	// EgressAgents maps each allow: agent's container name to its network and
+	// the hosts it may reach. The egress proxy multi-homes onto each network and
+	// keys its allow-list by the agent's address on it. Empty when nothing in
+	// the tree declares allow:, which tells the orchestrator no proxy is needed.
+	EgressAgents map[string]egressAgent
 
 	// RootCap is the attached root's resolved resource cap. The root runs
 	// outside the sub-agent loop, so its cap is resolved here too rather than
 	// left to the runtime default, which would silently ignore the operator.
 	RootCap config.Cap
+}
+
+// egressAgent is one allow: agent's egress wiring: the network the proxy joins
+// to reach it, and the hosts it may reach.
+type egressAgent struct {
+	Network string
+	Hosts   []string
 }
 
 // plannedAgent pairs a non-root tree node with the detached container spec
@@ -70,7 +86,6 @@ type plannedAgent struct {
 // and one injected AGENTCAGE_USES_<ALIAS>_URL on the caller pointing at the
 // gateway, so every call in the tree passes the referee that enforces deny.
 func buildRunPlan(tree *runTree, runID string, ops operatorInputs) (*runPlan, error) {
-	network := runID + "-net"
 	gatewayName := runID + "-gw"
 
 	containerName := func(key string) string {
@@ -79,13 +94,16 @@ func buildRunPlan(tree *runTree, runID string, ops operatorInputs) (*runPlan, er
 		}
 		return runID + "-" + key
 	}
+	nodeNet := func(key string) string {
+		return runID + "-" + sanitizeRef(key) + "-net"
+	}
 
 	plan := &runPlan{
-		Network:      network,
 		GatewayCfg:   mcpgateway.Config{Edges: map[string]mcpgateway.Edge{}},
 		RootEnv:      map[string]string{},
+		AgentNets:    map[string]string{},
 		LLMAgents:    map[string]string{},
-		EgressAgents: map[string][]string{},
+		EgressAgents: map[string]egressAgent{},
 		Budget:       nodeBudget(tree.Nodes[tree.Root]),
 	}
 
@@ -132,12 +150,13 @@ func buildRunPlan(tree *runTree, runID string, ops operatorInputs) (*runPlan, er
 			agentEnv[k] = v
 		}
 		node := tree.Nodes[key]
+		plan.AgentNets[key] = nodeNet(key)
 		if model := nodeModel(node); model != "" {
 			agentEnv[env.LLMURL] = llmURL(runID, key)
 			plan.LLMAgents[key] = effectiveModel(model, node, ops.models)
 		}
 		if hosts := egressHosts(nodeEgress(node)); len(hosts) > 0 {
-			plan.EgressAgents[containerName(key)] = hosts
+			plan.EgressAgents[containerName(key)] = egressAgent{Network: nodeNet(key), Hosts: hosts}
 			for k, v := range egressProxyEnv(runID) {
 				agentEnv[k] = v
 			}
@@ -150,7 +169,7 @@ func buildRunPlan(tree *runTree, runID string, ops operatorInputs) (*runPlan, er
 			Spec: ContainerSpec{
 				RunID:    containerName(key),
 				ImageRef: agentImageRef(node),
-				Network:  network,
+				Networks: []string{nodeNet(key)},
 				Env:      agentEnv,
 				Detached: true,
 			}.withCap(agentCap(node, ops.resources)),
@@ -159,13 +178,15 @@ func buildRunPlan(tree *runTree, runID string, ops operatorInputs) (*runPlan, er
 
 	// The root reasons over its own LLM URL too. It is not in the sub-agent
 	// loop above (it runs attached, not detached), so inject it here.
+	plan.AgentNets[tree.Root] = nodeNet(tree.Root)
+	plan.RootNet = nodeNet(tree.Root)
 	if model := nodeModel(tree.Nodes[tree.Root]); model != "" {
 		plan.RootEnv[env.LLMURL] = llmURL(runID, tree.Root)
 		plan.LLMAgents[tree.Root] = effectiveModel(model, tree.Nodes[tree.Root], ops.models)
 	}
 	plan.RootCap = agentCap(tree.Nodes[tree.Root], ops.resources)
 	if hosts := egressHosts(nodeEgress(tree.Nodes[tree.Root])); len(hosts) > 0 {
-		plan.EgressAgents[containerName(tree.Root)] = hosts
+		plan.EgressAgents[containerName(tree.Root)] = egressAgent{Network: nodeNet(tree.Root), Hosts: hosts}
 		for k, v := range egressProxyEnv(runID) {
 			plan.RootEnv[k] = v
 		}
@@ -178,11 +199,18 @@ func buildRunPlan(tree *runTree, runID string, ops operatorInputs) (*runPlan, er
 	if err != nil {
 		return nil, fmt.Errorf("encoding gateway routing table: %w", err)
 	}
+	// The gateway joins every started agent's network, so it is the only host
+	// that can reach all of them and the only one a caller resolves its USES
+	// URLs to. Ordered by agent key for a deterministic, testable arg list.
+	gatewayNets := make([]string, 0, len(plan.AgentNets))
+	for _, key := range sortedStringKeys(plan.AgentNets) {
+		gatewayNets = append(gatewayNets, plan.AgentNets[key])
+	}
 	plan.Gateway = ContainerSpec{
 		RunID:    gatewayName,
 		ImageRef: GatewayImageRef(),
 		Args:     []string{"mcp-gateway"},
-		Network:  network,
+		Networks: gatewayNets,
 		Env: map[string]string{
 			env.MCPConfig: string(cfgJSON),
 			env.MCPAddr:   ":" + env.DefaultMCPGatewayPort,

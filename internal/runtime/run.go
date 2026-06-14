@@ -263,7 +263,7 @@ func bootAgent(ctx context.Context, in bootInput) (*mcp.Client, func() error, er
 			if err != nil {
 				return nil, nil, err
 			}
-			if err := startLLMGateway(ctx, sess, in.RunID, network, egressNet, llmCfg, in, td); err != nil {
+			if err := startLLMGateway(ctx, sess, in.RunID, []string{network}, egressNet, llmCfg, in, td); err != nil {
 				return nil, nil, err
 			}
 			in.Env[env.LLMURL] = llmURL(in.RunID, rootAgentKey)
@@ -294,7 +294,7 @@ func bootAgent(ctx context.Context, in bootInput) (*mcp.Client, func() error, er
 	// The egress proxy keys its allow-list by the agent's address, available
 	// only once the container is running, so it starts after the agent.
 	if len(allowHosts) > 0 {
-		if err := startEgressProxy(ctx, sess, in.RunID, in.Network, egressNet, map[string][]string{in.RunID: allowHosts}, in, td); err != nil {
+		if err := startEgressProxy(ctx, sess, in.RunID, egressNet, map[string]egressAgent{in.RunID: {Network: in.Network, Hosts: allowHosts}}, in, td); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -370,7 +370,7 @@ func startAttachedAgent(ctx context.Context, sess *bootSession, in bootInput, td
 	cmd := sess.provisioner.Nerdctl(ctx, nerdctlRunArgs(ContainerSpec{
 		RunID:    in.RunID,
 		ImageRef: in.ImageRef,
-		Network:  in.Network,
+		Networks: []string{in.Network},
 		Env:      in.Env,
 	}.withCap(cap))...)
 	stdinPipe, err := cmd.StdinPipe()

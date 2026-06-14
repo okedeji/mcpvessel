@@ -64,14 +64,17 @@ func egressProxyEnv(runID string) map[string]string {
 	}
 }
 
-// startEgressProxy keys the proxy's allow lists by each allow: agent's address
-// on the run network, then starts it dual-homed: the internal run network
-// (where agents reach it) plus the egress network (where it reaches the
-// allowed hosts). It runs after the agents so every one of them, the root
-// included, already has an IP to key by.
-func startEgressProxy(ctx context.Context, sess *bootSession, runID, network, egressNetwork string, agents map[string][]string, in bootInput, td *teardown) error {
+// startEgressProxy multi-homes onto each allow: agent's network plus the egress
+// network, keys its allow lists by each agent's address on its network, and
+// pushes its teardown. It runs after the agents so every one of them, the root
+// included, already has an IP to key by. Two agents resolving to the same
+// source IP would let one inherit the other's allow-list, so a collision is
+// fatal rather than silently mis-authorized; distinct per-agent subnets make it
+// not happen, but the check fails closed if it ever does.
+func startEgressProxy(ctx context.Context, sess *bootSession, runID, egressNetwork string, agents map[string]egressAgent, in bootInput, td *teardown) error {
 	sources := make(map[string][]string, len(agents))
-	for container, hosts := range agents {
+	nets := []string{egressNetwork}
+	for container, agent := range agents {
 		ip, err := containerIP(ctx, sess.provisioner, container)
 		if err != nil {
 			return err
@@ -79,18 +82,21 @@ func startEgressProxy(ctx context.Context, sess *bootSession, runID, network, eg
 		if ip == "" {
 			return fmt.Errorf("egress proxy: no IP for %s", container)
 		}
-		sources[ip] = hosts
+		if _, taken := sources[ip]; taken {
+			return fmt.Errorf("egress proxy: address %s claimed by two agents; refusing to mis-authorize egress", ip)
+		}
+		sources[ip] = agent.Hosts
+		nets = append(nets, agent.Network)
 	}
 	cfgJSON, err := json.Marshal(egress.Config{Sources: sources})
 	if err != nil {
 		return fmt.Errorf("encoding egress config: %w", err)
 	}
 	spec := ContainerSpec{
-		RunID:         egressProxyName(runID),
-		ImageRef:      GatewayImageRef(),
-		Args:          []string{"egress"},
-		Network:       network,
-		EgressNetwork: egressNetwork,
+		RunID:    egressProxyName(runID),
+		ImageRef: GatewayImageRef(),
+		Args:     []string{"egress"},
+		Networks: nets,
 		Env: map[string]string{
 			env.EgressConfig: string(cfgJSON),
 			env.EgressAddr:   ":" + env.DefaultEgressPort,
@@ -110,9 +116,11 @@ func startEgressProxy(ctx context.Context, sess *bootSession, runID, network, eg
 	return nil
 }
 
-// containerIP reads a container's address on the run network. nerdctl reports
-// it as .NetworkSettings.IPAddress; the per-network key is "unknown-eth0" in
-// rootless mode, so the flat field is the reliable one.
+// containerIP reads a container's address. nerdctl reports it as
+// .NetworkSettings.IPAddress; the per-network key is "unknown-eth0" in rootless
+// mode, so the flat field is the reliable one. An agent joins exactly one
+// network, so that field is unambiguously its address on the network it shares
+// with the proxy.
 func containerIP(ctx context.Context, p Provisioner, name string) (string, error) {
 	cmd := p.Nerdctl(ctx, "inspect", name, "--format", "{{.NetworkSettings.IPAddress}}")
 	var out bytes.Buffer

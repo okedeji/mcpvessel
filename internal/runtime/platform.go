@@ -46,23 +46,24 @@ type Provisioner interface {
 	Close() error
 }
 
-// ContainerSpec describes one container the runtime starts. Network
-// attaches it to a named nerdctl network so sibling containers reach it by
-// name; Env injects environment variables; Detached runs it in the
-// background (-d) instead of attaching stdio (-i). The parent agent stays
-// attached so the runtime speaks MCP over its stdio; sub-agents and the
-// gateway are detached, networked, and reached over HTTP.
+// ContainerSpec describes one container the runtime starts. Networks attaches
+// it to one or more named nerdctl networks so members of a shared network reach
+// it by name; Env injects environment variables; Detached runs it in the
+// background (-d) instead of attaching stdio (-i). An agent cage joins exactly
+// one network, shared only with the gateways, so no cage can reach another
+// directly. A gateway is multi-homed: it joins every cage network it must route
+// between, which is what makes it the sole chokepoint that enforces DENY. A
+// gateway door reaching the outside also joins the egress network.
 type ContainerSpec struct {
-	RunID         string
-	ImageRef      string
-	Args          []string // command args after the image; the gateway image's mode (mcp-gateway, llm-gateway, egress)
-	Network       string
-	EgressNetwork string // a second, egress-capable network for a gateway door; the internal run network blocks egress for everything else
-	Env           map[string]string
-	Memory        string // nerdctl --memory cap; the runtime sets one on every cage so none runs uncapped
-	CPUs          string // nerdctl --cpus cap
-	Pids          int    // nerdctl --pids-limit cap
-	Detached      bool
+	RunID    string
+	ImageRef string
+	Args     []string // command args after the image; the gateway image's mode (mcp-gateway, llm-gateway, egress)
+	Networks []string // joined in order; one for an agent, many for a multi-homed gateway
+	Env      map[string]string
+	Memory   string // nerdctl --memory cap; the runtime sets one on every cage so none runs uncapped
+	CPUs     string // nerdctl --cpus cap
+	Pids     int    // nerdctl --pids-limit cap
+	Detached bool
 }
 
 // nerdctlRunArgs builds the `run ...` argument list for a spec. Env keys
@@ -78,11 +79,10 @@ func nerdctlRunArgs(spec ContainerSpec) []string {
 	} else {
 		args = append(args, "--rm", "-i")
 	}
-	if spec.Network != "" {
-		args = append(args, "--network", spec.Network)
-	}
-	if spec.EgressNetwork != "" {
-		args = append(args, "--network", spec.EgressNetwork)
+	for _, net := range spec.Networks {
+		if net != "" {
+			args = append(args, "--network", net)
+		}
 	}
 	if spec.Memory != "" {
 		args = append(args, "--memory", spec.Memory)
