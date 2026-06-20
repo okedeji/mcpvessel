@@ -47,13 +47,13 @@ Examples:
   agentcage call researcher.agent fetch_paper --arg doi=10.1234/x.2026`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			bundlePath, _, err := locate.Bundle(cmd.Context(), args[0])
+			b, err := locate.Bundle(cmd.Context(), args[0])
 			if err != nil {
 				return err
 			}
 			toolName := args[1]
 
-			manifest, err := bundle.ReadManifest(bundlePath)
+			manifest, err := bundle.ReadManifest(b.Path)
 			if err != nil {
 				return err
 			}
@@ -66,7 +66,8 @@ Examples:
 				return err
 			}
 			return runtime.Run(cmd.Context(), runtime.RunInput{
-				BundlePath: bundlePath,
+				BundlePath: b.Path,
+				Name:       b.Name,
 				Tool:       toolName,
 				Args:       toolArgs,
 				Stdout:     cmd.OutOrStdout(),

@@ -9,6 +9,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path"
+	"path/filepath"
 	"strings"
 
 	"github.com/okedeji/agentcage/internal/reference"
@@ -16,60 +18,83 @@ import (
 	"github.com/okedeji/agentcage/internal/store"
 )
 
-// Bundle resolves arg to a local bundle path. An existing file is used as-is,
-// so a hand-moved bundle or a -o output still works. A bare sha256 hash, full
-// or a prefix, resolves an unnamed build from the store. Anything else is a
+// Result is a resolved bundle: its local Path, the Display label a human view
+// shows (a file path, a hash, or the full ref), and the short Name a run id
+// derives from (the file or repo basename, or a short hash). Name keeps a run
+// reading as "echo-..." rather than the store's content-hash filename.
+type Result struct {
+	Path    string
+	Display string
+	Name    string
+}
+
+// Bundle resolves arg to a local bundle. An existing file is used as-is, so a
+// hand-moved bundle or a -o output still works. A bare sha256 hash, full or a
+// prefix, resolves an unnamed build from the store. Anything else is a
 // reference, resolved store-first: a locally built bundle is found without a
 // round-trip, and only a reference the store lacks is pulled (cache-first).
-// display is the label a human view shows for the bundle: the file path, the
-// hash, or the resolved ref.
-func Bundle(ctx context.Context, arg string) (path, display string, err error) {
+func Bundle(ctx context.Context, arg string) (Result, error) {
 	if info, statErr := os.Stat(arg); statErr == nil && !info.IsDir() {
-		return arg, arg, nil
+		return Result{Path: arg, Display: arg, Name: fileName(arg)}, nil
 	}
 
 	if isContentHash(arg) {
 		st, err := store.New()
 		if err != nil {
-			return "", "", err
+			return Result{}, err
 		}
 		p, ok, err := st.FindByHash(arg)
 		if err != nil {
-			return "", "", err
+			return Result{}, err
 		}
 		if !ok {
-			return "", "", fmt.Errorf("%s: no bundle with that content hash in the store", arg)
+			return Result{}, fmt.Errorf("%s: no bundle with that content hash in the store", arg)
 		}
-		return p, arg, nil
+		return Result{Path: p, Display: arg, Name: shortHash(arg)}, nil
 	}
 
 	ref, err := reference.Parse(arg)
 	if err != nil {
-		return "", "", fmt.Errorf("%q is neither a local bundle nor a registry reference: %w", arg, err)
+		return Result{}, fmt.Errorf("%q is neither a local bundle nor a registry reference: %w", arg, err)
 	}
 	if ref.Tag == "" && ref.Digest == "" {
-		return "", "", fmt.Errorf("%s: a version tag or digest is required", arg)
+		return Result{}, fmt.Errorf("%s: a version tag or digest is required", arg)
 	}
 
 	st, err := store.New()
 	if err != nil {
-		return "", "", err
+		return Result{}, err
 	}
 	if p, ok, err := st.Get(ref); err != nil {
-		return "", "", err
+		return Result{}, err
 	} else if ok {
-		return p, ref.OCIRef(), nil
+		return Result{Path: p, Display: ref.OCIRef(), Name: path.Base(ref.Repository)}, nil
 	}
 
 	client, err := registry.New()
 	if err != nil {
-		return "", "", err
+		return Result{}, err
 	}
 	p, _, err := client.Pull(ctx, ref)
 	if err != nil {
-		return "", "", err
+		return Result{}, err
 	}
-	return p, ref.OCIRef(), nil
+	return Result{Path: p, Display: ref.OCIRef(), Name: path.Base(ref.Repository)}, nil
+}
+
+// fileName is a bundle file's name without its .agent extension.
+func fileName(p string) string {
+	return strings.TrimSuffix(filepath.Base(p), ".agent")
+}
+
+// shortHash is the first 12 hex chars of a sha256 content-hash arg, the same
+// width the runtime uses for run-id suffixes.
+func shortHash(arg string) string {
+	h := strings.TrimPrefix(arg, "sha256:")
+	if len(h) > 12 {
+		h = h[:12]
+	}
+	return h
 }
 
 // isContentHash reports whether arg is a bare sha256 hash, the form build

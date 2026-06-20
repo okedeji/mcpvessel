@@ -25,11 +25,11 @@ the subtree.`,
   agentcage tree @okedeji/researcher:0.1`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			bundlePath, display, err := locate.Bundle(cmd.Context(), args[0])
+			b, err := locate.Bundle(cmd.Context(), args[0])
 			if err != nil {
 				return err
 			}
-			return runtime.PrintTree(cmd.Context(), bundlePath, display, cmd.OutOrStdout())
+			return runtime.PrintTree(cmd.Context(), b.Path, b.Display, cmd.OutOrStdout())
 		},
 	}
 	return cmd

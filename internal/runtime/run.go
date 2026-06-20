@@ -50,8 +50,13 @@ type RunInput struct {
 	Resources config.Cap
 
 	// RunID names the containerd container; if empty Run derives one
-	// from the bundle's hash plus a unique suffix.
+	// from Name plus a unique suffix.
 	RunID string
+
+	// Name is the friendly base the derived run id reads as, the agent's repo
+	// or file name (e.g. "echo") rather than the store's content-hash filename.
+	// Empty falls back to the bundle path's basename.
+	Name string
 
 	// Stdout / Stderr receive provisioning progress, the agent's
 	// stderr stream, and the final tool result. Callers typically
@@ -161,7 +166,11 @@ func Acquire(ctx context.Context, in RunInput) (*Session, error) {
 
 	runID := in.RunID
 	if runID == "" {
-		runID = deriveRunID(in.BundlePath, manifest.FilesHash)
+		name := in.Name
+		if name == "" {
+			name = strings.TrimSuffix(filepath.Base(in.BundlePath), filepath.Ext(in.BundlePath))
+		}
+		runID = deriveRunID(name, manifest.FilesHash)
 	}
 
 	boot := bootInput{
@@ -504,24 +513,20 @@ func shortDigest(s string) string {
 	return s
 }
 
-// deriveRunID names the containerd container for one run. Uniqueness
-// across simultaneous runs comes from suffixing the bundle's content
-// hash (the manifest's files_hash). Operators see this ID in
-// `nerdctl ps` and trace tooling.
-func deriveRunID(bundlePath, filesHash string) string {
-	base := filepath.Base(bundlePath)
-	base = strings.TrimSuffix(base, filepath.Ext(base))
-	if base == "" {
-		base = "agent"
+// deriveRunID names the containerd container for one run: the agent's friendly
+// name plus a suffix of its content hash for uniqueness across simultaneous
+// runs. Operators see this ID in `agentcage ps`, `stop`, and trace tooling, so
+// name is the repo or file basename ("echo"), not the store's content-hash
+// filename.
+func deriveRunID(name, filesHash string) string {
+	if name == "" {
+		name = "agent"
 	}
-	suffix := strings.TrimPrefix(filesHash, "sha256:")
-	if len(suffix) > 12 {
-		suffix = suffix[:12]
-	}
+	suffix := shortDigest(filesHash)
 	if suffix == "" {
 		suffix = "run"
 	}
-	return sanitizeRef(base) + "-" + suffix
+	return sanitizeRef(name) + "-" + suffix
 }
 
 // sanitizeRef converts a bundle basename into a fragment that is safe

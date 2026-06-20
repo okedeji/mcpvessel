@@ -42,14 +42,15 @@ func (d *Daemon) handleStartRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	bundlePath, display, err := locate.Bundle(r.Context(), req.Ref)
+	b, err := locate.Bundle(r.Context(), req.Ref)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	session, err := runtime.Acquire(context.Background(), runtime.RunInput{
-		BundlePath: bundlePath,
+		BundlePath: b.Path,
+		Name:       b.Name,
 		// The tool result returns over Call, not stdout; the agent's stderr is
 		// the daemon's own until per-run log capture lands.
 		Stdout: io.Discard,
@@ -60,7 +61,7 @@ func (d *Daemon) handleStartRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	info := RunInfo{ID: session.RunID(), Ref: display, Status: "running", StartedAt: nowFunc()}
+	info := RunInfo{ID: session.RunID(), Ref: b.Display, Status: "running", StartedAt: nowFunc()}
 	d.hold(info, session)
 	writeJSON(w, http.StatusOK, map[string]string{"id": info.ID, "ref": info.Ref})
 }

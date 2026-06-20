@@ -14,12 +14,15 @@ func TestBundle_LocalFile(t *testing.T) {
 	if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	path, display, err := Bundle(context.Background(), p)
+	b, err := Bundle(context.Background(), p)
 	if err != nil {
 		t.Fatalf("Bundle: %v", err)
 	}
-	if path != p || display != p {
-		t.Errorf("got (%q, %q), want both %q", path, display, p)
+	if b.Path != p || b.Display != p {
+		t.Errorf("got (%q, %q), want both %q", b.Path, b.Display, p)
+	}
+	if b.Name != "x" {
+		t.Errorf("Name = %q, want %q", b.Name, "x")
 	}
 }
 
@@ -40,25 +43,28 @@ func TestBundle_ContentHashFromStore(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	path, display, err := Bundle(context.Background(), "sha256:abc123")
+	b, err := Bundle(context.Background(), "sha256:abc123")
 	if err != nil {
 		t.Fatalf("Bundle by hash prefix: %v", err)
 	}
-	if path != dst || display != "sha256:abc123" {
-		t.Errorf("got (%q, %q), want (%q, %q)", path, display, dst, "sha256:abc123")
+	if b.Path != dst || b.Display != "sha256:abc123" {
+		t.Errorf("got (%q, %q), want (%q, %q)", b.Path, b.Display, dst, "sha256:abc123")
+	}
+	if b.Name != "abc123" {
+		t.Errorf("Name = %q, want short hash %q", b.Name, "abc123")
 	}
 }
 
 func TestBundle_ContentHashMissing(t *testing.T) {
 	t.Setenv("AGENTCAGE_HOME", t.TempDir())
-	if _, _, err := Bundle(context.Background(), "sha256:deadbeef"); err == nil {
+	if _, err := Bundle(context.Background(), "sha256:deadbeef"); err == nil {
 		t.Fatal("expected an error for a hash with no stored bundle")
 	}
 }
 
 func TestBundle_BogusArgErrors(t *testing.T) {
 	// Not an existing file and not a parseable reference.
-	if _, _, err := Bundle(context.Background(), "not a ref and not a file"); err == nil {
+	if _, err := Bundle(context.Background(), "not a ref and not a file"); err == nil {
 		t.Fatal("expected an error for an arg that is neither a file nor a ref")
 	}
 }
@@ -66,7 +72,7 @@ func TestBundle_BogusArgErrors(t *testing.T) {
 func TestBundle_RefWithoutVersionErrors(t *testing.T) {
 	t.Setenv("AGENTCAGE_REGISTRY", "")
 	// A valid ref shape but no tag/digest: nothing to resolve in the store or pull.
-	if _, _, err := Bundle(context.Background(), "@anthropic/web-search"); err == nil {
+	if _, err := Bundle(context.Background(), "@anthropic/web-search"); err == nil {
 		t.Fatal("expected an error for a ref with no version")
 	}
 }

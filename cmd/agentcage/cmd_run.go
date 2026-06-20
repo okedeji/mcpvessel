@@ -51,7 +51,7 @@ Examples:
   agentcage run researcher.agent "summarize Q3 earnings"`,
 		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			bundlePath, display, err := locate.Bundle(cmd.Context(), args[0])
+			b, err := locate.Bundle(cmd.Context(), args[0])
 			if err != nil {
 				return err
 			}
@@ -60,12 +60,12 @@ Examples:
 				prompt = args[1]
 			}
 
-			manifest, err := bundle.ReadManifest(bundlePath)
+			manifest, err := bundle.ReadManifest(b.Path)
 			if err != nil {
 				return err
 			}
 			if manifest.Agentfile.Main == "" {
-				return fmt.Errorf("bundle %s has no MAIN; it is a tool collection. Use 'agentcage call %s TOOL --arg KEY=VALUE' to call one of its tools directly", display, args[0])
+				return fmt.Errorf("bundle %s has no MAIN; it is a tool collection. Use 'agentcage call %s TOOL --arg KEY=VALUE' to call one of its tools directly", b.Display, args[0])
 			}
 
 			// The positional prompt gets wrapped as a single-user-turn
@@ -103,7 +103,8 @@ Examples:
 				return err
 			}
 			return runtime.Run(cmd.Context(), runtime.RunInput{
-				BundlePath: bundlePath,
+				BundlePath: b.Path,
+				Name:       b.Name,
 				Tool:       manifest.Agentfile.Main,
 				Args:       toolArgs,
 				Budget:     budgetMicros,

@@ -35,11 +35,11 @@ itself can call them.`,
   agentcage inspect researcher.agent --json`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			bundlePath, display, err := locate.Bundle(cmd.Context(), args[0])
+			b, err := locate.Bundle(cmd.Context(), args[0])
 			if err != nil {
 				return err
 			}
-			manifest, err := bundle.ReadManifest(bundlePath)
+			manifest, err := bundle.ReadManifest(b.Path)
 			if err != nil {
 				return err
 			}
@@ -49,7 +49,7 @@ itself can call them.`,
 				enc.SetIndent("", "  ")
 				return enc.Encode(manifest)
 			}
-			printManifest(w, display, manifest)
+			printManifest(w, b.Display, manifest)
 			return nil
 		},
 	}

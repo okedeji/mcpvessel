@@ -36,23 +36,23 @@ func TestDeriveImageRef(t *testing.T) {
 }
 
 func TestDeriveRunID_StableForSameBundleAndHash(t *testing.T) {
-	a := deriveRunID("/x/researcher.agent", "sha256:abcdef0123456789abcdef0123456789")
-	b := deriveRunID("/x/researcher.agent", "sha256:abcdef0123456789abcdef0123456789")
+	a := deriveRunID("researcher", "sha256:abcdef0123456789abcdef0123456789")
+	b := deriveRunID("researcher", "sha256:abcdef0123456789abcdef0123456789")
 	if a != b {
 		t.Errorf("deriveRunID not stable across calls: %q vs %q", a, b)
 	}
 }
 
 func TestDeriveRunID_ChangesWithHash(t *testing.T) {
-	a := deriveRunID("/x/researcher.agent", "sha256:aaaaaaaaaaaaaaaa")
-	b := deriveRunID("/x/researcher.agent", "sha256:bbbbbbbbbbbbbbbb")
+	a := deriveRunID("researcher", "sha256:aaaaaaaaaaaaaaaa")
+	b := deriveRunID("researcher", "sha256:bbbbbbbbbbbbbbbb")
 	if a == b {
 		t.Errorf("deriveRunID should differ when content hash changes (both = %q)", a)
 	}
 }
 
 func TestDeriveRunID_TruncatesHashSuffix(t *testing.T) {
-	got := deriveRunID("/x/researcher.agent", "sha256:0123456789abcdef0123")
+	got := deriveRunID("researcher", "sha256:0123456789abcdef0123")
 	// 12 chars of hex max in the suffix.
 	parts := strings.Split(got, "-")
 	hashPart := parts[len(parts)-1]
@@ -62,7 +62,7 @@ func TestDeriveRunID_TruncatesHashSuffix(t *testing.T) {
 }
 
 func TestDeriveRunID_HandlesEmptyHash(t *testing.T) {
-	got := deriveRunID("/x/researcher.agent", "")
+	got := deriveRunID("researcher", "")
 	if !strings.HasSuffix(got, "-run") {
 		t.Errorf("empty hash should yield -run suffix, got %q", got)
 	}
