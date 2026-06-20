@@ -78,6 +78,11 @@ func (c *Client) CallRun(ctx context.Context, id, tool string, args map[string]a
 	return out.Result, nil
 }
 
+// SetBudget changes a held run's LLM budget, in micro-USD.
+func (c *Client) SetBudget(ctx context.Context, id string, microUSD int64) error {
+	return c.post(ctx, "/runs/"+id+"/budget", map[string]int64{"micro_usd": microUSD}, nil)
+}
+
 // StopRun releases a held run.
 func (c *Client) StopRun(ctx context.Context, id string) error {
 	return c.post(ctx, "/runs/"+id+"/stop", nil, nil)

@@ -34,8 +34,10 @@ func main() {
 	root.AddCommand(newDaemonCmd())
 	root.AddCommand(newPsCmd())
 	root.AddCommand(newStopCmd())
+	root.AddCommand(newBudgetCmd())
 	root.AddCommand(newMCPGatewayCmd())
 	root.AddCommand(newLLMGatewayCmd())
+	root.AddCommand(newLLMControlCmd())
 	root.AddCommand(newEgressCmd())
 
 	if err := root.Execute(); err != nil {

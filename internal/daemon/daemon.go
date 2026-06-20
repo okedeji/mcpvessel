@@ -134,6 +134,7 @@ func (d *Daemon) Handler() http.Handler {
 	mux.HandleFunc("GET /runs", d.handleListRuns)
 	mux.HandleFunc("POST /runs", d.handleStartRun)
 	mux.HandleFunc("POST /runs/{id}/call", d.handleCallRun)
+	mux.HandleFunc("POST /runs/{id}/budget", d.handleSetBudget)
 	mux.HandleFunc("POST /runs/{id}/stop", d.handleStopRun)
 	return mux
 }

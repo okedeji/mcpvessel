@@ -110,11 +110,16 @@ func BuildGatewayImage(ctx context.Context, bk *BuildKit, noCache bool, w io.Wri
 // the llm-gateway mode, which makes an HTTPS request to the provider and on
 // scratch would have no trust roots; the cert-builder stage is discarded, so
 // the final image stays the binary plus one file, no shell or package surface.
+// gatewayBinaryPath is where the agentcage binary lands in the gateway image.
+// The Dockerfile copies it here and the daemon execs it here to drive a
+// gateway's control surface; one owner so the two cannot drift.
+const gatewayBinaryPath = "/agentcage"
+
 func gatewayDockerfile() string {
 	return "FROM alpine:3 AS certs\n" +
 		"RUN apk add --no-cache ca-certificates\n" +
 		"FROM scratch\n" +
 		"COPY --from=certs /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt\n" +
-		"COPY agentcage /agentcage\n" +
-		"ENTRYPOINT [\"/agentcage\"]\n"
+		"COPY agentcage " + gatewayBinaryPath + "\n" +
+		"ENTRYPOINT [\"" + gatewayBinaryPath + "\"]\n"
 }

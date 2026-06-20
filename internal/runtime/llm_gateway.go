@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strconv"
+	"strings"
 
 	"github.com/okedeji/agentcage/internal/bundle"
 	"github.com/okedeji/agentcage/internal/config"
@@ -18,6 +20,28 @@ import (
 // llmGatewayName is the LLM gateway container's name and the host reasoning
 // agents reach it at on the run network.
 func llmGatewayName(runID string) string { return runID + "-llm" }
+
+// SetRunBudget changes a running run's LLM budget. It execs the control client
+// inside the run's LLM gateway container, which POSTs to the gateway's loopback
+// control listener. Exec is the authorization: only the host can exec into the
+// container, and the listener is unreachable from the run network. It errors
+// when the run has no LLM gateway, which means it does not reason or has stopped.
+func SetRunBudget(ctx context.Context, runID string, microUSD int64) error {
+	p, err := DefaultProvisioner()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = p.Close() }()
+
+	cmd := p.Nerdctl(ctx, "exec", llmGatewayName(runID),
+		gatewayBinaryPath, "llm-control", "budget", strconv.FormatInt(microUSD, 10))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("setting budget for run %s (does it reason, and is it running?): %w: %s",
+			runID, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
 
 // llmURL is the AGENTCAGE_LLM_URL one reasoning agent is injected with: the LLM
 // gateway at an unguessable per-agent token, so a sibling cannot forge another

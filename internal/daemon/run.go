@@ -89,6 +89,33 @@ func (d *Daemon) handleCallRun(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"result": result})
 }
 
+// budgetRequest is the POST /runs/{id}/budget body: the run's new LLM budget.
+type budgetRequest struct {
+	MicroUSD int64 `json:"micro_usd"`
+}
+
+// handleSetBudget changes a held run's LLM budget live, routing through the
+// runtime which execs the control client inside the run's LLM gateway. The run
+// must be tracked; runtime.SetRunBudget surfaces the case where it has no
+// gateway (does not reason).
+func (d *Daemon) handleSetBudget(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if _, ok := d.session(id); !ok {
+		writeError(w, http.StatusNotFound, "no such run "+id)
+		return
+	}
+	var req budgetRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "decoding request: "+err.Error())
+		return
+	}
+	if err := runtime.SetRunBudget(r.Context(), id, req.MicroUSD); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // handleStopRun releases a held run and drops it from the registry. take removes
 // it under the lock so two stops cannot double-release the same Session.
 func (d *Daemon) handleStopRun(w http.ResponseWriter, r *http.Request) {
