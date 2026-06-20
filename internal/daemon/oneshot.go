@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/okedeji/agentcage/internal/config"
+	"github.com/okedeji/agentcage/internal/env"
 	"github.com/okedeji/agentcage/internal/locate"
 	"github.com/okedeji/agentcage/internal/runtime"
 )
@@ -77,15 +78,16 @@ func (d *Daemon) handleRun(w http.ResponseWriter, r *http.Request) {
 
 	stream := newRunStream(w)
 	session, err := d.boot(r.Context(), runtime.RunInput{
-		BundlePath: b.Path,
-		Name:       b.Name,
-		Budget:     req.Budget,
-		Env:        req.Env,
-		Secrets:    req.Secrets,
-		Resources:  req.Resources,
-		NoCache:    req.NoCache,
-		Stdout:     io.Discard,
-		Stderr:     stream.logWriter(),
+		BundlePath:  b.Path,
+		Name:        b.Name,
+		Budget:      req.Budget,
+		Env:         req.Env,
+		Secrets:     req.Secrets,
+		Resources:   req.Resources,
+		NoCache:     req.NoCache,
+		Interaction: env.InteractionOneShot,
+		Stdout:      io.Discard,
+		Stderr:      stream.logWriter(),
 	}, b.Display)
 	if err != nil {
 		stream.frame("error", err.Error())

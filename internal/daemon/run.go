@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/okedeji/agentcage/internal/env"
 	"github.com/okedeji/agentcage/internal/locate"
 	"github.com/okedeji/agentcage/internal/runtime"
 )
@@ -72,7 +73,7 @@ func (d *Daemon) handleStartRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	session, err := d.boot(context.Background(), runtime.RunInput{BundlePath: b.Path, Name: b.Name}, b.Display)
+	session, err := d.boot(context.Background(), runtime.RunInput{BundlePath: b.Path, Name: b.Name, Interaction: env.InteractionInteractive}, b.Display)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

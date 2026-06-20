@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 
+	"github.com/okedeji/agentcage/internal/env"
 	"github.com/okedeji/agentcage/internal/locate"
 	"github.com/okedeji/agentcage/internal/mcp"
 	"github.com/okedeji/agentcage/internal/reference"
@@ -109,7 +110,7 @@ func (d *Daemon) bootExposed(ctx context.Context, exposed []runtime.ExposedAgent
 	agents := make([]serve.Agent, 0, len(exposed))
 	sessions := make([]*runtime.Session, 0, len(exposed))
 	for _, ea := range exposed {
-		session, err := d.boot(context.Background(), runtime.RunInput{BundlePath: ea.Bundle, Name: ea.Address}, ea.Address)
+		session, err := d.boot(context.Background(), runtime.RunInput{BundlePath: ea.Bundle, Name: ea.Address, Interaction: env.InteractionInteractive}, ea.Address)
 		if err != nil {
 			return nil, sessions, fmt.Errorf("booting %s: %w", ea.Address, err)
 		}

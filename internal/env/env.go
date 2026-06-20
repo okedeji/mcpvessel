@@ -105,6 +105,22 @@ const (
 	ServeHTTP = Prefix + "SERVE_HTTP"
 )
 
+// Interaction tells the root agent whether its run can loop back to a caller.
+// A one-shot run/call gets a single turn and is torn down after it, with no
+// channel to ask a follow-up; a held or served run can be continued. An author
+// keys a complete, best-effort answer off oneshot instead of hedging for a
+// reply that will never come. It is advisory: the runtime sets it, the author
+// reads it. The hard gate on mid-call elicitation is the MCP client capability,
+// which a one-shot boot does not advertise.
+const Interaction = Prefix + "INTERACTION"
+
+// Interaction values. OneShot is a single run/call turn; Interactive is a held
+// or served run a caller can continue.
+const (
+	InteractionOneShot     = "oneshot"
+	InteractionInteractive = "interactive"
+)
+
 // UsesURL is the variable name carrying a sub-agent's MCP gateway URL for the
 // caller that USES it. NAME is the USES local name uppercased with dashes
 // turned to underscores. The agent side (the SDK or a raw MCP client)

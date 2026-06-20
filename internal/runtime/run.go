@@ -16,7 +16,7 @@ import (
 	"github.com/okedeji/agentcage/internal/mcp"
 )
 
-// RunInput drives Run. Mostly mirrors the CLI's `agentcage run` and
+// RunInput drives Acquire. Mostly mirrors the CLI's `agentcage run` and
 // `agentcage call` flags.
 type RunInput struct {
 	// BundlePath is the .agent file the operator wants to run.
@@ -53,6 +53,11 @@ type RunInput struct {
 	// The one-shot CLI leaves it false.
 	Managed bool
 
+	// Interaction is the run's loopback mode, injected into the root agent as
+	// AGENTCAGE_INTERACTION: oneshot for run/call (no follow-up), interactive
+	// for a held or served run. Empty injects nothing.
+	Interaction string
+
 	// Stdout / Stderr receive provisioning progress, the agent's
 	// stderr stream, and the final tool result. Callers typically
 	// pass os.Stdout and os.Stderr; tests can capture into a buffer.
@@ -72,9 +77,9 @@ type RunInput struct {
 
 // Session is one booted run the caller holds: the root agent's open MCP session,
 // the teardown that releases the whole graph (containers, networks, gateways),
-// and the run id that names it. The one-shot Run acquires one, calls once, and
-// releases; the daemon holds many across their lifetime, dispatching a call per
-// request and releasing on stop.
+// and the run id that names it. A one-shot run/call acquires one, calls once,
+// and releases; a held or served run keeps it across many calls, releasing on
+// stop or daemon shutdown.
 type Session struct {
 	runID    string
 	root     *mcp.Client
@@ -85,7 +90,7 @@ type Session struct {
 // names.
 func (s *Session) RunID() string { return s.runID }
 
-// Call dispatches one tool call on the root agent's session. The one-shot Run
+// Call dispatches one tool call on the root agent's session. A one-shot run/call
 // makes exactly one; a held run serves many across its lifetime.
 func (s *Session) Call(ctx context.Context, tool string, args map[string]any) (string, error) {
 	return s.root.CallTool(ctx, tool, args)
@@ -141,19 +146,20 @@ func Acquire(ctx context.Context, in RunInput) (*Session, error) {
 	}
 
 	boot := bootInput{
-		Agentfile: af,
-		Manifest:  manifest,
-		SourceDir: srcDir,
-		ImageRef:  deriveImageRef(in.BundlePath, manifest.FilesHash),
-		RunID:     runID,
-		Budget:    in.Budget,
-		OpEnv:     in.Env,
-		OpSecrets: in.Secrets,
-		Stdout:    in.Stdout,
-		Stderr:    in.Stderr,
-		Verbose:   in.Verbose,
-		NoCache:   in.NoCache,
-		Managed:   in.Managed,
+		Agentfile:   af,
+		Manifest:    manifest,
+		SourceDir:   srcDir,
+		ImageRef:    deriveImageRef(in.BundlePath, manifest.FilesHash),
+		RunID:       runID,
+		Budget:      in.Budget,
+		OpEnv:       in.Env,
+		OpSecrets:   in.Secrets,
+		Stdout:      in.Stdout,
+		Stderr:      in.Stderr,
+		Verbose:     in.Verbose,
+		NoCache:     in.NoCache,
+		Managed:     in.Managed,
+		Interaction: in.Interaction,
 	}
 	client, teardown, err := bootRun(ctx, in, boot, runID)
 	if err != nil {
@@ -201,6 +207,10 @@ type bootInput struct {
 	// Managed labels this run's containers and networks as daemon-managed so a
 	// restarted daemon can sweep a crashed predecessor's orphans.
 	Managed bool
+
+	// Interaction injects AGENTCAGE_INTERACTION into the root agent so its LLM
+	// knows whether a follow-up turn is possible. Empty injects nothing.
+	Interaction string
 
 	Stdout  io.Writer
 	Stderr  io.Writer
@@ -389,6 +399,16 @@ func startAttachedAgent(ctx context.Context, sess *bootSession, in bootInput, td
 	cap := in.Cap
 	if cap == (config.Cap{}) {
 		cap = defaultAgentCap
+	}
+
+	// Only the attached root carries the interaction mode: it is the agent whose
+	// turn ends when the run does. Sub-agents always have their parent as a live
+	// caller, so the question never reaches them.
+	if in.Interaction != "" {
+		if in.Env == nil {
+			in.Env = map[string]string{}
+		}
+		in.Env[env.Interaction] = in.Interaction
 	}
 
 	// On macOS this enters the Lima VM's rootless mount namespace via
