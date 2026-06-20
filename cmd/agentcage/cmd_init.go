@@ -1,8 +1,11 @@
 package main
 
 import (
+	"fmt"
+
 	"github.com/spf13/cobra"
 
+	"github.com/okedeji/agentcage/internal/daemon"
 	"github.com/okedeji/agentcage/internal/runtime"
 )
 
@@ -46,16 +49,27 @@ Examples:
 			}
 			defer func() { _ = provisioner.Close() }()
 
-			if runtime.SetupAlreadyReady(ctx, provisioner) {
-				_, _ = cmd.OutOrStdout().Write([]byte("Runtime already ready. Nothing to do.\n"))
-				return nil
+			// Bring the runtime (the Lima VM on macOS) up first, behind the
+			// phase UI, so the daemon we start next finds it ready instead of
+			// provisioning silently into its log.
+			if !runtime.SetupAlreadyReady(ctx, provisioner) {
+				stderr := cmd.ErrOrStderr()
+				ui := runtime.NewSetupUI(stderr)
+				err := runtime.EnsureBootstrap(ctx, provisioner, ui, verbose, stderr)
+				ui.Done()
+				if err != nil {
+					return err
+				}
 			}
 
-			stderr := cmd.ErrOrStderr()
-			var ui = runtime.NewSetupUI(stderr)
-			defer ui.Done()
-
-			return runtime.EnsureBootstrap(ctx, provisioner, ui, verbose, stderr)
+			// Start the daemon so the first run, ps, or stop finds it already
+			// up. Doing it here is the point of init: get the surprise latency
+			// out of the way on the operator's own time.
+			if _, err := daemon.Ensure(ctx); err != nil {
+				return err
+			}
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Runtime ready.")
+			return nil
 		},
 	}
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "stream the underlying provisioner output instead of the phase UI")

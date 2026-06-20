@@ -12,7 +12,7 @@ import (
 
 func newDaemonCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "daemon",
+		Use:   daemon.Command,
 		Short: "Run the agentcage control-plane daemon",
 		Long: `Run the long-lived daemon that supervises agents and answers the CLI.
 
