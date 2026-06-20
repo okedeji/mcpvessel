@@ -136,6 +136,13 @@ func (s *Session) Call(ctx context.Context, tool string, args map[string]any) (s
 	return s.root.CallTool(ctx, tool, args)
 }
 
+// ListTools returns the tools the held agent advertises, descriptions and input
+// schemas included. The serve front door reads them to publish a filtered
+// tools/list, so an external caller sees only the agent's public tools.
+func (s *Session) ListTools(ctx context.Context) ([]mcp.Tool, error) {
+	return s.root.ListTools(ctx)
+}
+
 // Release tears the run down. The teardown joins every cleanup step's error, so
 // a non-zero container exit or a failed network removal surfaces here.
 func (s *Session) Release() error {
