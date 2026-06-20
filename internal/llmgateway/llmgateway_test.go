@@ -10,6 +10,37 @@ import (
 	"testing"
 )
 
+func TestControl_SetBudgetThenSpendReflectsIt(t *testing.T) {
+	gw := New(Config{BudgetMicroUSD: 5000}, nil)
+	control := gw.Control()
+
+	set := httptest.NewRequest(http.MethodPost, "/budget", strings.NewReader(`{"micro_usd":9000}`))
+	setRec := httptest.NewRecorder()
+	control.ServeHTTP(setRec, set)
+	if setRec.Code != http.StatusNoContent {
+		t.Fatalf("POST /budget = %d, want 204", setRec.Code)
+	}
+
+	spendRec := httptest.NewRecorder()
+	control.ServeHTTP(spendRec, httptest.NewRequest(http.MethodGet, "/spend", nil))
+	var snap SpendReport
+	if err := json.Unmarshal(spendRec.Body.Bytes(), &snap); err != nil {
+		t.Fatalf("decoding /spend: %v", err)
+	}
+	if snap.BudgetMicroUSD != 9000 {
+		t.Errorf("budget after set = %d, want 9000", snap.BudgetMicroUSD)
+	}
+}
+
+func TestControl_RejectsNegativeBudget(t *testing.T) {
+	gw := New(Config{BudgetMicroUSD: 5000}, nil)
+	rec := httptest.NewRecorder()
+	gw.Control().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/budget", strings.NewReader(`{"micro_usd":-1}`)))
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("negative budget = %d, want 400", rec.Code)
+	}
+}
+
 // fakeProvider records what the gateway forwarded and returns a usage block
 // so the gateway has something to meter.
 func fakeProvider(t *testing.T, seen *providerCall) *httptest.Server {
@@ -44,7 +75,7 @@ func TestHandler_RoutesAttachesKeyOverridesModelAndEnforcesBudget(t *testing.T) 
 		Agents:         map[string]AgentRoute{"tok-r": {Key: "researcher", Model: "openai/gpt-4o"}},
 		BudgetMicroUSD: 5000,
 	}
-	gw := httptest.NewServer(Handler(cfg, nil))
+	gw := httptest.NewServer(New(cfg, nil).Handler())
 	defer gw.Close()
 
 	resp := post(t, gw.URL+"/tok-r/chat/completions", `{"model":"placeholder","messages":[]}`)
@@ -80,7 +111,7 @@ func TestHandler_FallbackUsesDefaultEndpointModel(t *testing.T) {
 		Default: "openai",
 		Agents:  map[string]AgentRoute{"tok-x": {Key: "x", Model: "anthropic/claude-3.5"}},
 	}
-	gw := httptest.NewServer(Handler(cfg, nil))
+	gw := httptest.NewServer(New(cfg, nil).Handler())
 	defer gw.Close()
 
 	post(t, gw.URL+"/tok-x/chat/completions", `{"messages":[]}`)
@@ -90,7 +121,7 @@ func TestHandler_FallbackUsesDefaultEndpointModel(t *testing.T) {
 }
 
 func TestHandler_UnknownAgent(t *testing.T) {
-	gw := httptest.NewServer(Handler(Config{Agents: map[string]AgentRoute{}}, nil))
+	gw := httptest.NewServer(New(Config{Agents: map[string]AgentRoute{}}, nil).Handler())
 	defer gw.Close()
 	if got := post(t, gw.URL+"/ghost/chat/completions", `{}`); got != http.StatusNotFound {
 		t.Errorf("unknown agent status = %d, want 404", got)
@@ -112,7 +143,7 @@ func TestHandler_ReportsPerAgentSpend(t *testing.T) {
 		Agents:         map[string]AgentRoute{"tok-a": {Key: "a", Model: "openai/gpt-4o"}, "tok-b": {Key: "b", Model: "openai/gpt-4o"}},
 		BudgetMicroUSD: 1_000_000,
 	}
-	gw := httptest.NewServer(Handler(cfg, func(r SpendReport) { last, reports = r, reports+1 }))
+	gw := httptest.NewServer(New(cfg, func(r SpendReport) { last, reports = r, reports+1 }).Handler())
 	defer gw.Close()
 
 	// Routed by the opaque token, but metered by the real agent key: a twice, b once.

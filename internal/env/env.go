@@ -74,6 +74,13 @@ const (
 // MCP gateway's port so both can share the run network.
 const DefaultLLMGatewayPort = "9001"
 
+// DefaultLLMControlPort is where the LLM gateway serves its operator control
+// surface (live budget changes, spend readout), next in the reserved 900x
+// gateway series. Unlike the others it binds the container's loopback only, so
+// agents on the run network cannot reach it; the daemon drives it through
+// nerdctl exec, from inside the container's namespace.
+const DefaultLLMControlPort = "9003"
+
 // Egress proxy variables the runtime injects into the egress container,
 // provisioned only when some agent declares EGRESS allow:. The proxy filters
 // outbound connections by host and holds no secrets.

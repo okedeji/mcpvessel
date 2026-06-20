@@ -115,12 +115,18 @@ type route struct {
 	model string
 }
 
-// Handler resolves each agent to an endpoint and model once, then proxies
-// /<agentKey>/... to that endpoint with the key attached, metering cost into
-// the shared budget and refusing new calls once it is spent. report, when
-// non-nil, receives the cumulative spend after each metered call; the cmd
-// wires it to the gateway's stdout so the runtime can read the run's total.
-func Handler(cfg Config, report func(SpendReport)) http.Handler {
+// Gateway is a configured LLM gateway: its meter, the agent-facing routes, and
+// a control surface for live budget changes. New builds it; Handler is what the
+// agents reach, Control what the operator reaches through a separate listener.
+type Gateway struct {
+	meter *meter
+	agent http.Handler
+}
+
+// New resolves each agent to an endpoint and model once and builds the gateway.
+// report, when non-nil, receives the cumulative spend after each metered call;
+// the cmd wires it to stdout so the runtime can read the run's total.
+func New(cfg Config, report func(SpendReport)) *Gateway {
 	m := &meter{
 		budget: cfg.BudgetMicroUSD,
 		agents: map[string]int64{},
@@ -145,7 +151,7 @@ func Handler(cfg Config, report func(SpendReport)) http.Handler {
 		routes[token] = route{proxy: newProxy(ep, m, ar.Key), model: model}
 	}
 
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	agent := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rt, ok := routes[firstSegment(r.URL.Path)]
 		if !ok {
 			writeError(w, http.StatusNotFound, "no LLM route for this agent")
@@ -153,8 +159,9 @@ func Handler(cfg Config, report func(SpendReport)) http.Handler {
 		}
 		// The gateway is on the wire, so the check is honest: a call only
 		// proceeds while budget remains, and metering happens on the way back.
-		// Worst case is one in-flight call's overshoot.
-		if cfg.BudgetMicroUSD > 0 && m.spentTotal() >= cfg.BudgetMicroUSD {
+		// Worst case is one in-flight call's overshoot. Read live so a mid-run
+		// `budget set` takes effect on the next call.
+		if m.overBudget() {
 			writeError(w, http.StatusPaymentRequired, "over-budget: the run's LLM budget is spent")
 			return
 		}
@@ -171,6 +178,43 @@ func Handler(cfg Config, report func(SpendReport)) http.Handler {
 		}
 		rt.proxy.ServeHTTP(w, r)
 	})
+	return &Gateway{meter: m, agent: agent}
+}
+
+// Handler is the agent-facing API: the proxy plus the budget gate. Agents reach
+// this listener; it carries no control routes, so a cage cannot raise its own
+// budget by calling the gateway it talks to.
+func (g *Gateway) Handler() http.Handler { return g.agent }
+
+// Control is the operator surface: a live budget change and a spend readout. It
+// is served on a separate, container-localhost listener that agents cannot
+// reach, so only the daemon (through nerdctl exec) drives it.
+func (g *Gateway) Control() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /budget", g.handleSetBudget)
+	mux.HandleFunc("GET /spend", g.handleSpend)
+	return mux
+}
+
+func (g *Gateway) handleSetBudget(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		MicroUSD int64 `json:"micro_usd"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "decoding request")
+		return
+	}
+	if body.MicroUSD < 0 {
+		writeError(w, http.StatusBadRequest, "budget must not be negative")
+		return
+	}
+	g.meter.setBudget(body.MicroUSD)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (g *Gateway) handleSpend(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(g.meter.snapshot())
 }
 
 // meter accumulates per-agent and total spend behind one lock, shared across
@@ -186,10 +230,21 @@ type meter struct {
 	report func(SpendReport)
 }
 
-func (m *meter) spentTotal() int64 {
+// overBudget reports whether spend has reached the budget, read live so a
+// budget raised or lowered mid-run takes effect on the next call. A zero budget
+// is unbounded.
+func (m *meter) overBudget() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.total
+	return m.budget > 0 && m.total >= m.budget
+}
+
+// setBudget changes the run's budget live. Raising it lets a blocked run
+// continue; lowering it stops the next call. An in-flight call is not aborted.
+func (m *meter) setBudget(b int64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.budget = b
 }
 
 func (m *meter) debit(agentKey string, ep Endpoint, u usage) {
@@ -198,6 +253,24 @@ func (m *meter) debit(agentKey string, ep Endpoint, u usage) {
 	m.total += cost
 	m.agents[agentKey] += cost
 	m.calls[agentKey]++
+	snap := m.snapshotLocked()
+	m.mu.Unlock()
+	if m.report != nil {
+		m.report(snap)
+	}
+}
+
+// snapshot returns the run's current spend, the readout the control surface
+// serves.
+func (m *meter) snapshot() SpendReport {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.snapshotLocked()
+}
+
+// snapshotLocked builds the spend report; the caller holds m.mu, so both debit
+// (already locked) and snapshot reuse it without a second lock.
+func (m *meter) snapshotLocked() SpendReport {
 	snap := SpendReport{
 		TotalMicroUSD:  m.total,
 		BudgetMicroUSD: m.budget,
@@ -206,10 +279,7 @@ func (m *meter) debit(agentKey string, ep Endpoint, u usage) {
 	for k, spent := range m.agents {
 		snap.Agents[k] = AgentSpend{SpentMicroUSD: spent, Calls: m.calls[k]}
 	}
-	m.mu.Unlock()
-	if m.report != nil {
-		m.report(snap)
-	}
+	return snap
 }
 
 // newProxy builds the reverse proxy for one endpoint: it forwards to the

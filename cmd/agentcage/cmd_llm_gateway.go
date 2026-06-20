@@ -35,7 +35,19 @@ func newLLMGatewayCmd() *cobra.Command {
 				addr = ":" + env.DefaultLLMGatewayPort
 			}
 			report := func(r llmgateway.SpendReport) { llmgateway.WriteSpendLine(os.Stdout, r) }
-			srv := &http.Server{Addr: addr, Handler: llmgateway.Handler(cfg, report)}
+			gw := llmgateway.New(cfg, report)
+
+			// The control surface listens on the container's loopback only, so
+			// agents on the run network cannot reach it; the daemon drives it via
+			// nerdctl exec, which runs inside this container's namespace.
+			control := &http.Server{Addr: "127.0.0.1:" + env.DefaultLLMControlPort, Handler: gw.Control()}
+			go func() {
+				if err := control.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+					fmt.Fprintf(os.Stderr, "llm gateway control listener: %v\n", err)
+				}
+			}()
+
+			srv := &http.Server{Addr: addr, Handler: gw.Handler()}
 			return srv.ListenAndServe()
 		},
 	}
