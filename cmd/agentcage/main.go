@@ -32,6 +32,7 @@ func main() {
 	root.AddCommand(newConfigCmd())
 	root.AddCommand(newSecretsCmd())
 	root.AddCommand(newDaemonCmd())
+	root.AddCommand(newServeCmd())
 	root.AddCommand(newPsCmd())
 	root.AddCommand(newStopCmd())
 	root.AddCommand(newBudgetCmd())
