@@ -1,7 +1,9 @@
 package runtime
 
 import (
+	"context"
 	"fmt"
+	"sort"
 
 	"github.com/okedeji/agentcage/internal/bundle"
 	"github.com/okedeji/agentcage/internal/reference"
@@ -19,12 +21,15 @@ type Exposure struct {
 
 // ExposedAgent is one externally reachable agent: its tree key, the
 // digest-pinned reference it was pulled by (the zero value for the served
-// root, which carries no pull reference), and the tools an external caller may
-// invoke, the agent's MAIN plus its EXPOSE'd tools and never a private one.
+// root, which carries no pull reference), the bundle serve boots it from as its
+// own run, the URL segment a caller addresses it by, and the tools that caller
+// may invoke, the agent's MAIN plus its EXPOSE'd tools and never a private one.
 type ExposedAgent struct {
-	Key   string
-	Ref   reference.Reference
-	Tools []string
+	Key     string
+	Ref     reference.Reference
+	Bundle  string
+	Address string
+	Tools   []string
 }
 
 // ExposureOverrides is the operator's serve-time exposure flags. Each entry is
@@ -81,11 +86,62 @@ func computeExposure(tree *runTree, ov ExposureOverrides) (Exposure, error) {
 	for key := range exposed {
 		node := tree.Nodes[key]
 		out.Agents[key] = ExposedAgent{
-			Key:   key,
-			Ref:   node.Ref,
-			Tools: publicTools(node.Manifest),
+			Key:    key,
+			Ref:    node.Ref,
+			Bundle: node.Bundle,
+			Tools:  publicTools(node.Manifest),
 		}
 	}
+	return out, nil
+}
+
+// exposureRootKey names the served root in the tree exposure resolves. The run
+// id does not matter here (exposure pulls no containers up), so a fixed key
+// keeps ResolveExposure pure of run identity.
+const exposureRootKey = "root"
+
+// ResolveExposure resolves the served bundle's USES tree and returns the agents
+// serve exposes: the root plus every USES PUBLIC sub-agent the overrides leave
+// reachable. Each carries the bundle serve boots it from, a URL-safe address an
+// external caller reaches it at, and its public tool names. rootAddress names
+// the served root, which has no pull reference of its own; sub-agents take their
+// address from their repository. Two agents resolving to one address is an error
+// rather than a silent last-writer-wins over the front door's routing table.
+func ResolveExposure(ctx context.Context, bundlePath, rootAddress string, ov ExposureOverrides) ([]ExposedAgent, error) {
+	manifest, err := bundle.ReadManifest(bundlePath)
+	if err != nil {
+		return nil, err
+	}
+	tree, err := resolveRunTree(ctx, exposureRootKey, bundlePath, manifest)
+	if err != nil {
+		return nil, err
+	}
+	exp, err := computeExposure(tree, ov)
+	if err != nil {
+		return nil, err
+	}
+
+	seen := map[string]string{}
+	out := make([]ExposedAgent, 0, len(exp.Agents))
+	for key, a := range exp.Agents {
+		if key == tree.Root {
+			a.Address = sanitizeRef(rootAddress)
+		} else {
+			a.Address = sanitizeRef(a.Ref.Repository)
+		}
+		if other, dup := seen[a.Address]; dup {
+			return nil, fmt.Errorf("exposed agents %s and %s both resolve to address %q; hide one with --no-expose", other, key, a.Address)
+		}
+		seen[a.Address] = key
+		out = append(out, a)
+	}
+
+	sort.Slice(out, func(i, j int) bool {
+		if (out[i].Key == tree.Root) != (out[j].Key == tree.Root) {
+			return out[i].Key == tree.Root
+		}
+		return out[i].Address < out[j].Address
+	})
 	return out, nil
 }
 
