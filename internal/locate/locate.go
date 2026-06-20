@@ -18,11 +18,11 @@ import (
 
 // Bundle resolves arg to a local bundle path. An existing file is used as-is,
 // so a hand-moved bundle or a -o output still works. A bare sha256 hash, full
-// or a prefix, resolves an unnamed build from the store, the way docker run
-// takes an image id. Anything else is a reference, resolved store-first: a
-// locally built bundle is found without a round-trip, and only a reference the
-// store lacks is pulled (cache-first). display is the label a human view shows
-// for the bundle: the file path, the hash, or the resolved ref.
+// or a prefix, resolves an unnamed build from the store. Anything else is a
+// reference, resolved store-first: a locally built bundle is found without a
+// round-trip, and only a reference the store lacks is pulled (cache-first).
+// display is the label a human view shows for the bundle: the file path, the
+// hash, or the resolved ref.
 func Bundle(ctx context.Context, arg string) (path, display string, err error) {
 	if info, statErr := os.Stat(arg); statErr == nil && !info.IsDir() {
 		return arg, arg, nil

@@ -96,11 +96,10 @@ func (s *Store) Get(ref reference.Reference) (bundlePath string, ok bool, err er
 	return path, true, nil
 }
 
-// FindByHash resolves a content hash, full or a prefix, to its stored bundle,
-// the way docker run takes a full or short image id. A full hash hits one
-// bundle; a prefix that matches more than one is ambiguous and errors rather
-// than guess. ok is false when nothing matches, so the caller reports a clear
-// miss.
+// FindByHash resolves a content hash, full or a prefix, to its stored bundle.
+// A full hash hits one bundle; a prefix that matches more than one is ambiguous
+// and errors rather than guess. ok is false when nothing matches, so the caller
+// reports a clear miss.
 func (s *Store) FindByHash(hash string) (bundlePath string, ok bool, err error) {
 	prefix := strings.ReplaceAll(hash, ":", "-")
 	dir := filepath.Join(s.dir, "bundles")
@@ -137,9 +136,9 @@ func (s *Store) refPath(ref reference.Reference) string {
 	return filepath.Join(s.dir, "refs", ref.Registry, filepath.FromSlash(ref.Repository), ref.Tag)
 }
 
-// CopyTo writes a copy of the bundle at src to dst, the -o escape hatch that
-// hands back a portable file (the docker save analogy) without the store
-// stopping being the source of truth.
+// CopyTo writes a copy of the bundle at src to dst. It backs the -o flag: a
+// portable file the operator can move by hand, while the store stays the source
+// of truth.
 func CopyTo(src, dst string) error {
 	in, err := os.Open(src)
 	if err != nil {
