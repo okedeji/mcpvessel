@@ -31,6 +31,8 @@ func main() {
 	root.AddCommand(newTreeCmd())
 	root.AddCommand(newConfigCmd())
 	root.AddCommand(newSecretsCmd())
+	root.AddCommand(newDaemonCmd())
+	root.AddCommand(newPsCmd())
 	root.AddCommand(newGatewayCmd())
 	root.AddCommand(newLLMGatewayCmd())
 	root.AddCommand(newEgressCmd())

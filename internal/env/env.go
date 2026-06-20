@@ -5,7 +5,27 @@
 // is caught at compile time instead of silently failing at runtime.
 package env
 
-import "strings"
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+)
+
+// HomeDir resolves the ~/.agentcage root where agentcage keeps its state,
+// honoring AGENTCAGE_HOME so an operator can relocate all of it together.
+// Callers join their own leaf onto it (the cache, the store, config.json, the
+// daemon socket). AGENTCAGE_HOME, when set, is that root directly.
+func HomeDir() (string, error) {
+	if h := strings.TrimSpace(os.Getenv(Home)); h != "" {
+		return h, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("locating home directory: %w", err)
+	}
+	return filepath.Join(home, ".agentcage"), nil
+}
 
 // Prefix is reserved for variables the runtime injects. The Agentfile
 // parser rejects author ENV keys carrying it, so an Agentfile cannot shadow
