@@ -22,12 +22,14 @@ type agentNode struct {
 
 // usesEdge is one USES relationship: Caller calls Sub, knowing it by Alias
 // (the USES local name the caller's AGENTCAGE_USES_<ALIAS>_URL carries),
-// with Deny tools the MCP gateway blocks on this edge.
+// with Deny tools the MCP gateway blocks on this edge. Public marks a USES
+// PUBLIC edge: serve exposes Sub to external callers alongside its caller.
 type usesEdge struct {
 	Caller string
 	Sub    string
 	Alias  string
 	Deny   []string
+	Public bool
 }
 
 // runTree is the resolved dependency tree for one run: every unique agent
@@ -71,6 +73,7 @@ func resolveTree(ctx context.Context, rootKey, rootBundle string, root *bundle.M
 				Sub:    subKey,
 				Alias:  usesAlias(u.Ref),
 				Deny:   u.Deny,
+				Public: u.Public,
 			})
 			if _, seen := tree.Nodes[subKey]; seen {
 				continue
