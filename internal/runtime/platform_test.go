@@ -116,12 +116,29 @@ func TestNerdctlRunArgs_MultiHomed(t *testing.T) {
 	}
 }
 
+func TestNerdctlRunArgs_ManagedLabel(t *testing.T) {
+	got := strings.Join(nerdctlRunArgs(ContainerSpec{
+		RunID: "echo-abc", ImageRef: "agentcage/echo:x", Networks: []string{"net"}, Managed: true,
+	}), " ")
+	if !strings.Contains(got, "--label agentcage.daemon=1") {
+		t.Errorf("managed container args missing the daemon label: %q", got)
+	}
+}
+
 func TestNetworkCreateArgs_InternalFlag(t *testing.T) {
-	if got := strings.Join(networkCreateArgs("run-net", true), " "); got != "network create run-net --internal" {
+	if got := strings.Join(networkCreateArgs("run-net", true, false), " "); got != "network create run-net --internal" {
 		t.Errorf("internal network args = %q", got)
 	}
-	if got := strings.Join(networkCreateArgs("run-egress", false), " "); got != "network create run-egress" {
+	if got := strings.Join(networkCreateArgs("run-egress", false, false), " "); got != "network create run-egress" {
 		t.Errorf("egress network args = %q", got)
+	}
+}
+
+func TestNetworkCreateArgs_ManagedLabel(t *testing.T) {
+	got := strings.Join(networkCreateArgs("run-net", true, true), " ")
+	want := "network create run-net --internal --label agentcage.daemon=1"
+	if got != want {
+		t.Errorf("managed network args = %q, want %q", got, want)
 	}
 }
 

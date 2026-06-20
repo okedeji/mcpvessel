@@ -102,6 +102,7 @@ func startEgressProxy(ctx context.Context, sess *bootSession, runID, egressNetwo
 			env.EgressAddr:   ":" + env.DefaultEgressPort,
 		},
 		Detached: true,
+		Managed:  in.Managed,
 	}.withCap(defaultGatewayCap)
 
 	if in.NoCache || !imageExists(ctx, sess.provisioner, spec.ImageRef) {

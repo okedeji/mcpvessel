@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/okedeji/agentcage/internal/runtime"
 )
 
 // shutdownTimeout bounds how long Serve waits for in-flight control-plane
@@ -38,6 +40,14 @@ func Serve(ctx context.Context, d *Daemon, socketPath string) error {
 	ln, err := net.Listen("unix", socketPath)
 	if err != nil {
 		return fmt.Errorf("listening on %s: %w", socketPath, err)
+	}
+
+	// We own the socket now, so no other daemon is serving and any
+	// daemon-labeled containers or networks are a crashed predecessor's orphans,
+	// safe to remove before we start accepting runs. Best-effort: a sweep error
+	// is logged, not fatal.
+	if err := runtime.SweepDaemonOrphans(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: reconciliation sweep: %v\n", err)
 	}
 
 	srv := &http.Server{Handler: d.Handler()}

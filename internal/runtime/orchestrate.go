@@ -39,7 +39,7 @@ func bootRun(ctx context.Context, in RunInput, boot bootInput, runID string) (*m
 	// choice, so this overlays onto Defaults only.
 	res := cfg.Resources
 	res.Defaults = overlayCap(in.Resources, res.Defaults)
-	ops := operatorInputs{env: in.Env, secrets: in.Secrets, models: cfg.Models, resources: res}
+	ops := operatorInputs{env: in.Env, secrets: in.Secrets, models: cfg.Models, resources: res, managed: in.Managed}
 
 	if len(boot.Manifest.Agentfile.Uses) == 0 {
 		// A directly-run agent has no registry ref, so per-agent overrides do
@@ -108,7 +108,7 @@ func bootTree(ctx context.Context, in bootInput, plan *runPlan, runID string) (*
 	// (reverse order) removes the containers first.
 	for _, key := range sortedStringKeys(plan.AgentNets) {
 		net := plan.AgentNets[key]
-		if err := createNetwork(ctx, sess.provisioner, net, true); err != nil {
+		if err := createNetwork(ctx, sess.provisioner, net, true, in.Managed); err != nil {
 			return nil, nil, err
 		}
 		td.push(func() error { return removeNetwork(sess.provisioner, net) })
@@ -145,7 +145,7 @@ func bootTree(ctx context.Context, in bootInput, plan *runPlan, runID string) (*
 	var egressNet string
 	if len(plan.LLMAgents) > 0 || len(plan.EgressAgents) > 0 {
 		egressNet = runID + "-egress"
-		if err := createNetwork(ctx, sess.provisioner, egressNet, false); err != nil {
+		if err := createNetwork(ctx, sess.provisioner, egressNet, false, in.Managed); err != nil {
 			return nil, nil, err
 		}
 		td.push(func() error { return removeNetwork(sess.provisioner, egressNet) })
@@ -225,14 +225,17 @@ func buildAgentImage(ctx context.Context, sess *bootSession, node *agentNode, im
 // route off the host, so a cage on it cannot egress: that is what makes
 // EGRESS deny-default hold. The gateway doors that need the outside join a
 // second, non-internal network too.
-func createNetwork(ctx context.Context, p Provisioner, name string, internal bool) error {
-	return runNerdctl(p.Nerdctl(ctx, networkCreateArgs(name, internal)...), "creating network "+name)
+func createNetwork(ctx context.Context, p Provisioner, name string, internal, managed bool) error {
+	return runNerdctl(p.Nerdctl(ctx, networkCreateArgs(name, internal, managed)...), "creating network "+name)
 }
 
-func networkCreateArgs(name string, internal bool) []string {
+func networkCreateArgs(name string, internal, managed bool) []string {
 	args := []string{"network", "create", name}
 	if internal {
 		args = append(args, "--internal")
+	}
+	if managed {
+		args = append(args, "--label", daemonResourceLabel+"=1")
 	}
 	return args
 }

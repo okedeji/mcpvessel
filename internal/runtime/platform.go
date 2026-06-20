@@ -64,7 +64,18 @@ type ContainerSpec struct {
 	CPUs     string // nerdctl --cpus cap
 	Pids     int    // nerdctl --pids-limit cap
 	Detached bool
+	// Managed labels the container as a daemon-managed run's, so a freshly
+	// started daemon can sweep a crashed predecessor's orphans. A one-shot run
+	// leaves it false and is never swept.
+	Managed bool
 }
+
+// daemonResourceLabel marks the containers and networks a daemon-managed run
+// creates. A daemon's runs die with it (their stdio holder is gone), so any
+// resource carrying this label at the next daemon startup is a crash orphan
+// safe to sweep. A one-shot run carries no such label, so the sweep never
+// touches a concurrent agentcage run.
+const daemonResourceLabel = "agentcage.daemon"
 
 // nerdctlRunArgs builds the `run ...` argument list for a spec. Env keys
 // are sorted so the command is deterministic (and testable).
@@ -92,6 +103,9 @@ func nerdctlRunArgs(spec ContainerSpec) []string {
 	}
 	if spec.Pids != 0 {
 		args = append(args, "--pids-limit", strconv.Itoa(spec.Pids))
+	}
+	if spec.Managed {
+		args = append(args, "--label", daemonResourceLabel+"=1")
 	}
 	keys := make([]string, 0, len(spec.Env))
 	for k := range spec.Env {

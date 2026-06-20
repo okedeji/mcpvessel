@@ -58,6 +58,11 @@ type RunInput struct {
 	// Empty falls back to the bundle path's basename.
 	Name string
 
+	// Managed marks this as a daemon-managed run, labeling its containers and
+	// networks so a restarted daemon can sweep a crashed predecessor's orphans.
+	// The one-shot CLI leaves it false.
+	Managed bool
+
 	// Stdout / Stderr receive provisioning progress, the agent's
 	// stderr stream, and the final tool result. Callers typically
 	// pass os.Stdout and os.Stderr; tests can capture into a buffer.
@@ -186,6 +191,7 @@ func Acquire(ctx context.Context, in RunInput) (*Session, error) {
 		Stderr:    in.Stderr,
 		Verbose:   in.Verbose,
 		NoCache:   in.NoCache,
+		Managed:   in.Managed,
 	}
 	client, teardown, err := bootRun(ctx, in, boot, runID)
 	if err != nil {
@@ -229,6 +235,10 @@ type bootInput struct {
 	// NoCache forces every image to rebuild even when a content-addressed
 	// image of the same source is already present.
 	NoCache bool
+
+	// Managed labels this run's containers and networks as daemon-managed so a
+	// restarted daemon can sweep a crashed predecessor's orphans.
+	Managed bool
 
 	Stdout  io.Writer
 	Stderr  io.Writer
@@ -292,12 +302,12 @@ func bootAgent(ctx context.Context, in bootInput) (*mcp.Client, func() error, er
 	egressNet := in.RunID + "-egress"
 	if model != "" || len(allowHosts) > 0 {
 		network := in.RunID + "-net"
-		if err := createNetwork(ctx, sess.provisioner, network, true); err != nil {
+		if err := createNetwork(ctx, sess.provisioner, network, true, in.Managed); err != nil {
 			return nil, nil, err
 		}
 		td.push(func() error { return removeNetwork(sess.provisioner, network) })
 
-		if err := createNetwork(ctx, sess.provisioner, egressNet, false); err != nil {
+		if err := createNetwork(ctx, sess.provisioner, egressNet, false, in.Managed); err != nil {
 			return nil, nil, err
 		}
 		td.push(func() error { return removeNetwork(sess.provisioner, egressNet) })
@@ -426,6 +436,7 @@ func startAttachedAgent(ctx context.Context, sess *bootSession, in bootInput, td
 		ImageRef: in.ImageRef,
 		Networks: []string{in.Network},
 		Env:      in.Env,
+		Managed:  in.Managed,
 	}.withCap(cap))...)
 	stdinPipe, err := cmd.StdinPipe()
 	if err != nil {

@@ -185,6 +185,7 @@ func buildRunPlan(tree *runTree, runID string, ops operatorInputs) (*runPlan, er
 				Networks: []string{nodeNet(key)},
 				Env:      agentEnv,
 				Detached: true,
+				Managed:  ops.managed,
 			}.withCap(agentCap(node, ops.resources)),
 		})
 	}
@@ -234,6 +235,7 @@ func buildRunPlan(tree *runTree, runID string, ops operatorInputs) (*runPlan, er
 			env.MCPAddr:   ":" + env.DefaultMCPGatewayPort,
 		},
 		Detached: true,
+		Managed:  ops.managed,
 	}.withCap(defaultGatewayCap)
 	return plan, nil
 }

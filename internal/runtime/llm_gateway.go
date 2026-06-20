@@ -149,6 +149,7 @@ func startLLMGateway(ctx context.Context, sess *bootSession, runID string, agent
 			env.LLMAddr:   ":" + env.DefaultLLMGatewayPort,
 		},
 		Detached: true,
+		Managed:  in.Managed,
 	}.withCap(defaultGatewayCap)
 
 	if in.NoCache || !imageExists(ctx, sess.provisioner, spec.ImageRef) {

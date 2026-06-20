@@ -10,6 +10,9 @@ type operatorInputs struct {
 	secrets   map[string]string
 	models    map[string]string
 	resources config.Resources
+	// managed labels the planned sub-agent and gateway containers as a
+	// daemon-managed run's, so a restarted daemon can sweep their orphans.
+	managed bool
 }
 
 // refKey is the config key for an agent: @org/name, version-independent, so an
