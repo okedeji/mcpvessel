@@ -17,6 +17,35 @@ type startRequest struct {
 	Ref string `json:"ref"`
 }
 
+// bootHeld boots a run from a bundle and records it in the registry, returning
+// its Session. Both the control plane (POST /runs) and the front door (serve)
+// boot through it, so they hold runs identically.
+//
+// Two deliberate choices. Acquire runs before d.hold takes the registry lock,
+// because booting a container is slow and must not serialize every other
+// control call. And it boots against a background context: a held run's stdio
+// subprocess has to outlive the request that started it, released on stop or on
+// daemon shutdown, never when the response is written.
+func (d *Daemon) bootHeld(bundlePath, name, display string) (*runtime.Session, error) {
+	session, err := runtime.Acquire(context.Background(), runtime.RunInput{
+		BundlePath: bundlePath,
+		Name:       name,
+		// A held run's detached sub-agents and networks do not self-reap when the
+		// daemon dies the way the root does over stdio EOF, so they are labeled
+		// managed for the startup sweep to find as a crashed daemon's orphans.
+		Managed: true,
+		// The tool result returns over Call, not stdout; the agent's stderr is
+		// the daemon's own until per-run log capture lands.
+		Stdout: io.Discard,
+		Stderr: os.Stderr,
+	})
+	if err != nil {
+		return nil, err
+	}
+	d.hold(RunInfo{ID: session.RunID(), Ref: display, Status: "running", StartedAt: nowFunc()}, session)
+	return session, nil
+}
+
 // callRequest is the POST /runs/{id}/call body: which tool to invoke on a held
 // run, and its arguments.
 type callRequest struct {
@@ -25,12 +54,6 @@ type callRequest struct {
 }
 
 // handleStartRun resolves the reference, boots the run, and holds its Session.
-//
-// Two deliberate choices. Acquire runs outside the registry lock, because
-// booting a container is slow and must not serialize every other control call.
-// And it boots against a background context, not the request's: the held run's
-// stdio subprocess has to outlive this request, so it is released on stop or on
-// daemon shutdown, never when the start response is written.
 func (d *Daemon) handleStartRun(w http.ResponseWriter, r *http.Request) {
 	var req startRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -48,26 +71,12 @@ func (d *Daemon) handleStartRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	session, err := runtime.Acquire(context.Background(), runtime.RunInput{
-		BundlePath: b.Path,
-		Name:       b.Name,
-		// A held run's detached sub-agents and networks do not self-reap when the
-		// daemon dies the way the root does over stdio EOF, so they are labeled
-		// managed for the startup sweep to find as a crashed daemon's orphans.
-		Managed: true,
-		// The tool result returns over Call, not stdout; the agent's stderr is
-		// the daemon's own until per-run log capture lands.
-		Stdout: io.Discard,
-		Stderr: os.Stderr,
-	})
+	session, err := d.bootHeld(b.Path, b.Name, b.Display)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-
-	info := RunInfo{ID: session.RunID(), Ref: b.Display, Status: "running", StartedAt: nowFunc()}
-	d.hold(info, session)
-	writeJSON(w, http.StatusOK, map[string]string{"id": info.ID, "ref": info.Ref})
+	writeJSON(w, http.StatusOK, map[string]string{"id": session.RunID(), "ref": b.Display})
 }
 
 // handleCallRun dispatches one tool call to a held run and returns its result.

@@ -53,6 +53,9 @@ func Serve(ctx context.Context, d *Daemon, socketPath string) error {
 	srv := &http.Server{Handler: d.Handler()}
 	go func() {
 		<-ctx.Done()
+		// Close the front doors first so external MCP traffic stops before the
+		// runs behind them are released, then drain the control plane.
+		d.closeFronts()
 		// Fresh context: the boot ctx is already cancelled, but the drain still
 		// needs its own deadline to finish or give up.
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)

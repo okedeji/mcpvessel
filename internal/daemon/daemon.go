@@ -1,14 +1,17 @@
-// Package daemon serves agentcage's control plane and tracks running agents
-// over a Unix socket.
+// Package daemon is agentcage's long-lived host process: it owns every running
+// agent and answers two listeners. The control plane (a Unix socket) serves the
+// CLI's run, ps, stop, and budget calls; the serve front door (a TCP port)
+// serves external MCP clients the agents an operator exposed.
 //
-// The daemon runs where containerd does: inside the Lima VM on macOS, directly
-// on the host on Linux. The CLI is a thin client that dials its socket, so the
-// daemon reaches agent containers natively over their networks instead of
-// fighting the host/VM boundary. Handler is the route set; server.go binds it
-// to the socket and client.go dials it.
+// It runs on the host, not in the Lima VM, and holds each run by keeping the
+// root attached over the stdio of a long-lived nerdctl subprocess, the same way
+// a one-shot run does but kept alive across calls. Handler is the control-plane
+// route set; server.go binds it to the socket, front.go opens the front door,
+// and client.go dials the socket.
 package daemon
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -52,6 +55,9 @@ type RunInfo struct {
 type Daemon struct {
 	mu   sync.Mutex
 	runs map[string]*heldRun
+	// fronts are the serve front doors the daemon has opened. Shutdown closes
+	// them so their listeners stop accepting before the runs behind them release.
+	fronts []*http.Server
 }
 
 // heldRun is one run the daemon holds: its reportable info and the live Session
@@ -126,6 +132,27 @@ func (d *Daemon) releaseAll() error {
 	return errors.Join(errs...)
 }
 
+// addFront records a serve front door so shutdown can close it.
+func (d *Daemon) addFront(srv *http.Server) {
+	d.mu.Lock()
+	d.fronts = append(d.fronts, srv)
+	d.mu.Unlock()
+}
+
+// closeFronts shuts every front door within shutdownTimeout, stopping external
+// MCP traffic before the runs behind it release.
+func (d *Daemon) closeFronts() {
+	d.mu.Lock()
+	fronts := d.fronts
+	d.fronts = nil
+	d.mu.Unlock()
+	for _, srv := range fronts {
+		ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		_ = srv.Shutdown(ctx)
+		cancel()
+	}
+}
+
 // Handler returns the control-plane routes. Split from Serve so tests drive the
 // API without binding a socket.
 func (d *Daemon) Handler() http.Handler {
@@ -136,6 +163,7 @@ func (d *Daemon) Handler() http.Handler {
 	mux.HandleFunc("POST /runs/{id}/call", d.handleCallRun)
 	mux.HandleFunc("POST /runs/{id}/budget", d.handleSetBudget)
 	mux.HandleFunc("POST /runs/{id}/stop", d.handleStopRun)
+	mux.HandleFunc("POST /serve", d.handleServe)
 	return mux
 }
 

@@ -83,6 +83,32 @@ func (c *Client) SetBudget(ctx context.Context, id string, microUSD int64) error
 	return c.post(ctx, "/runs/"+id+"/budget", map[string]int64{"micro_usd": microUSD}, nil)
 }
 
+// ServedAgent is one endpoint the front door opened: the address it answers on
+// under /agents/ and the public tools it exposes.
+type ServedAgent struct {
+	Address string   `json:"address"`
+	Tools   []string `json:"tools"`
+}
+
+// ServeResult is the front door the daemon opened for a serve request.
+type ServeResult struct {
+	Listen string        `json:"listen"`
+	Agents []ServedAgent `json:"agents"`
+}
+
+// Serve asks the daemon to boot an agent's exposed set and open an MCP front
+// door bound to listen, returning the endpoints it opened.
+func (c *Client) Serve(ctx context.Context, ref, listen string, expose, noExpose []string) (ServeResult, error) {
+	var out ServeResult
+	err := c.post(ctx, "/serve", map[string]any{
+		"ref":       ref,
+		"listen":    listen,
+		"expose":    expose,
+		"no_expose": noExpose,
+	}, &out)
+	return out, err
+}
+
 // StopRun releases a held run.
 func (c *Client) StopRun(ctx context.Context, id string) error {
 	return c.post(ctx, "/runs/"+id+"/stop", nil, nil)
