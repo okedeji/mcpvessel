@@ -286,8 +286,16 @@ func bootTree(ctx context.Context, in bootInput, tree *runTree, plan *runPlan, r
 		hostMax:    in.HostMax,
 		idleTTL:    in.IdleTTL,
 		outbound:   make(chan mcpgateway.ControlMessage, 256),
-		noCache:    in.NoCache,
-		stderr:     in.Stderr,
+		startCage: func(ctx context.Context, pa plannedAgent) error {
+			if err := buildAgentImage(ctx, sess, pa.Node, pa.Spec.ImageRef, in.NoCache, in.Stderr); err != nil {
+				return fmt.Errorf("activating %s: %w", pa.Node.Key, err)
+			}
+			if err := startDetached(ctx, sess.provisioner, pa.Spec); err != nil {
+				return fmt.Errorf("activating %s: %w", pa.Node.Key, err)
+			}
+			return nil
+		},
+		stopCage: func(name string) error { return removeContainer(sess.provisioner, name) },
 	}
 	return client, ws, nil
 }

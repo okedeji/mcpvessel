@@ -286,7 +286,7 @@ func (w *workingSet) activate(ctx context.Context, node string) error {
 	// Remove evicted victims' containers outside the lock; their slots, host
 	// slots, and networks were already freed when they were marked evicting.
 	for _, v := range victims {
-		_ = removeContainer(w.sess.provisioner, w.specByNode[v].Spec.RunID)
+		_ = w.stopCage(w.specByNode[v].Spec.RunID)
 		w.dropEvicting(v)
 	}
 
@@ -299,7 +299,7 @@ func (w *workingSet) activate(ctx context.Context, node string) error {
 	if !planned {
 		bootErr = fmt.Errorf("activate %s: no planned agent", node)
 	} else {
-		bootErr = w.bootCage(ctx, pa)
+		bootErr = w.startCage(ctx, pa)
 	}
 
 	w.mu.Lock()
@@ -315,7 +315,7 @@ func (w *workingSet) activate(ctx context.Context, node string) error {
 		// On a clean boot into a closing run, the container started but is not
 		// tracked for teardown, so remove it here.
 		if bootErr == nil {
-			_ = removeContainer(w.sess.provisioner, pa.Spec.RunID)
+			_ = w.stopCage(pa.Spec.RunID)
 		}
 		close(a.done)
 		if bootErr != nil {
@@ -347,20 +347,6 @@ func (w *workingSet) reserveLocked() (victims []string, ok bool) {
 		w.beginEvictLocked(v)
 		victims = append(victims, v)
 	}
-}
-
-// bootCage builds the sub-agent's image if it is not cached and starts its
-// container on its already-created network. Eviction and release track the cage
-// through the state map, so unlike the skeleton's agents it is not pushed onto
-// the teardown stack.
-func (w *workingSet) bootCage(ctx context.Context, pa plannedAgent) error {
-	if err := buildAgentImage(ctx, w.sess, pa.Node, pa.Spec.ImageRef, w.noCache, w.stderr); err != nil {
-		return fmt.Errorf("activating %s: %w", pa.Node.Key, err)
-	}
-	if err := startDetached(ctx, w.sess.provisioner, pa.Spec); err != nil {
-		return fmt.Errorf("activating %s: %w", pa.Node.Key, err)
-	}
-	return nil
 }
 
 // dropEvicting clears a fully-evicted cage's bookkeeping once its container is
@@ -405,7 +391,7 @@ func (w *workingSet) reapIdle() {
 	w.mu.Unlock()
 
 	for _, v := range victims {
-		_ = removeContainer(w.sess.provisioner, w.specByNode[v].Spec.RunID)
+		_ = w.stopCage(w.specByNode[v].Spec.RunID)
 		w.dropEvicting(v)
 	}
 }

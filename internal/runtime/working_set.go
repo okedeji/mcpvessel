@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"sync"
 	"time"
 
@@ -89,9 +88,13 @@ type workingSet struct {
 	// never blocks on the writer.
 	outbound chan mcpgateway.ControlMessage
 
+	// startCage builds and starts one cage's container; stopCage removes it. Real
+	// runs wire these to the provisioner in bootTree; tests stub them to exercise
+	// the activation state machine without containers.
+	startCage func(ctx context.Context, pa plannedAgent) error
+	stopCage  func(name string) error
+
 	closing bool
-	noCache bool
-	stderr  io.Writer
 	cancel  context.CancelFunc
 }
 
@@ -212,7 +215,7 @@ func (w *workingSet) releaseAll() error {
 
 	var errs []error
 	for _, node := range cages {
-		if err := removeContainer(w.sess.provisioner, w.specByNode[node].Spec.RunID); err != nil {
+		if err := w.stopCage(w.specByNode[node].Spec.RunID); err != nil {
 			errs = append(errs, err)
 		}
 		hostCages.release()
