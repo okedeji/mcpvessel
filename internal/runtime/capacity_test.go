@@ -1,0 +1,77 @@
+package runtime
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/okedeji/agentcage/internal/config"
+)
+
+func TestCompulsoryMemorySumsBaselineOnly(t *testing.T) {
+	gw := defaultGatewayCap.MemBytes()
+	plan := &runPlan{
+		RootCap:      config.Cap{Mem: "1g"},
+		LLMAgents:    map[string]string{"root": "openai/gpt-4o"}, // a reasoning run: LLM gateway present
+		EgressAgents: map[string]egressAgent{},                   // no egress proxy
+		Agents: []plannedAgent{
+			{Node: &agentNode{Key: "warm"}, Spec: ContainerSpec{Memory: "512m"}, AlwaysWarm: true},
+			{Node: &agentNode{Key: "elastic"}, Spec: ContainerSpec{Memory: "2g"}}, // elastic, excluded
+		},
+	}
+
+	// root (1g) + MCP gateway + LLM gateway + one kept-warm cage (512m); the
+	// elastic cage and the (absent) egress proxy are not counted.
+	want := int64(1<<30) + gw + gw + int64(512<<20)
+	if got := compulsoryMemory(plan); got != want {
+		t.Errorf("compulsoryMemory = %d, want %d", got, want)
+	}
+}
+
+func TestFitElastic(t *testing.T) {
+	// Baseline: root 1g + MCP gateway (128m). One elastic cage type at 1g.
+	plan := &runPlan{
+		RootCap: config.Cap{Mem: "1g"},
+		Agents: []plannedAgent{
+			{Node: &agentNode{Key: "e"}, Spec: ContainerSpec{Memory: "1g"}},
+		},
+	}
+	const gib = 1 << 30
+
+	// Plenty of memory: configured cap wins. 8GiB - 1GiB reserve - ~1.1GiB
+	// baseline leaves ~5.9GiB / 1GiB ~= 5 elastic, above the configured 4.
+	if got, err := fitElastic(8*gib, plan, 4); err != nil || got != 4 {
+		t.Errorf("fitElastic(8GiB, cap 4) = %d, %v; want 4, nil", got, err)
+	}
+
+	// Tight memory: leftover clamps the cap below the configured one. 4GiB - 1GiB
+	// reserve - ~1.1GiB baseline ~= 1.9GiB / 1GiB = 1 elastic, below 4.
+	if got, err := fitElastic(4*gib, plan, 4); err != nil || got != 1 {
+		t.Errorf("fitElastic(4GiB, cap 4) = %d, %v; want 1, nil", got, err)
+	}
+
+	// Baseline does not fit at all: error, not a clamp.
+	if _, err := fitElastic(1*gib, plan, 4); err == nil {
+		t.Error("fitElastic should error when the baseline does not fit the machine")
+	}
+}
+
+func TestReadMemTotal(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "meminfo")
+	content := "MemFree:         123456 kB\nMemTotal:       16384000 kB\nBuffers:          1000 kB\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := readMemTotal(path)
+	if err != nil {
+		t.Fatalf("readMemTotal: %v", err)
+	}
+	if want := int64(16384000) * 1024; got != want {
+		t.Errorf("readMemTotal = %d, want %d", got, want)
+	}
+
+	if _, err := readMemTotal(filepath.Join(dir, "missing")); err == nil {
+		t.Error("expected an error for a missing file")
+	}
+}

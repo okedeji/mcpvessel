@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"sort"
 	"strconv"
+	"strings"
 )
 
 // Provisioner is the platform-specific gate to a Linux container
@@ -43,6 +44,10 @@ type Provisioner interface {
 	ContainerdAddress() string
 	BuildKitAddress() string
 	Nerdctl(ctx context.Context, args ...string) *exec.Cmd
+	// AvailableMemory reports the total memory the machine can give cages, in
+	// bytes: the host's RAM on Linux, the VM's configured RAM on macOS. The
+	// runtime checks a run's compulsory footprint against it before booting.
+	AvailableMemory() (int64, error)
 	Close() error
 }
 
@@ -168,6 +173,36 @@ func (n *NativeProvisioner) ContainerdAddress() string { return DefaultContainer
 func (n *NativeProvisioner) BuildKitAddress() string   { return DefaultBuildKitAddress }
 func (n *NativeProvisioner) Close() error              { return nil }
 
+// AvailableMemory reads the host's total RAM from /proc/meminfo. On Linux the
+// cages run on this host directly, so its memory is the machine capacity.
+func (n *NativeProvisioner) AvailableMemory() (int64, error) {
+	return readMemTotal("/proc/meminfo")
+}
+
+// readMemTotal parses the MemTotal line of a /proc/meminfo-format file into
+// bytes. The value is reported in kB.
+func readMemTotal(path string) (int64, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if !strings.HasPrefix(line, "MemTotal:") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			break
+		}
+		kb, err := strconv.ParseInt(fields[1], 10, 64)
+		if err != nil {
+			return 0, fmt.Errorf("parsing MemTotal %q: %w", fields[1], err)
+		}
+		return kb * 1024, nil
+	}
+	return 0, fmt.Errorf("MemTotal not found in %s", path)
+}
+
 // Nerdctl runs `nerdctl <args>` on the host. Operators are expected to have
 // nerdctl on PATH when running agentcage on Linux without Lima.
 func (n *NativeProvisioner) Nerdctl(ctx context.Context, args ...string) *exec.Cmd {
@@ -221,6 +256,14 @@ func (l *LimaProvisioner) EnsureReady(ctx context.Context, stdout, stderr io.Wri
 func (l *LimaProvisioner) ContainerdAddress() string { return l.VM.ContainerdAddress() }
 func (l *LimaProvisioner) BuildKitAddress() string   { return l.VM.BuildKitAddress() }
 func (l *LimaProvisioner) Close() error              { return nil }
+
+// AvailableMemory reports the Lima VM's configured RAM. The cages run inside the
+// VM, so its memory, not the Mac's, is the machine capacity. The VM is created
+// with defaultLimaMemoryGiB, so that is what it has until VM sizing is made
+// configurable.
+func (l *LimaProvisioner) AvailableMemory() (int64, error) {
+	return int64(defaultLimaMemoryGiB) << 30, nil
+}
 
 // Nerdctl constructs `limactl shell <instance> nerdctl <args>`. The limactl
 // shell wrapper enters the Lima VM's user shell, and crucially the rootless

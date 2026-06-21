@@ -132,6 +132,28 @@ func TestCages_ValidateRejectsNegative(t *testing.T) {
 	}
 }
 
+func TestCapMemBytes(t *testing.T) {
+	cases := []struct {
+		in   string
+		want int64
+	}{
+		{"1g", 1 << 30},
+		{"512m", 512 << 20},
+		{"2G", 2 << 30},
+		{"1024k", 1024 << 10},
+		{"1048576", 1048576}, // bare bytes
+		{"1.5g", 1<<30 + 1<<29},
+		{"", 0},
+		{"big", 0},
+		{"-2g", 0},
+	}
+	for _, tc := range cases {
+		if got := (Cap{Mem: tc.in}).MemBytes(); got != tc.want {
+			t.Errorf("MemBytes(%q) = %d, want %d", tc.in, got, tc.want)
+		}
+	}
+}
+
 func TestValidate_AcceptsValidCaps(t *testing.T) {
 	c := Config{Resources: Resources{
 		Defaults: Cap{CPUs: "1.5", Mem: "512m", Pids: 1024},

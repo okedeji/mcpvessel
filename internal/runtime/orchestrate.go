@@ -118,6 +118,17 @@ func bootTree(ctx context.Context, in bootInput, tree *runTree, plan *runPlan, r
 		return nil, nil, err
 	}
 
+	// Refuse a run whose always-on baseline cannot fit the machine before any
+	// container starts, and clamp the elastic cap to what the leftover memory
+	// holds so on-demand growth cannot OOM the host either.
+	maxLive, err := admitMemory(sess.provisioner, plan, in.MaxLive)
+	if err != nil {
+		return nil, nil, err
+	}
+	if maxLive < in.MaxLive {
+		_, _ = fmt.Fprintf(in.Stderr, "note: cages.max_live reduced from %d to %d to fit available memory\n", in.MaxLive, maxLive)
+	}
+
 	// Every network is internal and created up front, before the MCP gateway joins
 	// all of them: the dedicated networks for the root and always-warm cages, and
 	// the two pools pooled cages draw from. Each cage is alone on its network, so
@@ -259,7 +270,7 @@ func bootTree(ctx context.Context, in bootInput, tree *runTree, plan *runPlan, r
 		pins:       map[string]int{},
 		lastUse:    lastUse,
 		inflight:   map[string]*activation{},
-		maxLive:    in.MaxLive,
+		maxLive:    maxLive,
 		hostMax:    in.HostMax,
 		idleTTL:    in.IdleTTL,
 		outbound:   make(chan mcpgateway.ControlMessage, 256),

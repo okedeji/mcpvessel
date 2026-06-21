@@ -220,6 +220,32 @@ func (c *Config) Validate() error {
 	return nil
 }
 
+// MemBytes parses the memory cap into bytes (the nerdctl suffixes k/m/g, base
+// 1024). An empty or unparseable value is 0, which a caller reads as "no cap
+// stated," the same zero-means-absent rule the cap fields use elsewhere.
+func (cap Cap) MemBytes() int64 {
+	s := strings.TrimSpace(cap.Mem)
+	if s == "" {
+		return 0
+	}
+	mult := int64(1)
+	switch s[len(s)-1] {
+	case 'b', 'B':
+		s = s[:len(s)-1]
+	case 'k', 'K':
+		mult, s = 1<<10, s[:len(s)-1]
+	case 'm', 'M':
+		mult, s = 1<<20, s[:len(s)-1]
+	case 'g', 'G':
+		mult, s = 1<<30, s[:len(s)-1]
+	}
+	v, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
+	if err != nil || v <= 0 {
+		return 0
+	}
+	return int64(v * float64(mult))
+}
+
 // Validate rejects a cap a cage must never run with: a non-positive cpu or
 // memory, or a negative pids limit. Zero in a field means "no operator value
 // here," so the runtime falls back to its default; a negative or malformed
