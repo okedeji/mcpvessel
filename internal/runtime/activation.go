@@ -23,6 +23,13 @@ const controlReexecBackoff = 500 * time.Millisecond
 // enough that the sweep itself is negligible.
 const reaperInterval = 30 * time.Second
 
+// saturationWaitDefault is how long an activation waits for a slot when every
+// live cage is pinned before it fails closed. Short, so it stays well inside the
+// gateway's overall activation wait (which also has to cover the boot), but long
+// enough that a peer finishing its call in-flight hands the slot over rather than
+// erroring an over-budget branch needlessly.
+const saturationWaitDefault = 10 * time.Second
+
 // hostCages is the machine's cage capacity across every run, the physical
 // ceiling the per-run elastic cap sits under. One daemon owns one host, so a
 // package-level counter is the host ceiling. Every cage reserves against it,
@@ -216,10 +223,15 @@ func (w *workingSet) onUnpin(edge string) {
 	if w.pins[node] > 0 {
 		w.pins[node]--
 	}
-	if w.pins[node] == 0 {
+	freed := w.pins[node] == 0
+	if freed {
 		w.lastUse[node] = nowFunc()
 	}
 	w.mu.Unlock()
+	if freed {
+		// The cage is now evictable, so a saturated activation can take its slot.
+		w.signalSlotFree()
+	}
 }
 
 // onResync replaces the pin counts with the gateway's authoritative snapshot,
@@ -249,85 +261,122 @@ func (w *workingSet) activate(ctx context.Context, node string) error {
 		w.mu.Unlock()
 		return fmt.Errorf("activate %s: run is shutting down", node)
 	}
-	switch w.state[node] {
-	case cageLive:
+	if w.state[node] == cageLive {
 		w.mu.Unlock()
 		return nil
-	case cageBooting:
-		a := w.inflight[node]
+	}
+	if a, ok := w.inflight[node]; ok {
 		w.mu.Unlock()
 		<-a.done
 		return a.err
 	}
-	victims, ok := w.reserveLocked()
-	var (
-		a   *activation
-		net string
-	)
-	if ok {
-		var perr error
-		net, perr = popPoolNet(&w.reasonFree, &w.plainFree, w.reasoningNode(node))
-		if perr != nil {
-			// Sizing makes this unreachable once a slot is free; release the host
-			// slot reserveLocked took so it is not leaked.
-			hostCages.release()
-			ok = false
-		}
-	}
-	if ok {
-		a = &activation{done: make(chan struct{})}
-		w.inflight[node] = a
-		w.state[node] = cageBooting
-		w.netOf[node] = net
-	}
-	pa, planned := w.specByNode[node]
+	// Claim the node before reserving, so concurrent first-calls join this boot
+	// rather than racing a second one while we wait for a slot. inflight is the
+	// claim; the cage does not occupy a slot until it reaches cageBooting.
+	a := &activation{done: make(chan struct{})}
+	w.inflight[node] = a
 	w.mu.Unlock()
 
-	// Remove evicted victims' containers outside the lock; their slots, host
-	// slots, and networks were already freed when they were marked evicting.
-	for _, v := range victims {
-		_ = w.stopCage(w.specByNode[v].Spec.RunID)
-		w.dropEvicting(v)
+	err := w.reserveAndBoot(ctx, node)
+
+	w.mu.Lock()
+	a.err = err
+	delete(w.inflight, node)
+	w.mu.Unlock()
+	close(a.done)
+	return err
+}
+
+// reserveAndBoot reserves a slot and network for the node, starts its cage, and
+// marks it live. On any failure it leaves no slot, network, or container behind.
+func (w *workingSet) reserveAndBoot(ctx context.Context, node string) error {
+	pa, planned := w.specByNode[node]
+	if !planned {
+		return fmt.Errorf("activate %s: no planned agent", node)
 	}
 
-	if !ok {
-		return fmt.Errorf("activate %s: at the live-cage cap and every cage is in use", node)
+	net, err := w.reserveSlot(ctx, node)
+	if err != nil {
+		return err
 	}
 
 	pa.Spec.Networks = []string{net}
-	var bootErr error
-	if !planned {
-		bootErr = fmt.Errorf("activate %s: no planned agent", node)
-	} else {
-		bootErr = w.startCage(ctx, pa)
-	}
+	bootErr := w.startCage(ctx, pa)
 
 	w.mu.Lock()
-	delete(w.inflight, node)
-	a.err = bootErr
-	closingNow := w.closing
-	if bootErr != nil || closingNow {
+	if bootErr != nil || w.closing {
 		delete(w.state, node)
 		w.returnNetLocked(node, net)
 		delete(w.netOf, node)
 		w.mu.Unlock()
 		hostCages.release()
-		// On a clean boot into a closing run, the container started but is not
-		// tracked for teardown, so remove it here.
-		if bootErr == nil {
-			_ = w.stopCage(pa.Spec.RunID)
-		}
-		close(a.done)
+		w.signalSlotFree()
 		if bootErr != nil {
 			return bootErr
 		}
+		// A clean boot into a closing run: the container started but is not tracked
+		// for teardown, so remove it here.
+		_ = w.stopCage(pa.Spec.RunID)
 		return fmt.Errorf("activate %s: run is shutting down", node)
 	}
 	w.state[node] = cageLive
 	w.lastUse[node] = nowFunc()
 	w.mu.Unlock()
-	close(a.done)
 	return nil
+}
+
+// reserveSlot secures a slot and a pool network for the node. It evicts idle
+// cages to make room, and when every slot is pinned it waits for one to free,
+// bounded by saturationWait, before failing closed. On success the node is in
+// cageBooting holding the returned network.
+func (w *workingSet) reserveSlot(ctx context.Context, node string) (string, error) {
+	deadline := time.NewTimer(w.saturationWait)
+	defer deadline.Stop()
+	for {
+		w.mu.Lock()
+		if w.closing {
+			w.mu.Unlock()
+			return "", fmt.Errorf("activate %s: run is shutting down", node)
+		}
+		victims, ok := w.reserveLocked()
+		var net string
+		if ok {
+			var perr error
+			net, perr = popPoolNet(&w.reasonFree, &w.plainFree, w.reasoningNode(node))
+			if perr != nil {
+				// Sizing makes this unreachable once a slot is free; release the
+				// host slot reserveLocked took so it is not leaked.
+				hostCages.release()
+				ok = false
+			}
+		}
+		if ok {
+			w.state[node] = cageBooting
+			w.netOf[node] = net
+		}
+		w.mu.Unlock()
+
+		// Remove evicted victims' containers outside the lock; their slots, host
+		// slots, and networks were freed when they were marked evicting.
+		for _, v := range victims {
+			_ = w.stopCage(w.specByNode[v].Spec.RunID)
+			w.dropEvicting(v)
+		}
+
+		if ok {
+			return net, nil
+		}
+
+		// Every slot is pinned. Wait for one to free, then retry; fail closed at
+		// the deadline so an over-budget branch errors rather than hangs.
+		select {
+		case <-w.slotFreed:
+		case <-deadline.C:
+			return "", fmt.Errorf("activate %s: at the live-cage cap and every cage is in use", node)
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}
 }
 
 // reserveLocked makes room for one new cage, reserving a host slot and evicting
@@ -357,6 +406,8 @@ func (w *workingSet) dropEvicting(node string) {
 	delete(w.pins, node)
 	delete(w.lastUse, node)
 	w.mu.Unlock()
+	// A slot freed; wake an activation that was waiting for one.
+	w.signalSlotFree()
 }
 
 // runReaper sweeps idle cages on a ticker, stopping when ctx is cancelled.

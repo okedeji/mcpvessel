@@ -54,19 +54,21 @@ func newActivationWS(maxLive int) (*workingSet, *cageTracker) {
 	hostCages = &hostCounter{}
 	tr := &cageTracker{startErr: map[string]error{}, startGate: map[string]chan struct{}{}}
 	ws := &workingSet{
-		plan:       &runPlan{EdgeNodes: map[string]string{}, LLMAgents: map[string]string{}},
-		specByNode: map[string]plannedAgent{},
-		alwaysWarm: map[string]bool{},
-		netOf:      map[string]string{},
-		state:      map[string]cageState{},
-		pins:       map[string]int{},
-		lastUse:    map[string]time.Time{},
-		inflight:   map[string]*activation{},
-		maxLive:    maxLive,
-		hostMax:    1000,
-		idleTTL:    time.Minute,
-		startCage:  tr.start,
-		stopCage:   tr.stop,
+		plan:           &runPlan{EdgeNodes: map[string]string{}, LLMAgents: map[string]string{}},
+		specByNode:     map[string]plannedAgent{},
+		alwaysWarm:     map[string]bool{},
+		netOf:          map[string]string{},
+		state:          map[string]cageState{},
+		pins:           map[string]int{},
+		lastUse:        map[string]time.Time{},
+		inflight:       map[string]*activation{},
+		maxLive:        maxLive,
+		hostMax:        1000,
+		idleTTL:        time.Minute,
+		slotFreed:      make(chan struct{}, 1),
+		saturationWait: time.Second,
+		startCage:      tr.start,
+		stopCage:       tr.stop,
 	}
 	return ws, tr
 }
@@ -151,6 +153,7 @@ func TestActivate_EvictsLRUWhenAtCap(t *testing.T) {
 
 func TestActivate_FailsClosedWhenAllPinned(t *testing.T) {
 	ws, tr := newActivationWS(1)
+	ws.saturationWait = 20 * time.Millisecond // fail fast when the slot never frees
 	ws.addPlain("a", "pool-0")
 	ws.addPlain("b", "pool-1")
 
@@ -160,13 +163,51 @@ func TestActivate_FailsClosedWhenAllPinned(t *testing.T) {
 	ws.pins["a"] = 1 // a is mid-call, so it cannot be evicted
 
 	if err := ws.activate(context.Background(), "b"); err == nil {
-		t.Error("activate b should fail closed when the only slot is pinned")
+		t.Error("activate b should fail closed when the only slot stays pinned")
 	}
 	if _, ok := ws.state["b"]; ok {
 		t.Errorf("b must not be live after a failed activation, state=%v", ws.state)
 	}
 	if tr.startedCount() != 1 {
 		t.Errorf("started = %v, want only [a]", tr.started)
+	}
+}
+
+func TestActivate_QueuesThenSucceedsWhenSlotFrees(t *testing.T) {
+	ws, tr := newActivationWS(1)
+	ws.plan.EdgeNodes["a-edge"] = "a"
+	ws.addPlain("a", "pool-0")
+	ws.addPlain("b", "pool-1")
+
+	if err := ws.activate(context.Background(), "a"); err != nil {
+		t.Fatalf("activate a: %v", err)
+	}
+	ws.pins["a"] = 1 // a is mid-call, so b must wait rather than evict it
+
+	done := make(chan error, 1)
+	go func() { done <- ws.activate(context.Background(), "b") }()
+
+	// b is now queued on the one pinned slot. Finish a's call: the unpin frees the
+	// slot, and b should wake, evict the now-idle a, and boot.
+	time.Sleep(50 * time.Millisecond)
+	ws.onUnpin("a-edge")
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("queued activate b: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("b did not activate after the slot freed")
+	}
+	if ws.state["b"] != cageLive {
+		t.Errorf("b should be live, state=%v", ws.state)
+	}
+	if _, ok := ws.state["a"]; ok {
+		t.Error("a should have been evicted once it unpinned and b needed the slot")
+	}
+	if len(tr.stopped) != 1 || tr.stopped[0] != "run-a" {
+		t.Errorf("stopped = %v, want [run-a] (a evicted to free the slot)", tr.stopped)
 	}
 }
 

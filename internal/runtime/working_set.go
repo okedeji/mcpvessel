@@ -94,8 +94,24 @@ type workingSet struct {
 	startCage func(ctx context.Context, pa plannedAgent) error
 	stopCage  func(name string) error
 
+	// slotFreed wakes an activation waiting for a slot when one frees (a cage
+	// unpins or is evicted). saturationWait bounds that wait before the activation
+	// fails closed. Buffered to one, since a woken waiter rechecks the full
+	// reservation anyway.
+	slotFreed      chan struct{}
+	saturationWait time.Duration
+
 	closing bool
 	cancel  context.CancelFunc
+}
+
+// signalSlotFree wakes one activation waiting for a slot. Non-blocking: at most
+// one pending wake is held, enough because each waiter rechecks on waking.
+func (w *workingSet) signalSlotFree() {
+	select {
+	case w.slotFreed <- struct{}{}:
+	default:
+	}
 }
 
 // occupiedLocked is the number of elastic cages holding a slot: booting or live,
