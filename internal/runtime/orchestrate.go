@@ -39,7 +39,7 @@ func bootRun(ctx context.Context, in RunInput, boot bootInput, runID string) (*m
 	// choice, so this overlays onto Defaults only.
 	res := cfg.Resources
 	res.Defaults = overlayCap(in.Resources, res.Defaults)
-	ops := operatorInputs{env: in.Env, secrets: in.Secrets, models: cfg.Models, resources: res, managed: in.Managed}
+	ops := operatorInputs{env: in.Env, secrets: in.Secrets, models: cfg.Models, resources: res, managed: in.Managed, prewarm: cfg.Cages.EffectivePrewarm()}
 
 	if len(boot.Manifest.Agentfile.Uses) == 0 {
 		// A directly-run agent has no registry ref, so per-agent overrides do

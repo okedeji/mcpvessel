@@ -13,6 +13,11 @@ type operatorInputs struct {
 	// managed labels the planned sub-agent and gateway containers as a
 	// daemon-managed run's, so a restarted daemon can sweep their orphans.
 	managed bool
+	// prewarm caps how many of the root's direct children the skeleton boots up
+	// front; the rest activate on first call. The resolver applies the runtime
+	// default, so a plan built with zero prewarms nothing (tests aside, the
+	// daemon never passes zero).
+	prewarm int
 }
 
 // refKey is the config key for an agent: @org/name, version-independent, so an

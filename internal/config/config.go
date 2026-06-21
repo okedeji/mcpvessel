@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/okedeji/agentcage/internal/env"
 )
@@ -21,6 +22,7 @@ type Config struct {
 	Providers []Endpoint        `json:"providers,omitempty"`
 	Resources Resources         `json:"resources,omitempty"`
 	Models    map[string]string `json:"models,omitempty"` // agent ref (@org/name) -> provider/model override
+	Cages     Cages             `json:"cages,omitempty"`
 }
 
 // Endpoint is one operator-configured OpenAI-compatible LLM endpoint. KeyRef
@@ -52,6 +54,85 @@ type Cap struct {
 	CPUs string `json:"cpus,omitempty"`
 	Mem  string `json:"mem,omitempty"`
 	Pids int    `json:"pids,omitempty"`
+}
+
+// Cages is the operator's policy for how a run's USES tree is kept warm: how
+// many cages may be live at once (per run and host-wide), how many of the root's
+// direct children to prewarm with the skeleton, and how long an idle cage lives
+// before it is reaped. AlwaysWarm names agent refs to keep pinned warm. Each
+// numeric field follows the Cap convention: zero means "no operator value here,"
+// so the runtime default applies; a negative is rejected, never read as
+// unlimited.
+type Cages struct {
+	MaxLive        int      `json:"max_live,omitempty"`         // max live cages per run
+	HostMaxLive    int      `json:"host_max_live,omitempty"`    // max live cages across all runs
+	Prewarm        int      `json:"prewarm,omitempty"`          // root's direct children booted up front
+	IdleTTLSeconds int      `json:"idle_ttl_seconds,omitempty"` // reap a cage idle past this
+	AlwaysWarm     []string `json:"always_warm,omitempty"`      // agent refs pinned warm
+}
+
+// Cage policy defaults. The per-run live cap is well above a normal sequential
+// tool-calling chain's peak (one active path through the tree), so only a wide
+// parallel fan-out feels it. The host cap is a multiple of that, the ceiling
+// across concurrent runs on one machine. Prewarm covers the common case where a
+// root fans out to a handful of workers it hits first. The idle TTL is long
+// enough that a cage called on a human-interactive cadence stays warm between
+// turns, short enough that a finished branch frees its slot within a few minutes.
+const (
+	DefaultMaxLiveCages     = 32
+	DefaultHostMaxLiveCages = 128
+	DefaultPrewarm          = 8
+	DefaultIdleTTLSeconds   = 300
+)
+
+// EffectiveMaxLive, EffectiveHostMaxLive, EffectivePrewarm, and EffectiveIdleTTL
+// resolve each knob to the operator's value when set, else the runtime default,
+// the same zero-means-default rule the resource caps use.
+func (cg Cages) EffectiveMaxLive() int {
+	if cg.MaxLive > 0 {
+		return cg.MaxLive
+	}
+	return DefaultMaxLiveCages
+}
+
+func (cg Cages) EffectiveHostMaxLive() int {
+	if cg.HostMaxLive > 0 {
+		return cg.HostMaxLive
+	}
+	return DefaultHostMaxLiveCages
+}
+
+func (cg Cages) EffectivePrewarm() int {
+	if cg.Prewarm > 0 {
+		return cg.Prewarm
+	}
+	return DefaultPrewarm
+}
+
+func (cg Cages) EffectiveIdleTTL() time.Duration {
+	if cg.IdleTTLSeconds > 0 {
+		return time.Duration(cg.IdleTTLSeconds) * time.Second
+	}
+	return DefaultIdleTTLSeconds * time.Second
+}
+
+// Validate rejects a cage policy a run must never honor: a negative live cap,
+// prewarm, or idle TTL. Zero in any field means "no operator value here," so the
+// runtime default applies; a negative is fail-closed, never read as unlimited.
+func (cg Cages) Validate() error {
+	if cg.MaxLive < 0 {
+		return fmt.Errorf("max_live must not be negative, got %d", cg.MaxLive)
+	}
+	if cg.HostMaxLive < 0 {
+		return fmt.Errorf("host_max_live must not be negative, got %d", cg.HostMaxLive)
+	}
+	if cg.Prewarm < 0 {
+		return fmt.Errorf("prewarm must not be negative, got %d", cg.Prewarm)
+	}
+	if cg.IdleTTLSeconds < 0 {
+		return fmt.Errorf("idle TTL must not be negative, got %d", cg.IdleTTLSeconds)
+	}
+	return nil
 }
 
 // Load reads ~/.agentcage/config.json. A missing file is an empty config, not
@@ -130,6 +211,9 @@ func (c *Config) Validate() error {
 		if err := cap.Validate(); err != nil {
 			return fmt.Errorf("resource cap for %q: %w", ref, err)
 		}
+	}
+	if err := c.Cages.Validate(); err != nil {
+		return fmt.Errorf("cage policy: %w", err)
 	}
 	return nil
 }

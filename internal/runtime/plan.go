@@ -125,15 +125,27 @@ func buildRunPlan(tree *runTree, runID string, ops operatorInputs) (*runPlan, er
 		return nil, err
 	}
 
-	// The skeleton boots the root's direct children up front (the hot path);
-	// every other node activates on first call. An edge to a non-prewarmed node
-	// is marked inactive, so the gateway holds the first call to it while the
-	// daemon boots its sub-agent.
+	// The skeleton boots the root's direct children up front (the hot path), up
+	// to the operator's prewarm count; every other node activates on first call.
+	// An edge to a non-prewarmed node is marked inactive, so the gateway holds the
+	// first call to it while the daemon boots its sub-agent. Direct children are
+	// taken in sorted key order so the prewarmed set is deterministic when the
+	// count is below the fan-out.
 	prewarmed := map[string]bool{}
+	seenChild := map[string]bool{}
+	var directChildren []string
 	for _, e := range tree.Edges {
-		if e.Caller == tree.Root {
-			prewarmed[e.Sub] = true
+		if e.Caller == tree.Root && !seenChild[e.Sub] {
+			seenChild[e.Sub] = true
+			directChildren = append(directChildren, e.Sub)
 		}
+	}
+	sort.Strings(directChildren)
+	for i, sub := range directChildren {
+		if i >= ops.prewarm {
+			break
+		}
+		prewarmed[sub] = true
 	}
 
 	// callerEnv collects the sub-agent URLs each non-root caller is injected

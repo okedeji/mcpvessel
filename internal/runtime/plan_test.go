@@ -446,7 +446,7 @@ func TestBuildRunPlan_PrewarmsDirectChildrenDefersDeeper(t *testing.T) {
 		},
 	}
 
-	plan, err := buildRunPlan(tree, "run1", operatorInputs{})
+	plan, err := buildRunPlan(tree, "run1", operatorInputs{prewarm: 8})
 	if err != nil {
 		t.Fatalf("buildRunPlan: %v", err)
 	}
