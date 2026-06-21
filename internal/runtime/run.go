@@ -294,6 +294,24 @@ func bootAgent(ctx context.Context, in bootInput) (*mcp.Client, *workingSet, err
 	// default network, unchanged.
 	model := manifestModel(in.Manifest)
 	allowHosts := egressHosts(manifestEgress(in.Manifest))
+
+	// Refuse the run before starting anything if the agent's cage (plus its
+	// gateways) does not fit the machine, the same admission a USES tree gets.
+	// in.Cap is the operator's effective cap; a caller that bypassed bootRun
+	// (introspection) leaves it empty, so fall back to the runtime default.
+	rootMem := in.Cap.MemBytes()
+	if rootMem == 0 {
+		rootMem = defaultAgentCap.MemBytes()
+	}
+	usable, err := usableMemory(sess.provisioner, in.MachineMemCap, in.Stderr)
+	if err != nil {
+		return nil, nil, err
+	}
+	if need := soloBaselineMemory(rootMem, model != "", len(allowHosts) > 0); need > usable {
+		return nil, nil, fmt.Errorf("this agent needs %s but the machine has %s usable: lower its RESOURCES cap or use a machine with more memory",
+			humanBytes(need), humanBytes(usable))
+	}
+
 	egressNet := in.RunID + "-egress"
 	if model != "" || len(allowHosts) > 0 {
 		network := in.RunID + "-net"

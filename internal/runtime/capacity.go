@@ -2,10 +2,42 @@ package runtime
 
 import (
 	"fmt"
+	"io"
 
 	"github.com/okedeji/agentcage/internal/bundle"
 	"github.com/okedeji/agentcage/internal/config"
 )
+
+// usableMemory applies the operator's machine.memory_gib to the machine's real
+// memory and warns when the setting asks for more than the machine has. Both the
+// tree and single-container boot paths read it before admitting a run.
+func usableMemory(p Provisioner, machineMemCap int64, stderr io.Writer) (int64, error) {
+	avail, err := p.AvailableMemory()
+	if err != nil {
+		return 0, fmt.Errorf("reading machine memory: %w", err)
+	}
+	usable, overRequest := effectiveAvailable(avail, machineMemCap)
+	if overRequest {
+		_, _ = fmt.Fprintf(stderr, "note: machine.memory_gib requests %s but the machine has %s; recreate the VM to apply on macOS, or lower it below host RAM on Linux. Using %s\n",
+			humanBytes(machineMemCap), humanBytes(avail), humanBytes(avail))
+	}
+	return usable, nil
+}
+
+// soloBaselineMemory is the always-on memory a single-container run needs: the
+// agent's cage, plus the LLM gateway if it reasons and the egress proxy if it
+// declares allow:. There is no MCP gateway, since a lone agent has no USES tree.
+func soloBaselineMemory(rootMem int64, reasons, egress bool) int64 {
+	total := rootMem
+	gw := defaultGatewayCap.MemBytes()
+	if reasons {
+		total += gw
+	}
+	if egress {
+		total += gw
+	}
+	return total
+}
 
 // CageMemoryBytes is the memory one cage gets: its manifest's RESOURCES hint, or
 // the runtime default when it states none. inspect shows it per agent; the tree

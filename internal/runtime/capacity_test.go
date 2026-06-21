@@ -43,6 +43,49 @@ func TestTreeBaselineMemory(t *testing.T) {
 	}
 }
 
+func TestSoloBaselineMemory(t *testing.T) {
+	gw := defaultGatewayCap.MemBytes()
+	const root = 1 << 30
+	if got := soloBaselineMemory(root, false, false); got != root {
+		t.Errorf("plain solo = %d, want just the cage %d", got, root)
+	}
+	if got := soloBaselineMemory(root, true, false); got != root+gw {
+		t.Errorf("reasoning solo = %d, want cage + LLM gateway", got)
+	}
+	if got := soloBaselineMemory(root, true, true); got != root+gw+gw {
+		t.Errorf("reasoning+egress solo = %d, want cage + LLM gateway + egress proxy", got)
+	}
+}
+
+func TestTreeBaselineMemory_CountsDeepEgress(t *testing.T) {
+	node := func(model, egress, mem string) *agentNode {
+		return &agentNode{Manifest: &bundle.Manifest{Agentfile: bundle.AgentfileSpec{
+			Model: model, Egress: egress, Resources: &bundle.ResourcesSpec{Mem: mem},
+		}}}
+	}
+	// root -> mid (plain, elastic) -> deep (egress, two levels down). The deep
+	// egress cage must be in the baseline even though its parent is elastic.
+	tree := &runTree{
+		Root: "root",
+		Nodes: map[string]*agentNode{
+			"root": node("", "", "1g"),
+			"mid":  node("", "", "1g"),                    // elastic, excluded
+			"deep": node("", "allow:example.com", "256m"), // egress at depth 2
+		},
+		Edges: []usesEdge{
+			{Caller: "root", Sub: "mid", Alias: "m"},
+			{Caller: "mid", Sub: "deep", Alias: "d"},
+		},
+	}
+	gw := defaultGatewayCap.MemBytes()
+	// root (1g) + MCP gateway + egress proxy + the deep egress cage (256m); mid is
+	// elastic and excluded, and nothing reasons so there is no LLM gateway.
+	want := int64(1<<30) + gw + gw + int64(256<<20)
+	if got := treeBaselineMemory(tree); got != want {
+		t.Errorf("treeBaselineMemory = %d, want %d (a deep egress cage must be counted)", got, want)
+	}
+}
+
 func TestCompulsoryMemorySumsBaselineOnly(t *testing.T) {
 	gw := defaultGatewayCap.MemBytes()
 	plan := &runPlan{
