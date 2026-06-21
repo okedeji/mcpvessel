@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 
@@ -30,11 +31,38 @@ func newMCPGatewayCmd() *cobra.Command {
 			if addr == "" {
 				addr = ":" + env.DefaultMCPGatewayPort
 			}
-			srv := &http.Server{Addr: addr, Handler: mcpgateway.Handler(cfg)}
+			gw := mcpgateway.New(cfg)
+
+			// The activation control stream listens on the container's loopback
+			// only, so agents on the run network cannot reach it; the daemon
+			// drives it by exec'ing the mcp-control bridge into this container.
+			go serveMCPControl(gw)
+
+			srv := &http.Server{Addr: addr, Handler: gw.Handler()}
 			return srv.ListenAndServe()
 		},
 	}
 	return cmd
+}
+
+// serveMCPControl accepts one control connection at a time on loopback and runs
+// the activation stream over it. The daemon holds a single bridge per run and
+// re-execs it if it dies, so a returned connection just loops back to Accept for
+// the next one.
+func serveMCPControl(gw *mcpgateway.Gateway) {
+	ln, err := net.Listen("tcp", "127.0.0.1:"+env.DefaultMCPControlPort)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "mcp gateway control listener: %v\n", err)
+		return
+	}
+	for {
+		conn, err := ln.Accept()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "mcp gateway control accept: %v\n", err)
+			return
+		}
+		_ = gw.ServeControl(conn)
+	}
 }
 
 // mcpGatewayConfigFromEnv reads the routing table the runtime injected.

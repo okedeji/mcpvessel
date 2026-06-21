@@ -54,6 +54,14 @@ const (
 // listen side and the call side cannot drift.
 const DefaultMCPGatewayPort = "9000"
 
+// DefaultMCPControlPort is where the MCP gateway serves its activation control
+// stream, next in the reserved 900x gateway series. Like the LLM control port it
+// binds the container's loopback only, unreachable from the run network: the
+// daemon reaches it by exec'ing the mcp-control bridge into the container, which
+// is what lets a sandboxed gateway ask the host to boot an inactive sub-agent
+// without ever holding an outbound channel of its own.
+const DefaultMCPControlPort = "9004"
+
 // LLM gateway variables. LLMURL is the only one a reasoning cage sees: an
 // OpenAI-compatible endpoint it calls instead of a provider directly.
 // LLMConfig and LLMAddr go into the LLM gateway container, which holds the

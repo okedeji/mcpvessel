@@ -37,6 +37,7 @@ func main() {
 	root.AddCommand(newStopCmd())
 	root.AddCommand(newBudgetCmd())
 	root.AddCommand(newMCPGatewayCmd())
+	root.AddCommand(newMCPControlCmd())
 	root.AddCommand(newLLMGatewayCmd())
 	root.AddCommand(newLLMControlCmd())
 	root.AddCommand(newEgressCmd())

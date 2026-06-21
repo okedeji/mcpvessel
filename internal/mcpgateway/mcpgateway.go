@@ -19,18 +19,32 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"strings"
+	"sync"
+	"time"
 )
+
+// activationWaitTimeout bounds how long a call to an inactive edge blocks while
+// the daemon boots its sub-agent before the call fails closed. It is sized for a
+// container create plus the MCP handshake (the 2-4s cold-start floor) with wide
+// margin. A first-ever activation that also has to build the sub-agent's image
+// can exceed it; that call fails closed and the next one, once the build has
+// cached, proceeds. Production agents pre-build, so steady state is a container
+// start, well inside this.
+const activationWaitTimeout = 30 * time.Second
 
 // Edge is one routing entry: where a USES sub-agent's MCP server lives and
 // which of its tools the caller may not invoke. Banned marks an edge whose
 // target agent is banned outright (a whole-agent BAN); the gateway rejects
 // every call on it, handshake included, and the target is never started so
 // it points nowhere. Tool-level bans need no flag here: they arrive merged
-// into Deny.
+// into Deny. Inactive marks an edge whose target is not booted yet: the first
+// call to it blocks while the gateway asks the daemon to activate it, then
+// proxies once it is live.
 type Edge struct {
-	Target string   `json:"target"` // sub-agent MCP URL, e.g. http://web-search:8000/mcp
-	Deny   []string `json:"deny,omitempty"`
-	Banned bool     `json:"banned,omitempty"`
+	Target   string   `json:"target"` // sub-agent MCP URL, e.g. http://web-search:8000/mcp
+	Deny     []string `json:"deny,omitempty"`
+	Banned   bool     `json:"banned,omitempty"`
+	Inactive bool     `json:"inactive,omitempty"`
 }
 
 // Config is the gateway's routing table: the first path segment of an
@@ -40,24 +54,54 @@ type Config struct {
 	Edges map[string]Edge `json:"edges"`
 }
 
-// Handler routes /<edge>/... to the edge's target, rejecting a tools/call
-// to a denied tool with a JSON-RPC error and forwarding everything else.
-func Handler(cfg Config) http.Handler {
-	proxies := make(map[string]*httputil.ReverseProxy, len(cfg.Edges))
-	deny := make(map[string]map[string]bool, len(cfg.Edges))
-	banned := make(map[string]bool, len(cfg.Edges))
+// Gateway routes a parent's USES calls to each sub-agent and enforces deny. It
+// also tracks which edges are live: an edge whose target is not booted blocks
+// the first call while the daemon activates it (see control.go), then proxies.
+// Built once at boot and reused for every call; the routing table never changes,
+// only an edge's live/inactive state does.
+type Gateway struct {
+	proxies map[string]*httputil.ReverseProxy
+	deny    map[string]map[string]bool
+	banned  map[string]bool
+
+	// mu guards the live state below: active, the waiters blocked on an
+	// activation, and pending, the edges already asked of the daemon. The
+	// routing maps above are write-once at New and read without the lock.
+	mu      sync.Mutex
+	active  map[string]bool
+	waiters map[string][]chan bool
+	pending map[string]bool
+
+	// requests carries edge ids needing activation to whichever control stream
+	// is connected. Buffered to one slot per edge so a first caller never blocks
+	// enqueuing, since each edge is pending at most once at a time.
+	requests chan string
+}
+
+// New builds the gateway from its routing table. It starts no goroutines: the
+// control stream runs only once the daemon connects one (ServeControl).
+func New(cfg Config) *Gateway {
+	g := &Gateway{
+		proxies:  make(map[string]*httputil.ReverseProxy, len(cfg.Edges)),
+		deny:     make(map[string]map[string]bool, len(cfg.Edges)),
+		banned:   make(map[string]bool, len(cfg.Edges)),
+		active:   make(map[string]bool, len(cfg.Edges)),
+		waiters:  make(map[string][]chan bool),
+		pending:  make(map[string]bool),
+		requests: make(chan string, len(cfg.Edges)+1),
+	}
 	for id, edge := range cfg.Edges {
 		if edge.Banned {
 			// A banned target never runs, so there is nothing to proxy to;
 			// the edge exists only so the caller gets a clean error.
-			banned[id] = true
+			g.banned[id] = true
 			continue
 		}
 		target, err := url.Parse(edge.Target)
 		if err != nil {
 			continue
 		}
-		proxies[id] = &httputil.ReverseProxy{
+		g.proxies[id] = &httputil.ReverseProxy{
 			Rewrite: func(r *httputil.ProxyRequest) {
 				// Forward to the sub-agent's exact endpoint, dropping the
 				// /<edge> prefix the parent addressed us by.
@@ -69,16 +113,27 @@ func Handler(cfg Config) http.Handler {
 			// Stream streamable-HTTP SSE events back immediately.
 			FlushInterval: -1,
 		}
-		deny[id] = denySet(edge.Deny)
+		g.deny[id] = denySet(edge.Deny)
+		// An inactive edge waits for the daemon to activate it before it proxies.
+		g.active[id] = !edge.Inactive
 	}
+	return g
+}
 
+// Handler routes /<edge>/... to the edge's target, rejecting a tools/call to a
+// denied tool with a JSON-RPC error and forwarding everything else.
+func Handler(cfg Config) http.Handler { return New(cfg).Handler() }
+
+// Handler is the parent-facing proxy. It is the agent side of the gateway; the
+// control stream is a separate, loopback-only surface the daemon drives.
+func (g *Gateway) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := firstSegment(r.URL.Path)
-		if banned[id] {
+		if g.banned[id] {
 			writeBanned(w, r)
 			return
 		}
-		proxy, ok := proxies[id]
+		proxy, ok := g.proxies[id]
 		if !ok {
 			http.Error(w, "unknown gateway edge: "+id, http.StatusNotFound)
 			return
@@ -92,12 +147,19 @@ func Handler(cfg Config) http.Handler {
 				http.Error(w, "reading request body", http.StatusBadRequest)
 				return
 			}
-			if tool, denied := deniedCall(body, deny[id]); denied {
+			if !g.ensureActive(r.Context(), id) {
+				writeActivationFailed(w, body)
+				return
+			}
+			if tool, denied := deniedCall(body, g.deny[id]); denied {
 				writeDenied(w, body, tool)
 				return
 			}
 			r.Body = io.NopCloser(bytes.NewReader(body))
 			r.ContentLength = int64(len(body))
+		} else if !g.ensureActive(r.Context(), id) {
+			writeActivationFailed(w, nil)
+			return
 		}
 		proxy.ServeHTTP(w, r)
 	})
