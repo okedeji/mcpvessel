@@ -22,13 +22,15 @@ func newTestWS(maxLive, hostMax int) *workingSet {
 	}
 }
 
-func TestOccupiedCountsBootingAndLive(t *testing.T) {
+func TestOccupiedCountsElasticBootingAndLive(t *testing.T) {
 	w := newTestWS(8, 32)
 	w.state["a"] = cageLive
 	w.state["b"] = cageBooting
 	w.state["c"] = cageEvicting // on its way out, slot already freed
+	w.state["warm"] = cageLive  // always-warm: compulsory, not counted against the cap
+	w.alwaysWarm["warm"] = true
 	if got := w.occupiedLocked(); got != 2 {
-		t.Errorf("occupied = %d, want 2 (live + booting, not evicting)", got)
+		t.Errorf("occupied = %d, want 2 (elastic live + booting, not evicting, not always-warm)", got)
 	}
 }
 
@@ -179,10 +181,5 @@ func TestHostCounterGatesAtLimit(t *testing.T) {
 	h.release()
 	if !h.tryReserve(2) {
 		t.Error("a reservation should succeed after a release frees a slot")
-	}
-	// add bypasses the limit (skeleton baseline), so the count can exceed it.
-	h.add()
-	if h.tryReserve(2) {
-		t.Error("reserve should still refuse once the count is at or above the limit")
 	}
 }

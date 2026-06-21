@@ -100,10 +100,13 @@ func bootTree(ctx context.Context, in bootInput, tree *runTree, plan *runPlan, r
 	// returns, but started is empty until after that, so the loop never derefs it.
 	var sess *bootSession
 	var started []string
+	hostReserved := 0
 	defer func() {
 		if !booted {
 			for _, name := range started {
 				_ = removeContainer(sess.provisioner, name)
+			}
+			for i := 0; i < hostReserved; i++ {
 				hostCages.release()
 			}
 			_ = td.run()
@@ -138,9 +141,11 @@ func bootTree(ctx context.Context, in bootInput, tree *runTree, plan *runPlan, r
 	// The skeleton boots only the prewarmed agents (the root's direct children
 	// plus the pinned-warm ones); the rest activate on first call. A pooled
 	// prewarmed cage draws a network from its pool here; an always-warm one already
-	// carries its dedicated network. Prewarmed cages enter the working set live and
-	// count against the host total unconditionally: the skeleton is the run's
-	// committed baseline, and the host cap bounds the elastic growth on top of it.
+	// carries its dedicated network. Every skeleton cage reserves a slot against
+	// the host capacity: the compulsory always-warm baseline is guaranteed only up
+	// to what the machine can hold, so a skeleton that does not fit fails the boot
+	// with a clear error rather than overcommitting the host. The per-run cap does
+	// not apply here; it bounds the elastic growth on top of the skeleton.
 	reasonFree := append([]string{}, plan.ReasonPool...)
 	plainFree := append([]string{}, plan.PlainPool...)
 	netOf := map[string]string{}
@@ -151,6 +156,10 @@ func bootTree(ctx context.Context, in bootInput, tree *runTree, plan *runPlan, r
 		if !a.Prewarm {
 			continue
 		}
+		if !hostCages.tryReserve(in.HostMax) {
+			return nil, nil, fmt.Errorf("host at capacity: the run's skeleton does not fit in cages.host_max_live (%d); raise it or lower cages.prewarm", in.HostMax)
+		}
+		hostReserved++
 		spec := a.Spec
 		if !a.AlwaysWarm {
 			net, err := popPoolNet(&reasonFree, &plainFree, plan.LLMAgents[a.Node.Key] != "")
@@ -167,7 +176,6 @@ func bootTree(ctx context.Context, in bootInput, tree *runTree, plan *runPlan, r
 			return nil, nil, err
 		}
 		started = append(started, spec.RunID)
-		hostCages.add()
 		state[a.Node.Key] = cageLive
 		lastUse[a.Node.Key] = now
 	}

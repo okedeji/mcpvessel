@@ -64,20 +64,21 @@ type Cap struct {
 // so the runtime default applies; a negative is rejected, never read as
 // unlimited.
 type Cages struct {
-	MaxLive        int      `json:"max_live,omitempty"`         // max live cages per run
-	HostMaxLive    int      `json:"host_max_live,omitempty"`    // max live cages across all runs
+	MaxLive        int      `json:"max_live,omitempty"`         // max elastic cages per run; always-warm cages do not count
+	HostMaxLive    int      `json:"host_max_live,omitempty"`    // machine cage capacity across all runs; every cage counts
 	Prewarm        int      `json:"prewarm,omitempty"`          // root's direct children booted up front
 	IdleTTLSeconds int      `json:"idle_ttl_seconds,omitempty"` // reap a cage idle past this
 	AlwaysWarm     []string `json:"always_warm,omitempty"`      // agent refs pinned warm
 }
 
-// Cage policy defaults. The per-run live cap is well above a normal sequential
+// Cage policy defaults. The per-run elastic cap is well above a normal sequential
 // tool-calling chain's peak (one active path through the tree), so only a wide
-// parallel fan-out feels it. The host cap is a multiple of that, the ceiling
-// across concurrent runs on one machine. Prewarm covers the common case where a
-// root fans out to a handful of workers it hits first. The idle TTL is long
-// enough that a cage called on a human-interactive cadence stays warm between
-// turns, short enough that a finished branch frees its slot within a few minutes.
+// parallel fan-out feels it; the compulsory always-warm cages sit outside it. The
+// host cap is the machine's cage ceiling across concurrent runs, a multiple of the
+// per-run cap. Prewarm covers the common case where a root fans out to a handful
+// of workers it hits first. The idle TTL is long enough that a cage called on a
+// human-interactive cadence stays warm between turns, short enough that a finished
+// branch frees its slot within a few minutes.
 const (
 	DefaultMaxLiveCages     = 32
 	DefaultHostMaxLiveCages = 128

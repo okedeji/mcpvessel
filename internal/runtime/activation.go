@@ -23,22 +23,16 @@ const controlReexecBackoff = 500 * time.Millisecond
 // enough that the sweep itself is negligible.
 const reaperInterval = 30 * time.Second
 
-// hostCages bounds live sub-agent cages across every run on the host, the second
-// half of the cage budget (the per-run cap lives on each workingSet). One daemon
-// owns one host, so a package-level counter is the host ceiling. Prewarmed
-// skeleton cages add unconditionally (the run's committed baseline); only
-// on-demand activations are gated, so elastic growth is what the host cap bounds.
+// hostCages is the machine's cage capacity across every run, the physical
+// ceiling the per-run elastic cap sits under. One daemon owns one host, so a
+// package-level counter is the host ceiling. Every cage reserves against it,
+// skeleton and elastic alike: a skeleton that does not fit fails the boot, and
+// elastic growth stops when the host is full.
 var hostCages = &hostCounter{}
 
 type hostCounter struct {
 	mu sync.Mutex
 	n  int
-}
-
-func (h *hostCounter) add() {
-	h.mu.Lock()
-	h.n++
-	h.mu.Unlock()
 }
 
 func (h *hostCounter) tryReserve(limit int) bool {

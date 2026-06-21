@@ -95,12 +95,15 @@ type workingSet struct {
 	cancel  context.CancelFunc
 }
 
-// occupiedLocked is the number of cages holding a slot: booting and live. An
-// evicting cage has already yielded its slot.
+// occupiedLocked is the number of elastic cages holding a slot: booting or live,
+// and not always-warm. The per-run cap bounds only the elastic working set, so
+// the compulsory always-warm cages (egress and the operator's pins) are excluded
+// and never compete with on-demand activation for a slot. An evicting cage has
+// already yielded its slot.
 func (w *workingSet) occupiedLocked() int {
 	n := 0
-	for _, s := range w.state {
-		if s == cageBooting || s == cageLive {
+	for node, s := range w.state {
+		if (s == cageBooting || s == cageLive) && !w.alwaysWarm[node] {
 			n++
 		}
 	}
