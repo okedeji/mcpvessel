@@ -11,22 +11,32 @@ import (
 	"time"
 )
 
-// daemonEnd drives the control stream the way the real daemon does: it reads one
-// activation request and answers it with the given verdict, returning the edge
-// it saw so a test can assert the gateway asked for the right one.
+// readActivate reads the control stream until an activate request arrives,
+// skipping the opening resync and any pin/unpin events the gateway emits around
+// a forward.
+func readActivate(t *testing.T, dec *json.Decoder) string {
+	t.Helper()
+	for {
+		var m ControlMessage
+		if err := dec.Decode(&m); err != nil {
+			t.Fatalf("reading control stream: %v", err)
+		}
+		if m.Type == MsgActivate {
+			return m.Edge
+		}
+	}
+}
+
+// daemonEnd drives the control stream the way the real daemon does: it reads to
+// the activation request and answers it with the given verdict, returning the
+// edge it saw so a test can assert the gateway asked for the right one.
 func daemonEnd(t *testing.T, conn net.Conn, ok bool) string {
 	t.Helper()
-	var req ControlMessage
-	if err := json.NewDecoder(conn).Decode(&req); err != nil {
-		t.Fatalf("reading activate: %v", err)
-	}
-	if req.Type != "activate" {
-		t.Fatalf("got %q, want an activate message", req.Type)
-	}
-	if err := json.NewEncoder(conn).Encode(ControlMessage{Type: "activated", Edge: req.Edge, OK: ok}); err != nil {
+	edge := readActivate(t, json.NewDecoder(conn))
+	if err := json.NewEncoder(conn).Encode(ControlMessage{Type: MsgActivated, Edge: edge, OK: ok}); err != nil {
 		t.Fatalf("writing activated: %v", err)
 	}
-	return req.Edge
+	return edge
 }
 
 func TestGateway_ActivatesInactiveEdgeThenProxies(t *testing.T) {
@@ -135,12 +145,9 @@ func TestGateway_DisconnectFailsBlockedCallClosed(t *testing.T) {
 		resCh <- postJSON(t, srv.URL+"/web/mcp", `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"search"}}`)
 	}()
 
-	// Read the activate so the call is genuinely blocked, then drop the stream
+	// Read to the activate so the call is genuinely blocked, then drop the stream
 	// without answering: the blocked call must fail closed, not hang.
-	var req ControlMessage
-	if err := json.NewDecoder(daemon).Decode(&req); err != nil {
-		t.Fatalf("reading activate: %v", err)
-	}
+	readActivate(t, json.NewDecoder(daemon))
 	_ = daemon.Close()
 
 	select {

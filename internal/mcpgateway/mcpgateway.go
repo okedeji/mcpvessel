@@ -65,17 +65,20 @@ type Gateway struct {
 	banned  map[string]bool
 
 	// mu guards the live state below: active, the waiters blocked on an
-	// activation, and pending, the edges already asked of the daemon. The
-	// routing maps above are write-once at New and read without the lock.
-	mu      sync.Mutex
-	active  map[string]bool
-	waiters map[string][]chan bool
-	pending map[string]bool
+	// activation, pending (edges already asked of the daemon), and pinCount (the
+	// in-flight forwards per edge, the resync payload). The routing maps above are
+	// write-once at New and read without the lock.
+	mu       sync.Mutex
+	active   map[string]bool
+	waiters  map[string][]chan bool
+	pending  map[string]bool
+	pinCount map[string]int
 
-	// requests carries edge ids needing activation to whichever control stream
-	// is connected. Buffered to one slot per edge so a first caller never blocks
-	// enqueuing, since each edge is pending at most once at a time.
-	requests chan string
+	// outbound carries control messages (activation requests, pin/unpin events)
+	// to whichever stream is connected. Generously buffered so a forward never
+	// blocks enqueuing a pin; when no stream drains it, emit drops rather than
+	// stalls, and the next connection's resync repairs the daemon's view.
+	outbound chan ControlMessage
 }
 
 // New builds the gateway from its routing table. It starts no goroutines: the
@@ -88,7 +91,8 @@ func New(cfg Config) *Gateway {
 		active:   make(map[string]bool, len(cfg.Edges)),
 		waiters:  make(map[string][]chan bool),
 		pending:  make(map[string]bool),
-		requests: make(chan string, len(cfg.Edges)+1),
+		pinCount: make(map[string]int),
+		outbound: make(chan ControlMessage, 4*len(cfg.Edges)+64),
 	}
 	for id, edge := range cfg.Edges {
 		if edge.Banned {
@@ -101,6 +105,7 @@ func New(cfg Config) *Gateway {
 		if err != nil {
 			continue
 		}
+		edgeID := id
 		g.proxies[id] = &httputil.ReverseProxy{
 			Rewrite: func(r *httputil.ProxyRequest) {
 				// Forward to the sub-agent's exact endpoint, dropping the
@@ -112,6 +117,15 @@ func New(cfg Config) *Gateway {
 			},
 			// Stream streamable-HTTP SSE events back immediately.
 			FlushInterval: -1,
+			// A forward that cannot reach its target means the cage is gone (the
+			// daemon reaped it). Flip the edge inactive so the next call
+			// re-activates rather than dialing a dead container, and fail this
+			// call closed. This races a reap against a fresh call; the loser is
+			// one failed call, self-healed on retry, not a wedged edge.
+			ErrorHandler: func(w http.ResponseWriter, r *http.Request, _ error) {
+				g.deactivate(edgeID)
+				writeActivationFailed(w, nil)
+			},
 		}
 		g.deny[id] = denySet(edge.Deny)
 		// An inactive edge waits for the daemon to activate it before it proxies.
@@ -161,6 +175,11 @@ func (g *Gateway) Handler() http.Handler {
 			writeActivationFailed(w, nil)
 			return
 		}
+		// Pin the edge across the forward so the daemon never reaps a cage that
+		// is mid-call. The pin spans the whole call, including a sub-agent's own
+		// deeper calls, since this forward stays open until they return.
+		g.pin(id)
+		defer g.unpin(id)
 		proxy.ServeHTTP(w, r)
 	})
 }

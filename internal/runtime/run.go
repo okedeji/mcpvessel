@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/okedeji/agentcage/internal/agentfile"
 	"github.com/okedeji/agentcage/internal/bundle"
@@ -204,6 +205,13 @@ type bootInput struct {
 	// case startAttachedAgent falls back to the runtime default rather than
 	// running the agent uncapped.
 	Cap config.Cap
+
+	// MaxLive, HostMax, and IdleTTL are the resolved cage policy the working set
+	// enforces: the per-run and host live-cage caps and the idle reap threshold.
+	// Set by bootRun from the operator's config.
+	MaxLive int
+	HostMax int
+	IdleTTL time.Duration
 
 	// OpEnv and OpSecrets are the operator's value pools, injected into an
 	// agent only for the names it declares.

@@ -15,6 +15,7 @@ import (
 	"github.com/okedeji/agentcage/internal/bundle"
 	"github.com/okedeji/agentcage/internal/config"
 	"github.com/okedeji/agentcage/internal/mcp"
+	"github.com/okedeji/agentcage/internal/mcpgateway"
 	"github.com/okedeji/agentcage/internal/reference"
 	"github.com/okedeji/agentcage/internal/registry"
 )
@@ -57,6 +58,9 @@ func bootRun(ctx context.Context, in RunInput, boot bootInput, runID string) (*m
 		return nil, nil, err
 	}
 	boot.Cap = plan.RootCap
+	boot.MaxLive = cfg.Cages.EffectiveMaxLive()
+	boot.HostMax = cfg.Cages.EffectiveHostMaxLive()
+	boot.IdleTTL = cfg.Cages.EffectiveIdleTTL()
 	return bootTree(ctx, boot, tree, plan, runID)
 }
 
@@ -90,8 +94,18 @@ func resolveRunTree(ctx context.Context, runID, rootBundle string, root *bundle.
 func bootTree(ctx context.Context, in bootInput, tree *runTree, plan *runPlan, runID string) (*mcp.Client, *workingSet, error) {
 	td := &teardown{}
 	booted := false
+	// Prewarmed cages are tracked in the working set, not on td (so a reaped one
+	// is not also queued for release), so a boot that fails partway removes them
+	// here rather than through the teardown stack. sess is nil until newBootSession
+	// returns, but started is empty until after that, so the loop never derefs it.
+	var sess *bootSession
+	var started []string
 	defer func() {
 		if !booted {
+			for _, name := range started {
+				_ = removeContainer(sess.provisioner, name)
+				hostCages.release()
+			}
 			_ = td.run()
 		}
 	}()
@@ -117,8 +131,12 @@ func bootTree(ctx context.Context, in bootInput, tree *runTree, plan *runPlan, r
 	// The skeleton boots only the prewarmed agents (the root's direct children);
 	// the rest stay down and activate on first call. Their networks are still
 	// created above, so the gateway, already joined to all of them, can reach a
-	// sub-agent the moment it starts. live tracks which nodes are up.
-	live := map[string]bool{}
+	// sub-agent the moment it starts. Prewarmed cages enter the working set live
+	// and count against the host total unconditionally: the skeleton is the run's
+	// committed baseline, and the host cap bounds the elastic growth on top of it.
+	state := map[string]cageState{}
+	lastUse := map[string]time.Time{}
+	now := nowFunc()
 	for _, a := range plan.Agents {
 		if !a.Prewarm {
 			continue
@@ -129,9 +147,10 @@ func bootTree(ctx context.Context, in bootInput, tree *runTree, plan *runPlan, r
 		if err := startDetached(ctx, sess.provisioner, a.Spec); err != nil {
 			return nil, nil, err
 		}
-		name := a.Spec.RunID
-		td.push(func() error { return removeContainer(sess.provisioner, name) })
-		live[a.Node.Key] = true
+		started = append(started, a.Spec.RunID)
+		hostCages.add()
+		state[a.Node.Key] = cageLive
+		lastUse[a.Node.Key] = now
 	}
 
 	// The MCP gateway is the only host the parent's USES URLs resolve to, so it
@@ -205,8 +224,14 @@ func bootTree(ctx context.Context, in bootInput, tree *runTree, plan *runPlan, r
 		tree:       tree,
 		td:         td,
 		specByNode: specByNode,
-		live:       live,
+		state:      state,
+		pins:       map[string]int{},
+		lastUse:    lastUse,
 		inflight:   map[string]*activation{},
+		maxLive:    in.MaxLive,
+		hostMax:    in.HostMax,
+		idleTTL:    in.IdleTTL,
+		outbound:   make(chan mcpgateway.ControlMessage, 256),
 		noCache:    in.NoCache,
 		stderr:     in.Stderr,
 	}
