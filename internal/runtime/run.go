@@ -213,6 +213,11 @@ type bootInput struct {
 	HostMax int
 	IdleTTL time.Duration
 
+	// MachineMemCap is the operator's machine.memory_gib in bytes, 0 when unset.
+	// It caps the memory the run admits against; a value above the machine's real
+	// memory is ignored and flagged so the operator is told to recreate the VM.
+	MachineMemCap int64
+
 	// OpEnv and OpSecrets are the operator's value pools, injected into an
 	// agent only for the names it declares.
 	OpEnv     map[string]string

@@ -56,6 +56,22 @@ func TestFitElastic(t *testing.T) {
 	}
 }
 
+func TestEffectiveAvailable(t *testing.T) {
+	const gib = 1 << 30
+	// No setting: use the real memory.
+	if got, over := effectiveAvailable(8*gib, 0); got != 8*gib || over {
+		t.Errorf("unset = (%d, %v), want (8GiB, false)", got, over)
+	}
+	// Setting below real memory: cap to it, reserving the rest.
+	if got, over := effectiveAvailable(8*gib, 4*gib); got != 4*gib || over {
+		t.Errorf("cap = (%d, %v), want (4GiB, false)", got, over)
+	}
+	// Setting above real memory: ignored, flagged so the operator is told.
+	if got, over := effectiveAvailable(4*gib, 16*gib); got != 4*gib || !over {
+		t.Errorf("over-request = (%d, %v), want (4GiB, true)", got, over)
+	}
+}
+
 func TestReadMemTotal(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "meminfo")

@@ -11,6 +11,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/okedeji/agentcage/internal/config"
 )
 
 // Provisioner is the platform-specific gate to a Linux container
@@ -179,13 +182,19 @@ func (n *NativeProvisioner) AvailableMemory() (int64, error) {
 	return readMemTotal("/proc/meminfo")
 }
 
-// readMemTotal parses the MemTotal line of a /proc/meminfo-format file into
-// bytes. The value is reported in kB.
+// readMemTotal reads a /proc/meminfo-format file and parses its MemTotal.
 func readMemTotal(path string) (int64, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return 0, err
 	}
+	return parseMemTotal(data)
+}
+
+// parseMemTotal pulls the MemTotal line out of /proc/meminfo content and returns
+// it in bytes. The value is reported in kB. Shared by the host read on Linux and
+// the in-VM read on macOS so both sides agree on the format.
+func parseMemTotal(data []byte) (int64, error) {
 	for _, line := range strings.Split(string(data), "\n") {
 		if !strings.HasPrefix(line, "MemTotal:") {
 			continue
@@ -200,7 +209,7 @@ func readMemTotal(path string) (int64, error) {
 		}
 		return kb * 1024, nil
 	}
-	return 0, fmt.Errorf("MemTotal not found in %s", path)
+	return 0, fmt.Errorf("MemTotal not found")
 }
 
 // Nerdctl runs `nerdctl <args>` on the host. Operators are expected to have
@@ -215,6 +224,14 @@ func (n *NativeProvisioner) Nerdctl(ctx context.Context, args ...string) *exec.C
 // near-instant.
 type LimaProvisioner struct {
 	VM *LimaVM
+
+	// MemoryGiB, CPUs, and DiskGiB size the VM at creation, from the operator's
+	// machine config. Zero leaves the template default. They take effect only
+	// when the VM is created; an existing VM keeps the size it was made with until
+	// it is recreated.
+	MemoryGiB int
+	CPUs      int
+	DiskGiB   int
 }
 
 // defaultLimaProvisioner constructs a LimaProvisioner with the
@@ -229,6 +246,10 @@ func defaultLimaProvisioner() (*LimaProvisioner, error) {
 	if err != nil {
 		return nil, err
 	}
+	cfg, err := config.Load()
+	if err != nil {
+		return nil, err
+	}
 	base := filepath.Join(home, ".agentcage", "lima")
 	return &LimaProvisioner{
 		VM: &LimaVM{
@@ -237,6 +258,9 @@ func defaultLimaProvisioner() (*LimaProvisioner, error) {
 			HostSocketDir: filepath.Join(base, "sock"),
 			// InstanceName defaults to DefaultLimaInstanceName.
 		},
+		MemoryGiB: cfg.Machine.MemoryGiB,
+		CPUs:      cfg.Machine.CPUs,
+		DiskGiB:   cfg.Machine.DiskGiB,
 	}, nil
 }
 
@@ -248,6 +272,9 @@ func (l *LimaProvisioner) EnsureReady(ctx context.Context, stdout, stderr io.Wri
 		return generateLimaTemplate(LimaTemplateInput{
 			InstanceName:  l.VM.InstanceName,
 			HostSocketDir: l.VM.HostSocketDir,
+			CPUs:          l.CPUs,
+			MemoryGiB:     l.MemoryGiB,
+			DiskSizeGiB:   l.DiskGiB,
 		})
 	}
 	return l.VM.EnsureRunning(ctx, templateGen, stdout, stderr)
@@ -257,12 +284,23 @@ func (l *LimaProvisioner) ContainerdAddress() string { return l.VM.ContainerdAdd
 func (l *LimaProvisioner) BuildKitAddress() string   { return l.VM.BuildKitAddress() }
 func (l *LimaProvisioner) Close() error              { return nil }
 
-// AvailableMemory reports the Lima VM's configured RAM. The cages run inside the
-// VM, so its memory, not the Mac's, is the machine capacity. The VM is created
-// with defaultLimaMemoryGiB, so that is what it has until VM sizing is made
-// configurable.
+// memQueryTimeout bounds the in-VM memory read. It is a single cat over the
+// already-running limactl shell, so it should return in well under a second; the
+// timeout only guards against a wedged VM.
+const memQueryTimeout = 10 * time.Second
+
+// AvailableMemory reports the Lima VM's real RAM by reading /proc/meminfo inside
+// it. The cages run in the VM, so its memory, not the Mac's, is the machine
+// capacity. Reading the live VM (rather than the configured value) keeps the
+// number honest when the config has changed but the VM has not been recreated.
 func (l *LimaProvisioner) AvailableMemory() (int64, error) {
-	return int64(defaultLimaMemoryGiB) << 30, nil
+	ctx, cancel := context.WithTimeout(context.Background(), memQueryTimeout)
+	defer cancel()
+	out, err := l.VM.command(ctx, "shell", l.VM.instanceName(), "cat", "/proc/meminfo").Output()
+	if err != nil {
+		return 0, fmt.Errorf("reading VM memory: %w", err)
+	}
+	return parseMemTotal(out)
 }
 
 // Nerdctl constructs `limactl shell <instance> nerdctl <args>`. The limactl

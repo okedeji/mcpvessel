@@ -23,6 +23,34 @@ type Config struct {
 	Resources Resources         `json:"resources,omitempty"`
 	Models    map[string]string `json:"models,omitempty"` // agent ref (@org/name) -> provider/model override
 	Cages     Cages             `json:"cages,omitempty"`
+	Machine   Machine           `json:"machine,omitempty"`
+}
+
+// Machine is how much of the host agentcage may use for cages. On macOS it sizes
+// the Lima VM agentcage runs cages in (the VM is a fixed slice of the Mac, so
+// this is the slice). On Linux there is no VM and cages run on the host directly,
+// so MemoryGiB acts as a cap on the host RAM agentcage admits against (CPUs and
+// DiskGiB are macOS-only and ignored there). Zero means the runtime default: a
+// 4 GiB VM on macOS, the whole host on Linux.
+type Machine struct {
+	MemoryGiB int `json:"memory_gib,omitempty"`
+	CPUs      int `json:"cpus,omitempty"`
+	DiskGiB   int `json:"disk_gib,omitempty"`
+}
+
+// MemoryBytes is the configured memory in bytes, or 0 when unset (meaning "use
+// the platform default").
+func (m Machine) MemoryBytes() int64 {
+	return int64(m.MemoryGiB) << 30
+}
+
+// Validate rejects a machine sizing a host could never honor: a negative value
+// in any field. Zero means "use the default," the same convention as the caps.
+func (m Machine) Validate() error {
+	if m.MemoryGiB < 0 || m.CPUs < 0 || m.DiskGiB < 0 {
+		return fmt.Errorf("machine sizing must not be negative, got memory %d / cpus %d / disk %d", m.MemoryGiB, m.CPUs, m.DiskGiB)
+	}
+	return nil
 }
 
 // Endpoint is one operator-configured OpenAI-compatible LLM endpoint. KeyRef
@@ -216,6 +244,9 @@ func (c *Config) Validate() error {
 	}
 	if err := c.Cages.Validate(); err != nil {
 		return fmt.Errorf("cage policy: %w", err)
+	}
+	if err := c.Machine.Validate(); err != nil {
+		return fmt.Errorf("machine sizing: %w", err)
 	}
 	return nil
 }

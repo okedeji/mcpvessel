@@ -55,19 +55,23 @@ func maxElasticMem(plan *runPlan) int64 {
 	return max
 }
 
-// admitMemory reads the machine's memory and decides whether the run fits: it
-// errors when the compulsory baseline does not, and otherwise returns the elastic
-// cap that the leftover memory allows, clamped to the operator's configured cap.
-// It runs before any container starts.
-func admitMemory(p Provisioner, plan *runPlan, configuredMaxLive int) (int, error) {
-	avail, err := p.AvailableMemory()
-	if err != nil {
-		return 0, fmt.Errorf("reading machine memory: %w", err)
+// effectiveAvailable applies the operator's machine.memory_gib to the machine's
+// real memory. A setting below it caps capacity, reserving the rest of the host
+// for other things. A setting above it asks for more than the machine has, so it
+// is ignored (the real amount is used) and flagged true, which lets the caller
+// tell the operator to recreate the VM (macOS) or lower the setting (Linux).
+// Zero means no setting: use the real memory as-is.
+func effectiveAvailable(avail, configured int64) (int64, bool) {
+	if configured <= 0 {
+		return avail, false
 	}
-	return fitElastic(avail, plan, configuredMaxLive)
+	if configured > avail {
+		return avail, true
+	}
+	return configured, false
 }
 
-// fitElastic is the memory arithmetic admitMemory wraps, split out so it is
+// fitElastic is the memory arithmetic the admission wraps, split out so it is
 // testable without a provisioner. The baseline must fit the usable memory; the
 // elastic cap is then bounded by the leftover so on-demand growth cannot OOM the
 // machine even when the configured cap is higher.

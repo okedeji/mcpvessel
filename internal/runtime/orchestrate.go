@@ -61,6 +61,7 @@ func bootRun(ctx context.Context, in RunInput, boot bootInput, runID string) (*m
 	boot.MaxLive = cfg.Cages.EffectiveMaxLive()
 	boot.HostMax = cfg.Cages.EffectiveHostMaxLive()
 	boot.IdleTTL = cfg.Cages.EffectiveIdleTTL()
+	boot.MachineMemCap = cfg.Machine.MemoryBytes()
 	return bootTree(ctx, boot, tree, plan, runID)
 }
 
@@ -120,8 +121,19 @@ func bootTree(ctx context.Context, in bootInput, tree *runTree, plan *runPlan, r
 
 	// Refuse a run whose always-on baseline cannot fit the machine before any
 	// container starts, and clamp the elastic cap to what the leftover memory
-	// holds so on-demand growth cannot OOM the host either.
-	maxLive, err := admitMemory(sess.provisioner, plan, in.MaxLive)
+	// holds so on-demand growth cannot OOM the host either. The operator's
+	// machine.memory_gib caps the real memory (or, when it asks for more than the
+	// machine has, is flagged so we tell them to recreate the VM).
+	avail, err := sess.provisioner.AvailableMemory()
+	if err != nil {
+		return nil, nil, fmt.Errorf("reading machine memory: %w", err)
+	}
+	usable, overRequest := effectiveAvailable(avail, in.MachineMemCap)
+	if overRequest {
+		_, _ = fmt.Fprintf(in.Stderr, "note: machine.memory_gib requests %s but the machine has %s; recreate the VM to apply on macOS, or lower it below host RAM on Linux. Using %s\n",
+			humanBytes(in.MachineMemCap), humanBytes(avail), humanBytes(avail))
+	}
+	maxLive, err := fitElastic(usable, plan, in.MaxLive)
 	if err != nil {
 		return nil, nil, err
 	}

@@ -154,6 +154,21 @@ func TestCapMemBytes(t *testing.T) {
 	}
 }
 
+func TestMachine_ValidateAndMemoryBytes(t *testing.T) {
+	if err := (&Config{Machine: Machine{MemoryGiB: -1}}).Validate(); err == nil {
+		t.Error("negative machine memory should be rejected")
+	}
+	if err := (&Config{Machine: Machine{MemoryGiB: 16, CPUs: 8, DiskGiB: 100}}).Validate(); err != nil {
+		t.Errorf("valid machine sizing rejected: %v", err)
+	}
+	if got := (Machine{MemoryGiB: 16}).MemoryBytes(); got != 16<<30 {
+		t.Errorf("MemoryBytes = %d, want %d", got, int64(16)<<30)
+	}
+	if got := (Machine{}).MemoryBytes(); got != 0 {
+		t.Errorf("unset MemoryBytes = %d, want 0", got)
+	}
+}
+
 func TestValidate_AcceptsValidCaps(t *testing.T) {
 	c := Config{Resources: Resources{
 		Defaults: Cap{CPUs: "1.5", Mem: "512m", Pids: 1024},
