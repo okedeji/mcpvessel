@@ -168,6 +168,13 @@ func (c *Client) StopRun(ctx context.Context, id string) error {
 	return c.post(ctx, "/runs/"+id+"/stop", nil, nil)
 }
 
+// Shutdown asks the daemon to stop. The daemon acks before going down, but the
+// connection may still race the shutdown, so a transport error here is not
+// treated as failure by Stop, which confirms via a poll instead.
+func (c *Client) Shutdown(ctx context.Context) error {
+	return c.post(ctx, "/shutdown", nil, nil)
+}
+
 func (c *Client) get(ctx context.Context, path string, out any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://unix"+path, nil)
 	if err != nil {

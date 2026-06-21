@@ -62,6 +62,31 @@ func TestServe_SocketRoundTrip(t *testing.T) {
 	}
 }
 
+// TestShutdown_StopsServe locks that the control-plane /shutdown route brings
+// the daemon down on its own, with no operator signal: Serve runs against a
+// background context, so only the shutdown request can stop it.
+func TestShutdown_StopsServe(t *testing.T) {
+	socket := filepath.Join(t.TempDir(), "agentcage.sock")
+	d := New()
+	errc := make(chan error, 1)
+	go func() { errc <- Serve(context.Background(), d, socket) }()
+
+	c := Dial(socket)
+	waitForDaemon(t, c)
+
+	// The ack can race the socket closing, so the request result is not asserted;
+	// Serve returning is the proof it worked.
+	_ = c.Shutdown(context.Background())
+	select {
+	case err := <-errc:
+		if err != nil {
+			t.Errorf("Serve returned %v after a shutdown request", err)
+		}
+	case <-time.After(shutdownTimeout + 2*time.Second):
+		t.Fatal("Serve did not stop after /shutdown")
+	}
+}
+
 // TestServe_RefusesSecondListener locks the fail-fast behavior: a second daemon
 // against a socket a live one already owns errors rather than stomping it.
 func TestServe_RefusesSecondListener(t *testing.T) {

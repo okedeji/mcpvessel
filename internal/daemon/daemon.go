@@ -58,6 +58,12 @@ type Daemon struct {
 	// fronts are the serve front doors the daemon has opened. Shutdown closes
 	// them so their listeners stop accepting before the runs behind them release.
 	fronts []*http.Server
+	// shutdown is closed to ask the serve loop to stop, the in-process equivalent
+	// of a SIGTERM, so `init --recreate` can take the daemon down cleanly before
+	// the VM is rebuilt under it. shutdownOnce keeps a second request from closing
+	// an already-closed channel.
+	shutdown     chan struct{}
+	shutdownOnce sync.Once
 }
 
 // heldRun is one run the daemon holds: its reportable info and the live Session
@@ -71,7 +77,7 @@ type heldRun struct {
 
 // New returns a daemon with an empty registry.
 func New() *Daemon {
-	return &Daemon{runs: map[string]*heldRun{}}
+	return &Daemon{runs: map[string]*heldRun{}, shutdown: make(chan struct{})}
 }
 
 // hold records a booted run and its Session under the run id.
@@ -165,7 +171,16 @@ func (d *Daemon) Handler() http.Handler {
 	mux.HandleFunc("POST /runs/{id}/budget", d.handleSetBudget)
 	mux.HandleFunc("POST /runs/{id}/stop", d.handleStopRun)
 	mux.HandleFunc("POST /serve", d.handleServe)
+	mux.HandleFunc("POST /shutdown", d.handleShutdown)
 	return mux
+}
+
+// handleShutdown asks the daemon to stop. It acks first, then signals the serve
+// loop, so the caller's request finishes before the daemon goes down. The serve
+// loop's graceful path then releases every held run.
+func (d *Daemon) handleShutdown(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusNoContent)
+	d.shutdownOnce.Do(func() { close(d.shutdown) })
 }
 
 func (d *Daemon) handleVersion(w http.ResponseWriter, _ *http.Request) {

@@ -21,6 +21,41 @@ const Command = "daemon"
 // fast with a pointer at the log rather than waiting forever.
 const startTimeout = 5 * time.Second
 
+// stopTimeout bounds the wait for a daemon to stop answering after a shutdown
+// request. Graceful shutdown releases held runs first, which can take a moment
+// per run, so this is more generous than startup.
+const stopTimeout = 30 * time.Second
+
+// Stop asks a running daemon to shut down and waits until it stops answering. It
+// is a no-op when no daemon is running. The shutdown ack can race the socket
+// closing, so success is confirmed by polling, not by the request's result.
+func Stop(ctx context.Context) error {
+	socket, err := SocketPath()
+	if err != nil {
+		return err
+	}
+	c := Dial(socket)
+	if !answers(ctx, c) {
+		return nil
+	}
+	_ = c.Shutdown(ctx)
+
+	deadline := time.Now().Add(stopTimeout)
+	for {
+		if !answers(ctx, c) {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("daemon did not stop within %s; check ~/.agentcage/daemon.log", stopTimeout)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+}
+
 // Ensure returns a client for the daemon, starting it if it is not already
 // listening. The daemon is spawned detached so it outlives the caller, with its
 // output appended to ~/.agentcage/daemon.log. Commands that need the daemon

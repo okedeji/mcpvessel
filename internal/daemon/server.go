@@ -52,7 +52,12 @@ func Serve(ctx context.Context, d *Daemon, socketPath string) error {
 
 	srv := &http.Server{Handler: d.Handler()}
 	go func() {
-		<-ctx.Done()
+		// Either an operator signal (ctx) or an in-process shutdown request (the
+		// control plane's /shutdown) brings the daemon down the same way.
+		select {
+		case <-ctx.Done():
+		case <-d.shutdown:
+		}
 		// Close the front doors first so external MCP traffic stops before the
 		// runs behind them are released, then drain the control plane.
 		d.closeFronts()
