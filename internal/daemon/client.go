@@ -144,10 +144,12 @@ type ServedAgent struct {
 	Tools   []string `json:"tools"`
 }
 
-// ServeResult is the front door the daemon opened for a serve request.
+// ServeResult is the front door the daemon opened for a serve request, plus any
+// boot-time notes the operator should see (a clamped live-cage cap, say).
 type ServeResult struct {
-	Listen string        `json:"listen"`
-	Agents []ServedAgent `json:"agents"`
+	Listen   string        `json:"listen"`
+	Agents   []ServedAgent `json:"agents"`
+	Warnings []string      `json:"warnings,omitempty"`
 }
 
 // Serve asks the daemon to boot an agent's exposed set and open an MCP front

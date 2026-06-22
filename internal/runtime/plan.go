@@ -27,6 +27,13 @@ const (
 	mcpServePath = "/mcp"
 )
 
+// agentTarget is the gateway's forward URL for a sub-agent reachable at host:
+// a container name for a prewarmed cage, or the IP the daemon resolves once the
+// cage activates. One owner of the URL shape so both ends always agree.
+func agentTarget(host string) string {
+	return "http://" + host + ":" + agentServePort + mcpServePath
+}
+
 // runPlan is everything the orchestrator needs to start a USES tree: a network
 // per agent, a detached container spec for each non-root agent and for the
 // MCP gateway, the MCP gateway's routing table, and the sub-agent URLs the root parent
@@ -222,7 +229,7 @@ func buildRunPlan(tree *runTree, runID string, ops operatorInputs) (*runPlan, er
 			return nil, err
 		}
 		edge := mcpgateway.Edge{
-			Target: "http://" + containerName(e.Sub) + ":" + agentServePort + mcpServePath,
+			Target: agentTarget(containerName(e.Sub)),
 		}
 		if wholeBanned[e.Sub] {
 			edge.Banned = true

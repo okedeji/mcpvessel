@@ -41,6 +41,9 @@ shuts down.`,
 				return fmt.Errorf("%w (is the daemon running?)", err)
 			}
 
+			for _, warning := range res.Warnings {
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "note: %s\n", warning)
+			}
 			out := cmd.OutOrStdout()
 			_, _ = fmt.Fprintf(out, "Serving %d agent(s) on %s\n", len(res.Agents), res.Listen)
 			for _, a := range res.Agents {

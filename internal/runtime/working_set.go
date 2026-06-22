@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"sync"
 	"time"
 
@@ -71,6 +72,13 @@ type workingSet struct {
 	lastUse  map[string]time.Time
 	inflight map[string]*activation
 
+	// addr is each live node's resolved gateway target, the cage's container IP
+	// captured at boot. The gateway cannot name a cage that started after it, so
+	// the daemon hands it the address on activation. edgesByNode maps a node back
+	// to the edges that route to it, so a reaped cage's edges are all invalidated.
+	addr        map[string]string
+	edgesByNode map[string][]string
+
 	// maxLive caps the cages this run keeps live at once; hostMax caps them across
 	// every run via the package-level counter; idleTTL is how long a cage may sit
 	// idle before the reaper takes it.
@@ -88,11 +96,22 @@ type workingSet struct {
 	// never blocks on the writer.
 	outbound chan mcpgateway.ControlMessage
 
-	// startCage builds and starts one cage's container; stopCage removes it. Real
-	// runs wire these to the provisioner in bootTree; tests stub them to exercise
-	// the activation state machine without containers.
-	startCage func(ctx context.Context, pa plannedAgent) error
+	// startCage builds and starts one cage's container and returns the address the
+	// gateway should forward to (the cage's container IP); stopCage removes it.
+	// Real runs wire these to the provisioner in bootTree; tests stub them to
+	// exercise the activation state machine without containers.
+	startCage func(ctx context.Context, pa plannedAgent) (string, error)
 	stopCage  func(name string) error
+
+	// stderr is where a failed on-demand activation reports why. The gateway only
+	// learns the verdict (ok or not), so without this an operator has no record of
+	// a boot that the run answered closed.
+	stderr io.Writer
+
+	// warnings are boot-time notes the operator should see, like a live-cage cap
+	// clamped to fit memory. A one-shot run streams them on stderr; a served run's
+	// stderr is the daemon log, so serve reports these in its response instead.
+	warnings []string
 
 	// slotFreed wakes an activation waiting for a slot when one frees (a cage
 	// unpins or is evicted). saturationWait bounds that wait before the activation

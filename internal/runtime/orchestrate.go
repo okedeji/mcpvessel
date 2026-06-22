@@ -133,8 +133,11 @@ func bootTree(ctx context.Context, in bootInput, tree *runTree, plan *runPlan, r
 	if err != nil {
 		return nil, nil, err
 	}
+	var warnings []string
 	if maxLive < in.MaxLive {
-		_, _ = fmt.Fprintf(in.Stderr, "note: cages.max_live reduced from %d to %d to fit available memory\n", in.MaxLive, maxLive)
+		note := fmt.Sprintf("cages.max_live reduced from %d to %d to fit available memory", in.MaxLive, maxLive)
+		warnings = append(warnings, note)
+		_, _ = fmt.Fprintf(in.Stderr, "note: %s\n", note)
 	}
 
 	// Every network is internal and created up front, before the MCP gateway joins
@@ -170,7 +173,28 @@ func bootTree(ctx context.Context, in bootInput, tree *runTree, plan *runPlan, r
 	netOf := map[string]string{}
 	state := map[string]cageState{}
 	lastUse := map[string]time.Time{}
+	addr := map[string]string{}
 	now := nowFunc()
+
+	// startCage builds and starts one cage and resolves where the gateway reaches
+	// it. The gateway routes by address rather than name because its /etc/hosts is
+	// frozen at its own start and cannot name a cage that activates later, so the
+	// container's IP, read once here, is what the daemon hands the gateway. Both
+	// the skeleton loop below and on-demand activation go through it.
+	startCage := func(ctx context.Context, pa plannedAgent) (string, error) {
+		if err := buildAgentImage(ctx, sess, pa.Node, pa.Spec.ImageRef, in.NoCache, in.Stderr); err != nil {
+			return "", fmt.Errorf("activating %s: %w", pa.Node.Key, err)
+		}
+		if err := startDetached(ctx, sess.provisioner, pa.Spec); err != nil {
+			return "", fmt.Errorf("activating %s: %w", pa.Node.Key, err)
+		}
+		ip, err := containerIP(ctx, sess.provisioner, pa.Spec.RunID)
+		if err != nil {
+			return "", fmt.Errorf("activating %s: %w", pa.Node.Key, err)
+		}
+		return agentTarget(ip), nil
+	}
+
 	for _, a := range plan.Agents {
 		if !a.Prewarm {
 			continue
@@ -179,24 +203,23 @@ func bootTree(ctx context.Context, in bootInput, tree *runTree, plan *runPlan, r
 			return nil, nil, fmt.Errorf("host at capacity: the run's skeleton does not fit in cages.host_max_live (%d); raise it or lower cages.prewarm", in.HostMax)
 		}
 		hostReserved++
-		spec := a.Spec
+		pa := a
 		if !a.AlwaysWarm {
 			net, err := popPoolNet(&reasonFree, &plainFree, plan.LLMAgents[a.Node.Key] != "")
 			if err != nil {
 				return nil, nil, err
 			}
-			spec.Networks = []string{net}
+			pa.Spec.Networks = []string{net}
 			netOf[a.Node.Key] = net
 		}
-		if err := buildAgentImage(ctx, sess, a.Node, a.Spec.ImageRef, in.NoCache, in.Stderr); err != nil {
+		cageAddr, err := startCage(ctx, pa)
+		if err != nil {
 			return nil, nil, err
 		}
-		if err := startDetached(ctx, sess.provisioner, spec); err != nil {
-			return nil, nil, err
-		}
-		started = append(started, spec.RunID)
+		started = append(started, pa.Spec.RunID)
 		state[a.Node.Key] = cageLive
 		lastUse[a.Node.Key] = now
+		addr[a.Node.Key] = cageAddr
 	}
 
 	// The MCP gateway is the only host the parent's USES URLs resolve to, so it
@@ -264,6 +287,10 @@ func bootTree(ctx context.Context, in bootInput, tree *runTree, plan *runPlan, r
 			alwaysWarm[a.Node.Key] = true
 		}
 	}
+	edgesByNode := map[string][]string{}
+	for edge, node := range plan.EdgeNodes {
+		edgesByNode[node] = append(edgesByNode[node], edge)
+	}
 	ws := &workingSet{
 		sess:           sess,
 		plan:           plan,
@@ -278,22 +305,18 @@ func bootTree(ctx context.Context, in bootInput, tree *runTree, plan *runPlan, r
 		pins:           map[string]int{},
 		lastUse:        lastUse,
 		inflight:       map[string]*activation{},
+		addr:           addr,
+		edgesByNode:    edgesByNode,
 		maxLive:        maxLive,
 		hostMax:        in.HostMax,
 		idleTTL:        in.IdleTTL,
 		slotFreed:      make(chan struct{}, 1),
 		saturationWait: saturationWaitDefault,
 		outbound:       make(chan mcpgateway.ControlMessage, 256),
-		startCage: func(ctx context.Context, pa plannedAgent) error {
-			if err := buildAgentImage(ctx, sess, pa.Node, pa.Spec.ImageRef, in.NoCache, in.Stderr); err != nil {
-				return fmt.Errorf("activating %s: %w", pa.Node.Key, err)
-			}
-			if err := startDetached(ctx, sess.provisioner, pa.Spec); err != nil {
-				return fmt.Errorf("activating %s: %w", pa.Node.Key, err)
-			}
-			return nil
-		},
-		stopCage: func(name string) error { return removeContainer(sess.provisioner, name) },
+		startCage:      startCage,
+		stopCage:       func(name string) error { return removeContainer(sess.provisioner, name) },
+		stderr:         in.Stderr,
+		warnings:       warnings,
 	}
 	return client, ws, nil
 }

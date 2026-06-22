@@ -91,6 +91,16 @@ type Session struct {
 // names.
 func (s *Session) RunID() string { return s.runID }
 
+// Warnings are the boot-time notes the operator should see. A one-shot run
+// streams them on stderr already; serve reads them here because its boot's
+// stderr is the daemon log, not the operator's terminal.
+func (s *Session) Warnings() []string {
+	if s.ws == nil {
+		return nil
+	}
+	return s.ws.warnings
+}
+
 // Call dispatches one tool call on the root agent's session. A one-shot run/call
 // makes exactly one; a held run serves many across its lifetime.
 func (s *Session) Call(ctx context.Context, tool string, args map[string]any) (string, error) {

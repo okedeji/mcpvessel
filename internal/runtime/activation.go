@@ -191,7 +191,21 @@ func (w *workingSet) handleActivate(ctx context.Context, edge string) {
 	} else {
 		err = w.activate(ctx, node)
 	}
-	w.emit(ctx, mcpgateway.ControlMessage{Type: mcpgateway.MsgActivated, Edge: edge, OK: err == nil})
+	msg := mcpgateway.ControlMessage{Type: mcpgateway.MsgActivated, Edge: edge, OK: err == nil}
+	if err == nil {
+		msg.Addr = w.addrOf(node)
+	} else if w.stderr != nil {
+		_, _ = fmt.Fprintf(w.stderr, "activation failed for edge %s: %v\n", edge, err)
+	}
+	w.emit(ctx, msg)
+}
+
+// addrOf is a live node's gateway target, captured when its cage booted. Empty
+// when unknown, which leaves the gateway on the edge's name target.
+func (w *workingSet) addrOf(node string) string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.addr[node]
 }
 
 func (w *workingSet) emit(ctx context.Context, m mcpgateway.ControlMessage) {
@@ -301,7 +315,7 @@ func (w *workingSet) reserveAndBoot(ctx context.Context, node string) error {
 	}
 
 	pa.Spec.Networks = []string{net}
-	bootErr := w.startCage(ctx, pa)
+	addr, bootErr := w.startCage(ctx, pa)
 
 	w.mu.Lock()
 	if bootErr != nil || w.closing {
@@ -321,6 +335,7 @@ func (w *workingSet) reserveAndBoot(ctx context.Context, node string) error {
 	}
 	w.state[node] = cageLive
 	w.lastUse[node] = nowFunc()
+	w.addr[node] = addr
 	w.mu.Unlock()
 	return nil
 }
@@ -360,7 +375,7 @@ func (w *workingSet) reserveSlot(ctx context.Context, node string) (string, erro
 		// slots, and networks were freed when they were marked evicting.
 		for _, v := range victims {
 			_ = w.stopCage(w.specByNode[v].Spec.RunID)
-			w.dropEvicting(v)
+			w.dropEvicting(ctx, v)
 		}
 
 		if ok {
@@ -399,15 +414,23 @@ func (w *workingSet) reserveLocked() (victims []string, ok bool) {
 }
 
 // dropEvicting clears a fully-evicted cage's bookkeeping once its container is
-// gone. The host slot was released when it entered the evicting state.
-func (w *workingSet) dropEvicting(node string) {
+// gone, then tells the gateway to stop routing to every edge that reached it.
+// The deactivation matters before the freed network and address can be recycled:
+// a stale edge would otherwise forward to whatever cage next takes that IP. The
+// host slot was released when it entered the evicting state.
+func (w *workingSet) dropEvicting(ctx context.Context, node string) {
 	w.mu.Lock()
 	delete(w.state, node)
 	delete(w.pins, node)
 	delete(w.lastUse, node)
+	delete(w.addr, node)
+	edges := w.edgesByNode[node]
 	w.mu.Unlock()
 	// A slot freed; wake an activation that was waiting for one.
 	w.signalSlotFree()
+	for _, edge := range edges {
+		w.emit(ctx, mcpgateway.ControlMessage{Type: mcpgateway.MsgDeactivate, Edge: edge})
+	}
 }
 
 // runReaper sweeps idle cages on a ticker, stopping when ctx is cancelled.
@@ -419,7 +442,7 @@ func (w *workingSet) runReaper(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			w.reapIdle()
+			w.reapIdle(ctx)
 		}
 	}
 }
@@ -429,7 +452,7 @@ func (w *workingSet) runReaper(ctx context.Context) {
 // pin, so reaping then could take a cage mid-call. Victims are marked evicting
 // under the lock (freeing their slots at once) and their containers removed
 // outside it.
-func (w *workingSet) reapIdle() {
+func (w *workingSet) reapIdle(ctx context.Context) {
 	w.mu.Lock()
 	if !w.streamUp || w.closing {
 		w.mu.Unlock()
@@ -443,6 +466,6 @@ func (w *workingSet) reapIdle() {
 
 	for _, v := range victims {
 		_ = w.stopCage(w.specByNode[v].Spec.RunID)
-		w.dropEvicting(v)
+		w.dropEvicting(ctx, v)
 	}
 }

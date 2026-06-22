@@ -104,7 +104,7 @@ func (d *Daemon) handleServe(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, servedAgent{Address: a.Address, Tools: names})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"listen": req.Listen, "agents": out})
+	writeJSON(w, http.StatusOK, map[string]any{"listen": req.Listen, "agents": out, "warnings": serveWarnings(sessions)})
 }
 
 // bootExposed boots and holds each exposed agent, returning the front-door
@@ -148,6 +148,22 @@ func filterTools(ctx context.Context, session *runtime.Session, allowed []string
 		}
 	}
 	return out, nil
+}
+
+// serveWarnings gathers each held run's boot notes, deduplicated, so the same
+// clamp reported by several exposed agents in one tree prints once.
+func serveWarnings(sessions []*runtime.Session) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, s := range sessions {
+		for _, w := range s.Warnings() {
+			if !seen[w] {
+				seen[w] = true
+				out = append(out, w)
+			}
+		}
+	}
+	return out
 }
 
 // dropRuns releases the given sessions and removes them from the registry, the

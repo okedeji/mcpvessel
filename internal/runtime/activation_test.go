@@ -5,6 +5,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/okedeji/agentcage/internal/mcpgateway"
 )
 
 // cageTracker stands in for the container runtime: it records which cages were
@@ -18,7 +20,7 @@ type cageTracker struct {
 	startGate map[string]chan struct{}
 }
 
-func (c *cageTracker) start(_ context.Context, pa plannedAgent) error {
+func (c *cageTracker) start(_ context.Context, pa plannedAgent) (string, error) {
 	c.mu.Lock()
 	gate := c.startGate[pa.Node.Key]
 	err := c.startErr[pa.Node.Key]
@@ -27,12 +29,12 @@ func (c *cageTracker) start(_ context.Context, pa plannedAgent) error {
 		<-gate
 	}
 	if err != nil {
-		return err
+		return "", err
 	}
 	c.mu.Lock()
 	c.started = append(c.started, pa.Node.Key)
 	c.mu.Unlock()
-	return nil
+	return agentTarget(pa.Node.Key), nil
 }
 
 func (c *cageTracker) stop(name string) error {
@@ -62,11 +64,14 @@ func newActivationWS(maxLive int) (*workingSet, *cageTracker) {
 		pins:           map[string]int{},
 		lastUse:        map[string]time.Time{},
 		inflight:       map[string]*activation{},
+		addr:           map[string]string{},
+		edgesByNode:    map[string][]string{},
 		maxLive:        maxLive,
 		hostMax:        1000,
 		idleTTL:        time.Minute,
 		slotFreed:      make(chan struct{}, 1),
 		saturationWait: time.Second,
+		outbound:       make(chan mcpgateway.ControlMessage, 256),
 		startCage:      tr.start,
 		stopCage:       tr.stop,
 	}
@@ -211,6 +216,48 @@ func TestActivate_QueuesThenSucceedsWhenSlotFrees(t *testing.T) {
 	}
 }
 
+func TestHandleActivate_ReportsResolvedAddress(t *testing.T) {
+	ws, _ := newActivationWS(4)
+	ws.addPlain("a", "net-a")
+	ws.plan.EdgeNodes["a-edge"] = "a"
+
+	ws.handleActivate(context.Background(), "a-edge")
+
+	msg := <-ws.outbound
+	if msg.Type != mcpgateway.MsgActivated || msg.Edge != "a-edge" || !msg.OK {
+		t.Fatalf("got %+v, want an OK activated verdict for a-edge", msg)
+	}
+	if msg.Addr != agentTarget("a") {
+		t.Errorf("addr = %q, want the booted cage's target %q", msg.Addr, agentTarget("a"))
+	}
+}
+
+func TestReapIdle_DeactivatesEdges(t *testing.T) {
+	ws, tr := newActivationWS(4)
+	ws.streamUp = true
+	ws.addPlain("a", "net-a")
+	ws.edgesByNode["a"] = []string{"a-edge"}
+
+	now := time.Unix(100000, 0)
+	nowFunc = func() time.Time { return now }
+	defer func() { nowFunc = time.Now }()
+
+	if err := ws.activate(context.Background(), "a"); err != nil {
+		t.Fatalf("activate: %v", err)
+	}
+	ws.lastUse["a"] = now.Add(-2 * time.Minute) // past the TTL
+
+	ws.reapIdle(context.Background())
+
+	if len(tr.stopped) != 1 {
+		t.Fatalf("expected the idle cage stopped, stopped = %v", tr.stopped)
+	}
+	msg := <-ws.outbound
+	if msg.Type != mcpgateway.MsgDeactivate || msg.Edge != "a-edge" {
+		t.Errorf("got %+v, want a deactivate for a-edge so the gateway drops the stale route", msg)
+	}
+}
+
 func TestReapIdle_StopsIdleKeepsBusy(t *testing.T) {
 	ws, tr := newActivationWS(8)
 	ws.streamUp = true
@@ -228,7 +275,7 @@ func TestReapIdle_StopsIdleKeepsBusy(t *testing.T) {
 	ws.lastUse["pinned"] = now.Add(-time.Hour)     // old but mid-call
 	ws.pins["pinned"] = 1
 
-	ws.reapIdle()
+	ws.reapIdle(context.Background())
 
 	if len(tr.stopped) != 1 || tr.stopped[0] != "run-idle" {
 		t.Errorf("stopped = %v, want only [run-idle]", tr.stopped)
