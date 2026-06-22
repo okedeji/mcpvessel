@@ -55,15 +55,25 @@ type RunInfo struct {
 type Daemon struct {
 	mu   sync.Mutex
 	runs map[string]*heldRun
-	// fronts are the serve front doors the daemon has opened. Shutdown closes
-	// them so their listeners stop accepting before the runs behind them release.
-	fronts []*http.Server
+	// fronts are the serve front doors the daemon has opened, each tied to the
+	// runs it exposes. Stopping the last run behind a front closes its listener so
+	// the port frees; shutdown closes whatever remains.
+	fronts []*front
 	// shutdown is closed to ask the serve loop to stop, the in-process equivalent
 	// of a SIGTERM, so `init --recreate` can take the daemon down cleanly before
 	// the VM is rebuilt under it. shutdownOnce keeps a second request from closing
 	// an already-closed channel.
 	shutdown     chan struct{}
 	shutdownOnce sync.Once
+}
+
+// front is one serve front door: its HTTP server and the runs it exposes. The
+// door stays open while any of its runs is live and closes when the last one
+// stops, so a stopped serve frees its port instead of holding it for the
+// daemon's life.
+type front struct {
+	srv  *http.Server
+	runs map[string]bool
 }
 
 // heldRun is one run the daemon holds: its reportable info and the live Session
@@ -138,11 +148,36 @@ func (d *Daemon) releaseAll() error {
 	return errors.Join(errs...)
 }
 
-// addFront records a serve front door so shutdown can close it.
-func (d *Daemon) addFront(srv *http.Server) {
+// addFront records a serve front door and the runs it exposes, so shutdown can
+// close it and a stop can close it once its last run is gone.
+func (d *Daemon) addFront(srv *http.Server, runIDs []string) {
+	f := &front{srv: srv, runs: make(map[string]bool, len(runIDs))}
+	for _, id := range runIDs {
+		f.runs[id] = true
+	}
 	d.mu.Lock()
-	d.fronts = append(d.fronts, srv)
+	d.fronts = append(d.fronts, f)
 	d.mu.Unlock()
+}
+
+// releaseFrontFor drops a stopped run from its front door and closes the door
+// once no run behind it remains, freeing the listener's port. A run reached by
+// `run` or `call` fronts nothing, so this is a no-op for it.
+func (d *Daemon) releaseFrontFor(id string) {
+	d.mu.Lock()
+	kept := make([]*front, 0, len(d.fronts))
+	var closing []*front
+	for _, f := range d.fronts {
+		delete(f.runs, id)
+		if len(f.runs) == 0 {
+			closing = append(closing, f)
+			continue
+		}
+		kept = append(kept, f)
+	}
+	d.fronts = kept
+	d.mu.Unlock()
+	shutdownFronts(closing)
 }
 
 // closeFronts shuts every front door within shutdownTimeout, stopping external
@@ -152,9 +187,13 @@ func (d *Daemon) closeFronts() {
 	fronts := d.fronts
 	d.fronts = nil
 	d.mu.Unlock()
-	for _, srv := range fronts {
+	shutdownFronts(fronts)
+}
+
+func shutdownFronts(fronts []*front) {
+	for _, f := range fronts {
 		ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
-		_ = srv.Shutdown(ctx)
+		_ = f.srv.Shutdown(ctx)
 		cancel()
 	}
 }

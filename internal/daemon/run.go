@@ -144,6 +144,9 @@ func (d *Daemon) handleStopRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "no such run "+id)
 		return
 	}
+	// Close the front door before the run tears down, the same order shutdown
+	// uses: external traffic stops before the agents behind it go away.
+	d.releaseFrontFor(id)
 	if err := session.Release(); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

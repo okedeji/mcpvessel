@@ -2,12 +2,45 @@ package daemon
 
 import (
 	"context"
+	"net"
+	"net/http"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/okedeji/agentcage/internal/identity"
 )
+
+func TestFront_ClosesWhenLastRunStops(t *testing.T) {
+	d := New()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	srv := &http.Server{Handler: http.NewServeMux()}
+	d.addFront(srv, []string{"run-1", "run-2"})
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- srv.Serve(ln) }()
+
+	// One run still live: the door stays open.
+	d.releaseFrontFor("run-1")
+	select {
+	case err := <-serveErr:
+		t.Fatalf("front closed with a run still live: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	// Last run stops: the door closes and frees its port.
+	d.releaseFrontFor("run-2")
+	select {
+	case err := <-serveErr:
+		if err != http.ErrServerClosed {
+			t.Errorf("Serve returned %v, want ErrServerClosed", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("front did not close after its last run stopped")
+	}
+}
 
 func TestRegistry_HoldTake(t *testing.T) {
 	d := New()

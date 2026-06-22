@@ -88,8 +88,12 @@ func (d *Daemon) handleServe(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "listening on "+req.Listen+": "+err.Error())
 		return
 	}
+	runIDs := make([]string, 0, len(sessions))
+	for _, s := range sessions {
+		runIDs = append(runIDs, s.RunID())
+	}
 	srv := &http.Server{Handler: serve.Handler(agents)}
-	d.addFront(srv)
+	d.addFront(srv, runIDs)
 	go func() { _ = srv.Serve(ln) }()
 
 	out := make([]servedAgent, 0, len(agents))
