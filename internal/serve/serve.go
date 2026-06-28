@@ -12,6 +12,7 @@ package serve
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -28,6 +29,13 @@ type Agent struct {
 	Address string
 	Tools   []mcp.Tool
 	Call    func(ctx context.Context, tool string, args map[string]any) (string, error)
+
+	// BindElicit, when set, binds the calling client as the agent's answer
+	// channel for the duration of a call, so the agent can ask the caller a
+	// question mid-call and resume with the answer. It returns a release the
+	// dispatch defers. Nil leaves the agent unable to elicit (the front door
+	// supplies it only for interactive runs; tests leave it unset).
+	BindElicit func(elicit mcp.ElicitHandler) (release func())
 }
 
 // Handler builds the front door: a streamable-HTTP MCP endpoint per agent at
@@ -42,7 +50,7 @@ func Handler(agents []Agent) http.Handler {
 				Name:        t.Name,
 				Description: t.Description,
 				InputSchema: inputSchema(t.Schema),
-			}, dispatch(a.Call))
+			}, dispatch(a.Call, a.BindElicit))
 		}
 		handler := mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return srv }, nil)
 		mux.Handle("/agents/"+a.Address+"/mcp", handler)
@@ -53,17 +61,43 @@ func Handler(agents []Agent) http.Handler {
 // dispatch turns one agent's Call closure into an MCP tool handler. A failed
 // call comes back as a tool error (IsError) carrying the message, not a
 // transport failure, so the caller's MCP client surfaces it like any tool error.
-func dispatch(call func(context.Context, string, map[string]any) (string, error)) mcpsdk.ToolHandler {
+//
+// When bind is set, the calling client becomes the agent's answer channel for
+// this call, so a question the agent raises mid-call rides MCP's elicitation
+// back to whoever made the call. The bind is released when the call returns.
+func dispatch(call func(context.Context, string, map[string]any) (string, error), bind func(mcp.ElicitHandler) func()) mcpsdk.ToolHandler {
 	return func(ctx context.Context, req *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
 		args, err := decodeArgs(req.Params.Arguments)
 		if err != nil {
 			return toolError("decoding arguments: " + err.Error()), nil
+		}
+		if bind != nil {
+			release := bind(operatorElicit(req.Session))
+			defer release()
 		}
 		text, err := call(ctx, req.Params.Name, args)
 		if err != nil {
 			return toolError(err.Error()), nil
 		}
 		return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: text}}}, nil
+	}
+}
+
+// operatorElicit turns the calling client's session into an answer channel for
+// the agent's mid-call questions. req.Session is the external caller; Elicit
+// rides MCP's elicitation/create back to it, so the agent asks whoever made the
+// call. A caller that did not advertise the elicitation capability makes Elicit
+// error, which fails the asking call closed rather than hanging it.
+func operatorElicit(session *mcpsdk.ServerSession) mcp.ElicitHandler {
+	return func(ctx context.Context, q *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
+		res, err := session.Elicit(ctx, &mcpsdk.ElicitParams{
+			Message:         q.Message,
+			RequestedSchema: q.Schema,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("asking the caller: %w", err)
+		}
+		return &mcp.ElicitResult{Action: res.Action, Content: res.Content}, nil
 	}
 }
 

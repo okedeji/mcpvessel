@@ -81,6 +81,80 @@ func TestHandler_PrivateToolUnreachable(t *testing.T) {
 	}
 }
 
+// askingAgent is an exposed agent whose tool asks the caller a question
+// mid-call through its bound answer channel, the way a real agent elicits
+// through the front door. bound mirrors what the daemon's session.BindElicit
+// does: it installs the answer channel for the call's duration.
+func askingAgent() Agent {
+	var bound mcp.ElicitHandler
+	return Agent{
+		Address: "asker",
+		Tools:   []mcp.Tool{{Name: "deploy", Schema: map[string]any{"type": "object"}}},
+		Call: func(ctx context.Context, _ string, _ map[string]any) (string, error) {
+			res, err := bound(ctx, &mcp.ElicitRequest{Message: "prod or staging?"})
+			if err != nil {
+				return "", err
+			}
+			where, _ := res.Content["env"].(string)
+			return "deploying to " + where, nil
+		},
+		BindElicit: func(h mcp.ElicitHandler) func() {
+			bound = h
+			return func() { bound = nil }
+		},
+	}
+}
+
+// TestHandler_ElicitsThroughCaller is the serve-layer round trip: the agent asks
+// a question mid-call, it rides MCP's elicitation back to the calling client,
+// and the caller's answer folds into the same call's result.
+func TestHandler_ElicitsThroughCaller(t *testing.T) {
+	srv := httptest.NewServer(Handler([]Agent{askingAgent()}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	client, err := mcp.ConnectHTTP(ctx, srv.URL+"/agents/asker/mcp", mcp.WithElicitation(
+		func(_ context.Context, q *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
+			if !strings.Contains(q.Message, "prod or staging") {
+				t.Errorf("caller saw question %q", q.Message)
+			}
+			return &mcp.ElicitResult{Action: "accept", Content: map[string]any{"env": "staging"}}, nil
+		}))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer func() { _ = client.Close() }()
+
+	out, err := client.CallTool(ctx, "deploy", nil)
+	if err != nil {
+		t.Fatalf("call: %v", err)
+	}
+	if !strings.Contains(out, "staging") {
+		t.Errorf("result = %q, want the caller's answer folded in", out)
+	}
+}
+
+// TestHandler_ElicitFailsClosedWithoutCallerSupport pins the fail-closed
+// contract: a caller that did not advertise elicitation cannot be asked, so the
+// asking call returns an error rather than hanging.
+func TestHandler_ElicitFailsClosedWithoutCallerSupport(t *testing.T) {
+	srv := httptest.NewServer(Handler([]Agent{askingAgent()}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	client, err := mcp.ConnectHTTP(ctx, srv.URL+"/agents/asker/mcp")
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer func() { _ = client.Close() }()
+
+	if _, err := client.CallTool(ctx, "deploy", nil); err == nil {
+		t.Fatal("expected the call to fail closed when the caller cannot answer")
+	}
+}
+
 func TestHandler_SeparateEndpointPerAgent(t *testing.T) {
 	mk := func(addr, tool string) Agent {
 		return Agent{

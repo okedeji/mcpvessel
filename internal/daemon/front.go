@@ -124,7 +124,7 @@ func (d *Daemon) bootExposed(ctx context.Context, exposed []runtime.ExposedAgent
 		if err != nil {
 			return nil, sessions, fmt.Errorf("listing tools for %s: %w", ea.Address, err)
 		}
-		agents = append(agents, serve.Agent{Address: ea.Address, Tools: tools, Call: session.Call})
+		agents = append(agents, serve.Agent{Address: ea.Address, Tools: tools, Call: session.Call, BindElicit: session.BindElicit})
 	}
 	return agents, sessions, nil
 }
