@@ -81,8 +81,12 @@ type front struct {
 // stop releases it; the daemon dying drops the Session's subprocess and with it
 // the run, the same coupling a one-shot run has to the CLI process.
 type heldRun struct {
-	info    RunInfo
+	info RunInfo
+	// session is set for a run/call/start run the daemon holds over stdio.
+	// manager is set instead for a serve-managed exposed agent, which owns a pool
+	// of per-client instances rather than one held session. Exactly one is set.
 	session *runtime.Session
+	manager *instanceManager
 }
 
 // New returns a daemon with an empty registry.
@@ -97,21 +101,31 @@ func (d *Daemon) hold(info RunInfo, session *runtime.Session) {
 	d.runs[info.ID] = &heldRun{info: info, session: session}
 }
 
-// session returns the live Session for a run, or false when no run by that id
-// is held.
+// holdServe records a serve-managed exposed agent: a registry entry whose
+// instances the manager owns, so ps lists it and stop releases the whole pool.
+func (d *Daemon) holdServe(info RunInfo, mgr *instanceManager) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.runs[info.ID] = &heldRun{info: info, manager: mgr}
+}
+
+// session returns the live Session for a run, or false when no run by that id is
+// held over stdio. A serve entry has no single session (it owns a pool), so it
+// reports false here: the control-plane call/budget routes target run/call/start
+// runs, not a serve front door.
 func (d *Daemon) session(id string) (*runtime.Session, bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	r, ok := d.runs[id]
-	if !ok {
+	if !ok || r.session == nil {
 		return nil, false
 	}
 	return r.session, true
 }
 
-// take removes a run from the registry and returns its Session, so a stop
+// take removes a run from the registry and returns its held entry, so a stop
 // releases exactly once even if two arrive at the same time.
-func (d *Daemon) take(id string) (*runtime.Session, bool) {
+func (d *Daemon) take(id string) (*heldRun, bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	r, ok := d.runs[id]
@@ -119,7 +133,18 @@ func (d *Daemon) take(id string) (*runtime.Session, bool) {
 		return nil, false
 	}
 	delete(d.runs, id)
-	return r.session, true
+	return r, true
+}
+
+// release tears down a held entry, whichever kind it is.
+func (r *heldRun) release() error {
+	if r.manager != nil {
+		return r.manager.releaseAll()
+	}
+	if r.session != nil {
+		return r.session.Release()
+	}
+	return nil
 }
 
 // nowFunc is overridable so StartedAt stays testable without a real clock.
@@ -130,18 +155,16 @@ var nowFunc = time.Now
 // detached sub-agents and networks to the next reconciliation sweep.
 func (d *Daemon) releaseAll() error {
 	d.mu.Lock()
-	sessions := make([]*runtime.Session, 0, len(d.runs))
+	held := make([]*heldRun, 0, len(d.runs))
 	for _, r := range d.runs {
-		if r.session != nil {
-			sessions = append(sessions, r.session)
-		}
+		held = append(held, r)
 	}
 	d.runs = map[string]*heldRun{}
 	d.mu.Unlock()
 
 	var errs []error
-	for _, s := range sessions {
-		if err := s.Release(); err != nil {
+	for _, r := range held {
+		if err := r.release(); err != nil {
 			errs = append(errs, err)
 		}
 	}

@@ -4,9 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
+	"os"
 
+	"github.com/okedeji/agentcage/internal/bundle"
+	"github.com/okedeji/agentcage/internal/config"
 	"github.com/okedeji/agentcage/internal/env"
 	"github.com/okedeji/agentcage/internal/locate"
 	"github.com/okedeji/agentcage/internal/mcp"
@@ -30,16 +34,17 @@ type servedAgent struct {
 	Tools   []string `json:"tools"`
 }
 
-// handleServe boots a run's exposed agents, holds them in the registry, and
-// opens an MCP-over-HTTP front door bound to the requested address. The exposed
-// set is the served root plus every USES PUBLIC sub-agent the overrides leave
-// reachable; each becomes its own held run and its own endpoint under /agents/,
-// because the host reaches a run only through its root over stdio, never a
-// sub-agent behind the run's internal network.
+// handleServe registers a run's exposed agents and opens an MCP-over-HTTP front
+// door bound to the requested address. The exposed set is the served root plus
+// every USES PUBLIC sub-agent the overrides leave reachable; each becomes its own
+// endpoint under /agents/ backed by an instance manager. Agents boot lazily: a
+// client's first call to an endpoint boots that client its own instance, reused
+// across its calls and reaped when it goes idle, so concurrent clients run
+// concurrently instead of sharing one serialized session.
 //
-// A boot that fails partway releases the runs already held, so a failed serve
-// leaks nothing. The front door is held for the daemon's life and closed on
-// shutdown alongside the runs behind it.
+// A registration that fails partway releases what it set up, so a failed serve
+// leaks nothing. The front door is held until the served agents stop or the
+// daemon shuts down, which releases every live instance behind it.
 func (d *Daemon) handleServe(w http.ResponseWriter, r *http.Request) {
 	var req serveRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -75,25 +80,26 @@ func (d *Daemon) handleServe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	agents, sessions, err := d.bootExposed(r.Context(), exposed)
+	cfg, err := config.Load()
 	if err != nil {
-		d.dropRuns(sessions)
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	agents, ids, err := d.registerExposed(b.Display, exposed, cfg.Serve)
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
 	ln, err := net.Listen("tcp", req.Listen)
 	if err != nil {
-		d.dropRuns(sessions)
+		d.dropServe(ids)
 		writeError(w, http.StatusBadRequest, "listening on "+req.Listen+": "+err.Error())
 		return
 	}
-	runIDs := make([]string, 0, len(sessions))
-	for _, s := range sessions {
-		runIDs = append(runIDs, s.RunID())
-	}
 	srv := &http.Server{Handler: serve.Handler(agents)}
-	d.addFront(srv, runIDs)
+	d.addFront(srv, ids)
 	go func() { _ = srv.Serve(ln) }()
 
 	out := make([]servedAgent, 0, len(agents))
@@ -104,74 +110,99 @@ func (d *Daemon) handleServe(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, servedAgent{Address: a.Address, Tools: names})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"listen": req.Listen, "agents": out, "warnings": serveWarnings(sessions)})
+	writeJSON(w, http.StatusOK, map[string]any{"listen": req.Listen, "agents": out})
 }
 
-// bootExposed boots and holds each exposed agent, returning the front-door
-// agents and the sessions held so far. On error the caller releases the
-// returned sessions; it returns them even on failure for exactly that reason.
-func (d *Daemon) bootExposed(ctx context.Context, exposed []runtime.ExposedAgent) ([]serve.Agent, []*runtime.Session, error) {
+// registerExposed sets up a front-door agent per exposed agent: it reads the
+// public tools from the bundle's catalog (no boot needed to list them), creates
+// an instance manager that boots a per-client instance on demand, and records a
+// serve entry so ps lists it and stop releases its whole pool. On error it rolls
+// back the entries already created and returns them so nothing leaks.
+func (d *Daemon) registerExposed(display string, exposed []runtime.ExposedAgent, cfg config.Serve) ([]serve.Agent, []string, error) {
 	agents := make([]serve.Agent, 0, len(exposed))
-	sessions := make([]*runtime.Session, 0, len(exposed))
+	ids := make([]string, 0, len(exposed))
 	for _, ea := range exposed {
-		session, err := d.boot(context.Background(), runtime.RunInput{BundlePath: ea.Bundle, Name: ea.Address, Interaction: env.InteractionInteractive}, ea.Address)
+		manifest, err := bundle.ReadManifest(ea.Bundle)
 		if err != nil {
-			return nil, sessions, fmt.Errorf("booting %s: %w", ea.Address, err)
+			d.dropServe(ids)
+			return nil, nil, fmt.Errorf("reading manifest for %s: %w", ea.Address, err)
 		}
-		sessions = append(sessions, session)
 
-		tools, err := filterTools(ctx, session, ea.Tools)
-		if err != nil {
-			return nil, sessions, fmt.Errorf("listing tools for %s: %w", ea.Address, err)
-		}
-		agents = append(agents, serve.Agent{Address: ea.Address, Tools: tools, Call: session.Call, BindElicit: session.BindElicit})
+		ea := ea // capture per iteration for the boot closure
+		mgr := newInstanceManager(ea.Address, cfg.EffectiveMaxClients(), cfg.EffectiveClientIdleTTL(),
+			func(ctx context.Context, runID string) (managedSession, error) {
+				session, err := runtime.Acquire(ctx, runtime.RunInput{
+					BundlePath:  ea.Bundle,
+					Name:        ea.Address,
+					RunID:       runID,
+					Interaction: env.InteractionInteractive,
+					Managed:     true,
+					Stdout:      io.Discard,
+					Stderr:      os.Stderr,
+				})
+				if err != nil {
+					return nil, err
+				}
+				// The working set outlives the call that booted the instance: the
+				// instance is reused across the client's calls and torn down by the
+				// manager, not by any one request.
+				session.StartWorkingSet(context.Background())
+				return session, nil
+			})
+
+		d.holdServe(RunInfo{ID: ea.Address, Ref: display, Status: "serving", StartedAt: nowFunc()}, mgr)
+		ids = append(ids, ea.Address)
+
+		m := mgr
+		agents = append(agents, serve.Agent{
+			Address: ea.Address,
+			Tools:   catalogTools(manifest, ea.Tools),
+			Resolve: func(ctx context.Context, sessionID string) (serve.Target, func(), error) {
+				session, release, err := m.acquire(ctx, sessionID)
+				if err != nil {
+					return serve.Target{}, nil, err
+				}
+				return serve.Target{Call: session.Call, BindElicit: session.BindElicit}, release, nil
+			},
+		})
 	}
-	return agents, sessions, nil
+	return agents, ids, nil
 }
 
-// filterTools keeps only the agent's public tools, matching the live listing
-// against the allowed names so each endpoint advertises a public tool with its
-// real schema and nothing it should not.
-func filterTools(ctx context.Context, session *runtime.Session, allowed []string) ([]mcp.Tool, error) {
-	live, err := session.ListTools(ctx)
-	if err != nil {
-		return nil, err
-	}
+// catalogTools keeps only the agent's public tools, matching the bundle's tool
+// catalog against the allowed names so each endpoint advertises a public tool
+// with its real schema and nothing it should not. Read from the static manifest,
+// not a live session, so no instance has to boot just to list tools.
+func catalogTools(manifest *bundle.Manifest, allowed []string) []mcp.Tool {
 	allow := make(map[string]bool, len(allowed))
 	for _, n := range allowed {
 		allow[n] = true
 	}
 	out := make([]mcp.Tool, 0, len(allowed))
-	for _, t := range live {
+	for _, t := range manifest.Tools {
 		if allow[t.Name] {
-			out = append(out, t)
-		}
-	}
-	return out, nil
-}
-
-// serveWarnings gathers each held run's boot notes, deduplicated, so the same
-// clamp reported by several exposed agents in one tree prints once.
-func serveWarnings(sessions []*runtime.Session) []string {
-	var out []string
-	seen := map[string]bool{}
-	for _, s := range sessions {
-		for _, w := range s.Warnings() {
-			if !seen[w] {
-				seen[w] = true
-				out = append(out, w)
-			}
+			out = append(out, mcp.Tool{Name: t.Name, Description: t.Description, Schema: t.Schema})
 		}
 	}
 	return out
 }
 
+// dropServe releases the given serve entries and removes them from the registry,
+// the rollback when a serve fails after some of its agents are already set up.
+func (d *Daemon) dropServe(ids []string) {
+	for _, id := range ids {
+		if held, ok := d.take(id); ok {
+			_ = held.release()
+		}
+	}
+}
+
 // dropRuns releases the given sessions and removes them from the registry, the
-// rollback when a serve fails after some of its agents are already held.
+// rollback a one-shot run uses when its call is done.
 func (d *Daemon) dropRuns(sessions []*runtime.Session) {
 	for _, s := range sessions {
 		if held, ok := d.take(s.RunID()); ok {
-			_ = held.Release()
+			_ = held.release()
 		}
 	}
 }

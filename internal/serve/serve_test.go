@@ -4,24 +4,35 @@ import (
 	"context"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/okedeji/agentcage/internal/mcp"
 )
 
-func TestHandler_ListsAndCallsPublicTools(t *testing.T) {
-	var called string
-	agent := Agent{
-		Address: "researcher",
-		Tools: []mcp.Tool{
-			{Name: "search", Description: "search the web", Schema: map[string]any{"type": "object"}},
-		},
-		Call: func(_ context.Context, tool string, args map[string]any) (string, error) {
-			called = tool
-			return "q=" + args["q"].(string), nil
+// staticAgent wraps a fixed call (and optional elicit binding) as an Agent whose
+// resolver returns the same target for every client session, the simple shape
+// the front-door tests need without a real instance manager.
+func staticAgent(addr string, tools []mcp.Tool, call func(context.Context, string, map[string]any) (string, error), bind func(mcp.ElicitHandler) func()) Agent {
+	return Agent{
+		Address: addr,
+		Tools:   tools,
+		Resolve: func(context.Context, string) (Target, func(), error) {
+			return Target{Call: call, BindElicit: bind}, func() {}, nil
 		},
 	}
+}
+
+func TestHandler_ListsAndCallsPublicTools(t *testing.T) {
+	var called string
+	agent := staticAgent("researcher",
+		[]mcp.Tool{{Name: "search", Description: "search the web", Schema: map[string]any{"type": "object"}}},
+		func(_ context.Context, tool string, args map[string]any) (string, error) {
+			called = tool
+			return "q=" + args["q"].(string), nil
+		}, nil)
 
 	srv := httptest.NewServer(Handler([]Agent{agent}))
 	defer srv.Close()
@@ -55,13 +66,11 @@ func TestHandler_ListsAndCallsPublicTools(t *testing.T) {
 }
 
 func TestHandler_PrivateToolUnreachable(t *testing.T) {
-	agent := Agent{
-		Address: "researcher",
-		Tools:   []mcp.Tool{{Name: "search", Schema: map[string]any{"type": "object"}}},
-		Call: func(_ context.Context, tool string, _ map[string]any) (string, error) {
+	agent := staticAgent("researcher",
+		[]mcp.Tool{{Name: "search", Schema: map[string]any{"type": "object"}}},
+		func(_ context.Context, tool string, _ map[string]any) (string, error) {
 			return "should not run for " + tool, nil
-		},
-	}
+		}, nil)
 
 	srv := httptest.NewServer(Handler([]Agent{agent}))
 	defer srv.Close()
@@ -87,10 +96,9 @@ func TestHandler_PrivateToolUnreachable(t *testing.T) {
 // does: it installs the answer channel for the call's duration.
 func askingAgent() Agent {
 	var bound mcp.ElicitHandler
-	return Agent{
-		Address: "asker",
-		Tools:   []mcp.Tool{{Name: "deploy", Schema: map[string]any{"type": "object"}}},
-		Call: func(ctx context.Context, _ string, _ map[string]any) (string, error) {
+	return staticAgent("asker",
+		[]mcp.Tool{{Name: "deploy", Schema: map[string]any{"type": "object"}}},
+		func(ctx context.Context, _ string, _ map[string]any) (string, error) {
 			res, err := bound(ctx, &mcp.ElicitRequest{Message: "prod or staging?"})
 			if err != nil {
 				return "", err
@@ -98,11 +106,10 @@ func askingAgent() Agent {
 			where, _ := res.Content["env"].(string)
 			return "deploying to " + where, nil
 		},
-		BindElicit: func(h mcp.ElicitHandler) func() {
+		func(h mcp.ElicitHandler) func() {
 			bound = h
 			return func() { bound = nil }
-		},
-	}
+		})
 }
 
 // TestHandler_ElicitsThroughCaller is the serve-layer round trip: the agent asks
@@ -155,13 +162,73 @@ func TestHandler_ElicitFailsClosedWithoutCallerSupport(t *testing.T) {
 	}
 }
 
+// TestHandler_ConcurrentClientsDoNotSerialize is the point of the per-session
+// instance model: two distinct clients calling the same served agent at once both
+// run concurrently rather than queueing. Each call blocks on a barrier that only
+// opens once both are in flight, so if the front door serialized them the barrier
+// would never open and the calls would time out.
+func TestHandler_ConcurrentClientsDoNotSerialize(t *testing.T) {
+	const clients = 2
+	var inFlight int32
+	barrier := make(chan struct{})
+	agent := Agent{
+		Address: "worker",
+		Tools:   []mcp.Tool{{Name: "work", Schema: map[string]any{"type": "object"}}},
+		Resolve: func(_ context.Context, sessionID string) (Target, func(), error) {
+			return Target{Call: func(ctx context.Context, _ string, _ map[string]any) (string, error) {
+				if atomic.AddInt32(&inFlight, 1) == clients {
+					close(barrier)
+				}
+				select {
+				case <-barrier:
+					return sessionID, nil
+				case <-ctx.Done():
+					return "", ctx.Err()
+				}
+			}}, func() {}, nil
+		},
+	}
+
+	srv := httptest.NewServer(Handler([]Agent{agent}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	results := make([]string, clients)
+	errs := make([]error, clients)
+	var wg sync.WaitGroup
+	for i := 0; i < clients; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			client, err := mcp.ConnectHTTP(ctx, srv.URL+"/agents/worker/mcp")
+			if err != nil {
+				errs[i] = err
+				return
+			}
+			defer func() { _ = client.Close() }()
+			results[i], errs[i] = client.CallTool(ctx, "work", nil)
+		}(i)
+	}
+	wg.Wait()
+
+	for i := 0; i < clients; i++ {
+		if errs[i] != nil {
+			t.Fatalf("client %d failed (serialized?): %v", i, errs[i])
+		}
+	}
+	// Distinct clients get distinct session ids, so they routed to distinct instances.
+	if results[0] == results[1] {
+		t.Errorf("both clients resolved to the same session id %q, want distinct", results[0])
+	}
+}
+
 func TestHandler_SeparateEndpointPerAgent(t *testing.T) {
 	mk := func(addr, tool string) Agent {
-		return Agent{
-			Address: addr,
-			Tools:   []mcp.Tool{{Name: tool, Schema: map[string]any{"type": "object"}}},
-			Call:    func(context.Context, string, map[string]any) (string, error) { return addr, nil },
-		}
+		return staticAgent(addr,
+			[]mcp.Tool{{Name: tool, Schema: map[string]any{"type": "object"}}},
+			func(context.Context, string, map[string]any) (string, error) { return addr, nil }, nil)
 	}
 	srv := httptest.NewServer(Handler([]Agent{mk("researcher", "search"), mk("web-scraper", "fetch")}))
 	defer srv.Close()

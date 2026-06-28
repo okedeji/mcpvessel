@@ -139,15 +139,16 @@ func (d *Daemon) handleSetBudget(w http.ResponseWriter, r *http.Request) {
 // it under the lock so two stops cannot double-release the same Session.
 func (d *Daemon) handleStopRun(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	session, ok := d.take(id)
+	held, ok := d.take(id)
 	if !ok {
 		writeError(w, http.StatusNotFound, "no such run "+id)
 		return
 	}
 	// Close the front door before the run tears down, the same order shutdown
-	// uses: external traffic stops before the agents behind it go away.
+	// uses: external traffic stops before the agents behind it go away. For a
+	// serve entry this releases its whole client-instance pool.
 	d.releaseFrontFor(id)
-	if err := session.Release(); err != nil {
+	if err := held.release(); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

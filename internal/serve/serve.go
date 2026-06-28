@@ -23,18 +23,25 @@ import (
 
 // Agent is one exposed agent the front door serves: the URL segment it answers
 // on under /agents/, the public tools an external caller may invoke (already
-// filtered to public, with their schemas), and the dispatch into the agent's
-// held run.
+// filtered to public, with their schemas), and a resolver that maps a calling
+// client's session to its own agent instance.
 type Agent struct {
 	Address string
 	Tools   []mcp.Tool
-	Call    func(ctx context.Context, tool string, args map[string]any) (string, error)
 
-	// BindElicit, when set, binds the calling client as the agent's answer
-	// channel for the duration of a call, so the agent can ask the caller a
-	// question mid-call and resume with the answer. It returns a release the
-	// dispatch defers. Nil leaves the agent unable to elicit (the front door
-	// supplies it only for interactive runs; tests leave it unset).
+	// Resolve maps a calling client's MCP session id to its instance: the call
+	// target plus a release the dispatch defers when the call returns (so the
+	// instance manager can track in-flight calls and reap idle ones). It boots
+	// the client an instance on first call, so distinct clients run concurrently
+	// on their own instances rather than sharing one serialized session.
+	Resolve func(ctx context.Context, sessionID string) (target Target, release func(), err error)
+}
+
+// Target is one client instance the front door dispatches a call into: the call
+// itself and the elicitation binding for it. BindElicit, when set, binds the
+// calling client as the agent's answer channel for the duration of a call.
+type Target struct {
+	Call       func(ctx context.Context, tool string, args map[string]any) (string, error)
 	BindElicit func(elicit mcp.ElicitHandler) (release func())
 }
 
@@ -50,7 +57,7 @@ func Handler(agents []Agent) http.Handler {
 				Name:        t.Name,
 				Description: t.Description,
 				InputSchema: inputSchema(t.Schema),
-			}, dispatch(a.Call, a.BindElicit))
+			}, dispatch(a.Resolve))
 		}
 		handler := mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return srv }, nil)
 		mux.Handle("/agents/"+a.Address+"/mcp", handler)
@@ -58,24 +65,29 @@ func Handler(agents []Agent) http.Handler {
 	return mux
 }
 
-// dispatch turns one agent's Call closure into an MCP tool handler. A failed
-// call comes back as a tool error (IsError) carrying the message, not a
-// transport failure, so the caller's MCP client surfaces it like any tool error.
-//
-// When bind is set, the calling client becomes the agent's answer channel for
-// this call, so a question the agent raises mid-call rides MCP's elicitation
-// back to whoever made the call. The bind is released when the call returns.
-func dispatch(call func(context.Context, string, map[string]any) (string, error), bind func(mcp.ElicitHandler) func()) mcpsdk.ToolHandler {
+// dispatch turns one agent's resolver into an MCP tool handler. It maps the
+// calling client's session to its own instance (booting one on first call),
+// binds that client as the instance's answer channel so a mid-call question
+// rides MCP's elicitation back to it, dispatches the call, and releases the
+// instance's in-flight hold when the call returns. A failed resolve or call
+// comes back as a tool error (IsError) carrying the message, not a transport
+// failure, so the caller's MCP client surfaces it like any tool error.
+func dispatch(resolve func(ctx context.Context, sessionID string) (Target, func(), error)) mcpsdk.ToolHandler {
 	return func(ctx context.Context, req *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
 		args, err := decodeArgs(req.Params.Arguments)
 		if err != nil {
 			return toolError("decoding arguments: " + err.Error()), nil
 		}
-		if bind != nil {
-			release := bind(operatorElicit(req.Session))
-			defer release()
+		target, release, err := resolve(ctx, req.Session.ID())
+		if err != nil {
+			return toolError(err.Error()), nil
 		}
-		text, err := call(ctx, req.Params.Name, args)
+		defer release()
+		if target.BindElicit != nil {
+			releaseElicit := target.BindElicit(operatorElicit(req.Session))
+			defer releaseElicit()
+		}
+		text, err := target.Call(ctx, req.Params.Name, args)
 		if err != nil {
 			return toolError(err.Error()), nil
 		}
