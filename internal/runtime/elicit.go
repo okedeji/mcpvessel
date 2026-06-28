@@ -25,7 +25,7 @@ const elicitDeadline = 3 * time.Minute
 // triggered it, so a run answers one eliciting call at a time: bind blocks
 // until the previous call releases. That keeps an answer going to the caller
 // that asked rather than to whoever happened to bind last, at the cost of
-// serializing calls to a served interactive agent. v0 accepts that.
+// serializing calls to a served interactive agent. We accept that.
 type elicitRouter struct {
 	call   sync.Mutex // held for a call's duration; serializes eliciting calls
 	mu     sync.Mutex // guards target

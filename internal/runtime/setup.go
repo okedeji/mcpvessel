@@ -17,7 +17,7 @@ import (
 // We call the underlying Linux environment a "Linux VM" rather than
 // "microVM" on purpose: in the agent-isolation world "microVM" almost
 // always means per-agent Firecracker-style isolation, which is not
-// what we do today. agentcage v0 boots one shared Linux VM on macOS
+// what we do today. agentcage boots one shared Linux VM on macOS
 // (via Lima + Apple Virtualization Framework) and runs agents as
 // containers inside it. The phase name is honest about that.
 const (

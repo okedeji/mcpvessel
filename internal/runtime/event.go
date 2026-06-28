@@ -13,7 +13,7 @@ type Event struct {
 	Detail string
 }
 
-// Runtime event types. Group A in the M7 design: events the runtime produces in
+// Runtime event types: events the runtime produces in
 // process. The gateway-container events (per LLM call, per sub-agent call) reach
 // the daemon over the collector channel instead.
 const (

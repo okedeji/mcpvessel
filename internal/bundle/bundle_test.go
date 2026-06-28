@@ -305,7 +305,7 @@ ENTRYPOINT python3 agent.py
 }
 
 func TestBuild_CatalogOmittedForToolCollectionWithoutMainOrExpose(t *testing.T) {
-	// Pathological case for v0: a bundle that ships an MCP server but
+	// Pathological case: a bundle that ships an MCP server but
 	// declares neither MAIN nor EXPOSE. The build still succeeds; the
 	// catalog is empty (omitempty drops it from JSON). The bundle is
 	// not callable via run or call, but that is the operator's problem,

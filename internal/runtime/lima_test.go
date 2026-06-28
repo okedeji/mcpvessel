@@ -9,7 +9,7 @@ import (
 
 // These tests exercise everything in lima.go that doesn't require
 // actually invoking limactl. Real-VM integration coverage lives in a
-// separate file gated by a build tag (slice 2's follow-up).
+// separate file gated by a build tag.
 
 func TestParseLimaStatus(t *testing.T) {
 	cases := []struct {

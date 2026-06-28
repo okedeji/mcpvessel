@@ -46,8 +46,8 @@ const (
 
 // Record is one run's durable entry. Cost and budget are micro-USD integers, the
 // same unit the LLM gateway meters in, so the history never rounds the meter.
-// TraceJSON holds the run's serialized OTel trace when no exporter is configured
-// (M7 slice 4); it is empty until then.
+// TraceJSON holds the run's serialized OTel trace when no exporter is configured;
+// it is empty until then.
 type Record struct {
 	RunID          string    `json:"run_id"`
 	Ref            string    `json:"ref"`

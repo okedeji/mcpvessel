@@ -53,8 +53,8 @@ type instanceBoot struct {
 // instanceManager owns the per-client instances of one exposed agent. It boots
 // an instance on a client session's first call, reuses it for that session,
 // bounds the live set by maxClients, and reaps an instance whose client has gone
-// quiet past idleTTL. It mirrors M5's working-set patterns one level up: the unit
-// is a whole instance (a run = root + its M5 tree), not a cage. The host floor
+// quiet past idleTTL. It mirrors the working-set patterns one level up: the unit
+// is a whole instance (a run = root + its sub-agent tree), not a cage. The host floor
 // (host_max_live + live memory) is inherited automatically: an instance's boot
 // fails admission inside runtime.Acquire when the host is full, which surfaces
 // here as a boot error.

@@ -18,7 +18,7 @@ const DefaultContainerdAddress = "/run/containerd/containerd.sock"
 // exports into by default, the `default` namespace, which is also
 // what `nerdctl` picks up without `--namespace`. Using our own
 // namespace ("agentcage") would require reconfiguring BuildKit's
-// containerd worker; for v0 we accept sharing `default` and rely on
+// containerd worker, so we accept sharing `default` and rely on
 // OCI image labels (io.agentcage.*) to identify our objects.
 const DefaultContainerdNamespace = "default"
 

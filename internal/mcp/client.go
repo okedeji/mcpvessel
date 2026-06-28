@@ -171,7 +171,7 @@ type Tool struct {
 
 // ListTools returns every tool the connected agent advertises. Used by
 // the CLI to look up the default tool's name when the operator did not
-// pass --tool explicitly. Does not paginate; v0 agents are expected to
+// pass --tool explicitly. Does not paginate; agents are expected to
 // expose a small handful of tools.
 func (c *Client) ListTools(ctx context.Context) ([]Tool, error) {
 	res, err := c.session.ListTools(ctx, nil)

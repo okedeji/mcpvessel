@@ -367,7 +367,7 @@ func (d *Daemon) handleVersion(w http.ResponseWriter, _ *http.Request) {
 // handleListRuns reports the durable history overlaid by the live set: a record
 // for every run that ever ran, with a live run's in-flight info winning over its
 // stored running entry. With no history (nil store) it falls back to the live
-// set, the pre-M7 behavior.
+// set.
 func (d *Daemon) handleListRuns(w http.ResponseWriter, _ *http.Request) {
 	d.mu.Lock()
 	live := make(map[string]RunInfo, len(d.runs))

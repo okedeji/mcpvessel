@@ -28,10 +28,10 @@ const (
 	cageEvicting
 )
 
-// workingSet is a held run's live cages and the policy that bounds them. M4
-// froze the cage set at boot; M5 makes it elastic: the skeleton boots up front,
-// the rest activate on demand (activation.go), idle cages are reaped, and the
-// whole set is capped so one run cannot exhaust the host. The boot session, the
+// workingSet is a held run's live cages and the policy that bounds them. The
+// skeleton boots up front, the rest activate on demand (activation.go), idle
+// cages are reaped, and the whole set is capped so one run cannot exhaust the
+// host. The boot session, the
 // resolved plan, and the teardown stack outlive boot here instead of dying with
 // the closure bootTree used to return.
 //
