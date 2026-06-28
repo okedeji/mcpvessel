@@ -61,6 +61,36 @@ func (h *hostCounter) release() {
 	h.mu.Unlock()
 }
 
+// reserveBaseline reserves a host-cage slot for each always-on cage a run keeps
+// alive but the working set does not track: the root and the gateway singletons.
+// host_max_live counts every cage (config.go), so these must reserve too, or N
+// served instances' baselines would escape the host cap. On a partial failure it
+// releases what it took and errors, so the host counter never leaks. The caller
+// pushes the matching release of `count` slots onto its teardown.
+func reserveBaseline(count, hostMax int) error {
+	for i := 0; i < count; i++ {
+		if !hostCages.tryReserve(hostMax) {
+			for j := 0; j < i; j++ {
+				hostCages.release()
+			}
+			return fmt.Errorf("host at capacity: the run's baseline (%d cages) does not fit cages.host_max_live (%d); raise it or stop another run", count, hostMax)
+		}
+	}
+	return nil
+}
+
+// releaseBaseline returns a teardown step that releases count baseline slots, the
+// match to a reserveBaseline. Run on both normal teardown and a partway boot
+// failure, since both drain the teardown stack.
+func releaseBaseline(count int) func() error {
+	return func() error {
+		for i := 0; i < count; i++ {
+			hostCages.release()
+		}
+		return nil
+	}
+}
+
 // activation is one in-progress on-demand boot. Concurrent callers for the same
 // node wait on done and read err, so a node boots once however many edges hit it
 // at once.

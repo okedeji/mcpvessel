@@ -50,6 +50,9 @@ func bootRun(ctx context.Context, in RunInput, boot bootInput, runID string) (*m
 		// A directly-run agent has no registry ref, so per-agent overrides do
 		// not key it; the operator default cap and the runtime default still do.
 		boot.Cap = agentCap(nil, ops.resources)
+		// The single cage still counts against the host cap, so a served agent's
+		// instances are bounded the same as a tree's.
+		boot.HostMax = cfg.Cages.EffectiveHostMaxLive()
 		return bootAgent(ctx, boot)
 	}
 
@@ -139,6 +142,22 @@ func bootTree(ctx context.Context, in bootInput, tree *runTree, plan *runPlan, r
 		warnings = append(warnings, note)
 		_, _ = fmt.Fprintf(in.Stderr, "note: %s\n", note)
 	}
+
+	// Reserve a host slot for the run's always-on baseline (the root and the
+	// gateway singletons) before starting it, so host_max_live counts the whole
+	// run, not just its elastic sub-agents. The prewarmed sub-agents reserve their
+	// own slots in the skeleton loop below; the always-warm ones are among them.
+	baseline := 2 // root + the MCP gateway, present in every tree
+	if len(plan.LLMAgents) > 0 {
+		baseline++
+	}
+	if len(plan.EgressAgents) > 0 {
+		baseline++
+	}
+	if err := reserveBaseline(baseline, in.HostMax); err != nil {
+		return nil, nil, err
+	}
+	td.push(releaseBaseline(baseline))
 
 	// Every network is internal and created up front, before the MCP gateway joins
 	// all of them: the dedicated networks for the root and always-warm cages, and

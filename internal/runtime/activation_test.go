@@ -85,6 +85,39 @@ func (w *workingSet) addPlain(node, net string) {
 	w.plainFree = append(w.plainFree, net)
 }
 
+// TestReserveBaseline_CountsAgainstHostCap proves the Level-1 fix: a run's
+// always-on baseline (root + gateways) reserves host slots, fails closed when it
+// does not fit, never leaks a partial reservation, and releases cleanly.
+func TestReserveBaseline_CountsAgainstHostCap(t *testing.T) {
+	hostCages = &hostCounter{}
+
+	// Three baseline cages fit a host cap of four.
+	if err := reserveBaseline(3, 4); err != nil {
+		t.Fatalf("baseline of 3 should fit host cap 4: %v", err)
+	}
+	if hostCages.n != 3 {
+		t.Fatalf("host counter = %d, want 3", hostCages.n)
+	}
+
+	// A second baseline of two does not fit the one remaining slot, and leaves
+	// the counter untouched (no partial reservation leaked).
+	if err := reserveBaseline(2, 4); err == nil {
+		t.Fatal("baseline of 2 should not fit one remaining slot")
+	}
+	if hostCages.n != 3 {
+		t.Fatalf("a failed reservation leaked: host counter = %d, want 3", hostCages.n)
+	}
+
+	// Releasing the baseline frees its slots, so a later run admits.
+	_ = releaseBaseline(3)()
+	if hostCages.n != 0 {
+		t.Fatalf("host counter = %d after release, want 0", hostCages.n)
+	}
+	if err := reserveBaseline(2, 4); err != nil {
+		t.Fatalf("baseline of 2 should fit after release: %v", err)
+	}
+}
+
 func TestActivate_BootsAndAssignsNetwork(t *testing.T) {
 	ws, tr := newActivationWS(4)
 	ws.addPlain("a", "pool-0")

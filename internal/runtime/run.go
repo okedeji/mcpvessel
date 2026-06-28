@@ -358,6 +358,24 @@ func bootAgent(ctx context.Context, in bootInput) (*mcp.Client, *workingSet, err
 			HumanBytes(need), HumanBytes(usable))
 	}
 
+	// Count the cage and its gateways against the host cap so a served agent's
+	// instances are bounded host-wide. HostMax is 0 only when a caller bypasses
+	// bootRun (introspection's transient boot), which does not participate in
+	// host accounting, so skip the reservation there.
+	if in.HostMax > 0 {
+		baseline := 1 // the agent's own cage
+		if model != "" {
+			baseline++
+		}
+		if len(allowHosts) > 0 {
+			baseline++
+		}
+		if err := reserveBaseline(baseline, in.HostMax); err != nil {
+			return nil, nil, err
+		}
+		td.push(releaseBaseline(baseline))
+	}
+
 	egressNet := in.RunID + "-egress"
 	if model != "" || len(allowHosts) > 0 {
 		network := in.RunID + "-net"
