@@ -63,13 +63,13 @@ func watchSpend(ctx context.Context, c *daemon.Client, id string, w io.Writer) e
 	for {
 		report, err := c.Spend(ctx, id)
 		if err != nil {
-			fmt.Fprintln(w)
+			_, _ = fmt.Fprintln(w)
 			return nil
 		}
-		fmt.Fprintf(w, "\r%s   ", spendTotalLine(report))
+		_, _ = fmt.Fprintf(w, "\r%s   ", spendTotalLine(report))
 		select {
 		case <-ctx.Done():
-			fmt.Fprintln(w)
+			_, _ = fmt.Fprintln(w)
 			return nil
 		case <-t.C:
 		}
@@ -87,7 +87,7 @@ func spendTotalLine(r llmgateway.SpendReport) string {
 // printSpend writes the total and a per-agent breakdown, agents in a stable
 // order so the output does not reshuffle between runs.
 func printSpend(w io.Writer, r llmgateway.SpendReport) {
-	fmt.Fprintln(w, spendTotalLine(r))
+	_, _ = fmt.Fprintln(w, spendTotalLine(r))
 	keys := make([]string, 0, len(r.Agents))
 	for k := range r.Agents {
 		keys = append(keys, k)
@@ -99,7 +99,7 @@ func printSpend(w io.Writer, r llmgateway.SpendReport) {
 		if a.Calls == 1 {
 			unit = "call"
 		}
-		fmt.Fprintf(w, "  %-12s $%.4f  (%d %s)\n", k, dollars(a.SpentMicroUSD), a.Calls, unit)
+		_, _ = fmt.Fprintf(w, "  %-12s $%.4f  (%d %s)\n", k, dollars(a.SpentMicroUSD), a.Calls, unit)
 	}
 }
 

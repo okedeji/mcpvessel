@@ -56,7 +56,7 @@ func printSpan(w io.Writer, s *telemetry.Span, depth int) {
 	if attrs := spanAttrs(s); attrs != "" {
 		line += "  " + attrs
 	}
-	fmt.Fprintln(w, line)
+	_, _ = fmt.Fprintln(w, line)
 	for _, c := range s.Children {
 		printSpan(w, c, depth+1)
 	}

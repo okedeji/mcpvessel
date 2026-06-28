@@ -72,5 +72,5 @@ func printEvent(w io.Writer, e daemon.Event) {
 	if e.Detail != "" {
 		line += "  " + e.Detail
 	}
-	fmt.Fprintln(w, line)
+	_, _ = fmt.Fprintln(w, line)
 }

@@ -591,7 +591,7 @@ func startAttachedAgent(ctx context.Context, sess *bootSession, in bootInput, td
 // purpose, not that it crashed.
 func killedBySignal(err error) bool {
 	var exit *exec.ExitError
-	return errors.As(err, &exit) && exit.ProcessState.ExitCode() == -1
+	return errors.As(err, &exit) && exit.ExitCode() == -1
 }
 
 // deriveImageRef is the local containerd image ref for an agent: its name
