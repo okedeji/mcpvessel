@@ -26,6 +26,9 @@ const shutdownTimeout = 5 * time.Second
 // shutdownTimeout. It refuses to start if another daemon is already listening,
 // and clears a stale socket left by a crashed one.
 func Serve(ctx context.Context, d *Daemon, socketPath string) error {
+	if err := checkSocketPathLen(socketPath); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(socketPath), 0o755); err != nil {
 		return fmt.Errorf("creating socket dir: %w", err)
 	}
@@ -107,6 +110,22 @@ func Serve(ctx context.Context, d *Daemon, socketPath string) error {
 		return errors.Join(fmt.Errorf("serving control plane: %w", serveErr), d.releaseAll())
 	}
 	return d.releaseAll()
+}
+
+// maxSocketPathLen is the conservative cap on a Unix socket path: macOS allows
+// 104 bytes in sun_path, Linux 108. Using the smaller keeps the check correct on
+// both, and the daemon socket is Unix-only so it never runs anywhere else.
+const maxSocketPathLen = 104
+
+// checkSocketPathLen rejects a control socket path the OS could not bind, turning
+// the kernel's cryptic "invalid argument" into a clear cause and fix. It bites
+// only when AGENTCAGE_HOME points somewhere deep, since the default path is short.
+func checkSocketPathLen(path string) error {
+	if len(path) >= maxSocketPathLen {
+		return fmt.Errorf("control socket path is %d bytes, over this OS's %d-byte limit (%s); set AGENTCAGE_HOME to a shorter directory",
+			len(path), maxSocketPathLen, path)
+	}
+	return nil
 }
 
 // alreadyListening reports whether a live daemon answers on socketPath. A
