@@ -3,9 +3,11 @@ package mcpgateway
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"time"
 )
 
 // ControlMessage is one line of the gateway's control stream. The gateway sends
@@ -23,19 +25,56 @@ type ControlMessage struct {
 	OK   bool           `json:"ok,omitempty"`
 	Addr string         `json:"addr,omitempty"`
 	Pins map[string]int `json:"pins,omitempty"`
+
+	// ID correlates an Elicit with its ElicitResult: a run has one gateway but
+	// can have several questions outstanding at once across its tree, so the
+	// answer carries the id of the question it answers.
+	ID string `json:"id,omitempty"`
+	// Question rides an Elicit (gateway to daemon); Answer rides an ElicitResult
+	// (daemon to gateway). OK on an ElicitResult reports whether the operator was
+	// reached at all: false fails the asking call closed rather than delivering a
+	// non-answer the agent would mistake for a decline.
+	Question *ElicitQuestion `json:"question,omitempty"`
+	Answer   *ElicitAnswer   `json:"answer,omitempty"`
 }
 
-// Control message types. Activate/Pin/Unpin/Resync flow gateway to daemon;
-// Activated/Deactivate flow back. Activated carries the address the daemon
-// resolved for the booted cage; Deactivate tells the gateway a cage is gone so
-// it stops routing to a stale address before that address can be recycled.
+// ElicitQuestion is a sub-agent's mid-call question, carried up the control
+// stream to the operator. Message is shown to the operator; Schema is the JSON
+// Schema of the answer the agent expects, nil for a free-form question.
+type ElicitQuestion struct {
+	Message string         `json:"message"`
+	Schema  map[string]any `json:"schema,omitempty"`
+}
+
+// ElicitAnswer is the operator's response. Action is accept, decline, or
+// cancel; Content holds the submitted fields, present only on accept.
+type ElicitAnswer struct {
+	Action  string         `json:"action"`
+	Content map[string]any `json:"content,omitempty"`
+}
+
+// elicitReply is what a blocked Elicit receives: the operator's answer and
+// whether the operator was reached. ok false means the run could not deliver the
+// question, so the asking call fails closed.
+type elicitReply struct {
+	ans ElicitAnswer
+	ok  bool
+}
+
+// Control message types. Activate/Pin/Unpin/Resync/Elicit flow gateway to
+// daemon; Activated/Deactivate/ElicitResult flow back. Activated carries the
+// address the daemon resolved for the booted cage; Deactivate tells the gateway
+// a cage is gone so it stops routing to a stale address before that address can
+// be recycled. Elicit carries a sub-agent's question; ElicitResult the answer.
 const (
-	MsgActivate   = "activate"
-	MsgActivated  = "activated"
-	MsgDeactivate = "deactivate"
-	MsgPin        = "pin"
-	MsgUnpin      = "unpin"
-	MsgResync     = "resync"
+	MsgActivate     = "activate"
+	MsgActivated    = "activated"
+	MsgDeactivate   = "deactivate"
+	MsgPin          = "pin"
+	MsgUnpin        = "unpin"
+	MsgResync       = "resync"
+	MsgElicit       = "elicit"
+	MsgElicitResult = "elicit_result"
 )
 
 // ServeControl runs the control stream over one connection from the daemon's
@@ -85,6 +124,8 @@ func (g *Gateway) ServeControl(conn io.ReadWriteCloser) error {
 				g.activated(m.Edge, m.OK, m.Addr)
 			case MsgDeactivate:
 				g.deactivate(m.Edge)
+			case MsgElicitResult:
+				g.elicitResult(m.ID, m.OK, m.Answer)
 			}
 		}
 	}()
@@ -133,6 +174,63 @@ func (g *Gateway) pinSnapshot() map[string]int {
 		}
 	}
 	return snap
+}
+
+// elicitWaitTimeout bounds how long a sub-agent's question blocks for the
+// operator's answer before the call fails closed. It sits above the daemon's own
+// operator-wait deadline so the daemon's deadline is the one that fires, sending
+// an explicit not-reached result the gateway turns into a clean error, rather
+// than this timer firing first and leaving the daemon answering into the void.
+const elicitWaitTimeout = 5 * time.Minute
+
+// Elicit sends a sub-agent's question up the control stream and blocks for the
+// operator's answer. The bool reports whether the operator was reached: false
+// (the stream is down, the daemon could not deliver, or the wait timed out) so
+// the asking call fails closed rather than treating a non-answer as a decline.
+func (g *Gateway) Elicit(ctx context.Context, edge string, q ElicitQuestion) (ElicitAnswer, bool) {
+	g.mu.Lock()
+	g.elicitSeq++
+	id := fmt.Sprintf("%s-%d", edge, g.elicitSeq)
+	ch := make(chan elicitReply, 1)
+	g.elicits[id] = ch
+	g.mu.Unlock()
+
+	defer func() {
+		g.mu.Lock()
+		delete(g.elicits, id)
+		g.mu.Unlock()
+	}()
+
+	g.emit(ControlMessage{Type: MsgElicit, Edge: edge, ID: id, Question: &q})
+
+	wctx, cancel := context.WithTimeout(ctx, elicitWaitTimeout)
+	defer cancel()
+	select {
+	case r := <-ch:
+		return r.ans, r.ok
+	case <-wctx.Done():
+		return ElicitAnswer{}, false
+	}
+}
+
+// elicitResult hands the daemon's answer to the blocked Elicit waiting on id.
+// A late answer for an id no longer waiting (the asker already timed out) is
+// dropped; the channel is buffered so this never blocks the reader.
+func (g *Gateway) elicitResult(id string, ok bool, ans *ElicitAnswer) {
+	g.mu.Lock()
+	ch := g.elicits[id]
+	g.mu.Unlock()
+	if ch == nil {
+		return
+	}
+	a := ElicitAnswer{}
+	if ans != nil {
+		a = *ans
+	}
+	select {
+	case ch <- elicitReply{ans: a, ok: ok}:
+	default:
+	}
 }
 
 // deactivate flips an edge back to inactive after its cage is gone (the daemon
@@ -218,6 +316,15 @@ func (g *Gateway) resetOnDisconnect() {
 			ch <- false
 		}
 		delete(g.waiters, id)
+	}
+	// A question whose answer can no longer arrive fails closed, the same as an
+	// activation: its asking call errors rather than hanging until the timeout.
+	for id, ch := range g.elicits {
+		select {
+		case ch <- elicitReply{ok: false}:
+		default:
+		}
+		delete(g.elicits, id)
 	}
 	g.pending = make(map[string]bool)
 	for drained := false; !drained; {

@@ -89,6 +89,13 @@ type Gateway struct {
 	// blocks enqueuing a pin; when no stream drains it, emit drops rather than
 	// stalls, and the next connection's resync repairs the daemon's view.
 	outbound chan ControlMessage
+
+	// elicits maps a pending question's correlation id to the channel its asking
+	// goroutine waits on. A sub-agent's elicitation blocks there until the daemon
+	// returns the operator's answer over the control stream, or the stream drops
+	// and resetOnDisconnect fails it closed. elicitSeq numbers ids per gateway.
+	elicits   map[string]chan elicitReply
+	elicitSeq uint64
 }
 
 // New builds the gateway from its routing table. It starts no goroutines: the
@@ -104,6 +111,7 @@ func New(cfg Config) *Gateway {
 		pinCount: make(map[string]int),
 		target:   make(map[string]*url.URL, len(cfg.Edges)),
 		outbound: make(chan ControlMessage, 4*len(cfg.Edges)+64),
+		elicits:  make(map[string]chan elicitReply),
 	}
 	for id, edge := range cfg.Edges {
 		if edge.Banned {
@@ -141,6 +149,9 @@ func New(cfg Config) *Gateway {
 				g.deactivate(edgeID)
 				writeActivationFailed(w, replayBody(r))
 			},
+			// Run the response-side MCP filters: strip denied tools from a
+			// tools/list and pull a sub-agent's elicitation out to the operator.
+			ModifyResponse: g.modifyResponse(edgeID),
 		}
 		g.deny[id] = denySet(edge.Deny)
 		// An inactive edge waits for the daemon to activate it before it proxies.
@@ -277,6 +288,10 @@ func (g *Gateway) Handler() http.Handler {
 				writeDenied(w, body, tool)
 				return
 			}
+			// Advertise elicitation to the sub-agent so it is willing to ask a
+			// question the gateway will route to the operator. Touches only an
+			// initialize request; every other body passes through unchanged.
+			body = rewriteInitialize(body)
 			r.Body = io.NopCloser(bytes.NewReader(body))
 			r.ContentLength = int64(len(body))
 			// GetBody lets the retrying transport rewind the body for a second
