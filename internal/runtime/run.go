@@ -65,6 +65,11 @@ type RunInput struct {
 	// its live event feed; every other caller leaves it nil and pays nothing.
 	OnEvent func(Event)
 
+	// Record turns on full-payload capture for replay: the LLM gateway logs each
+	// call's request and response so the daemon can write the run's .replay
+	// artifact. Off by default since it is heavy; `agentcage replay record` sets it.
+	Record bool
+
 	// Stdout / Stderr receive provisioning progress, the agent's
 	// stderr stream, and the final tool result. Callers typically
 	// pass os.Stdout and os.Stderr; tests can capture into a buffer.
@@ -217,6 +222,7 @@ func Acquire(ctx context.Context, in RunInput) (*Session, error) {
 		Managed:     in.Managed,
 		Interaction: in.Interaction,
 		OnEvent:     in.OnEvent,
+		Record:      in.Record,
 	}
 	if router != nil {
 		boot.ElicitHandler = router.route
@@ -287,6 +293,9 @@ type bootInput struct {
 	// OnEvent observes the working set's activations and evictions for the daemon's
 	// live event feed. Nil off the daemon path.
 	OnEvent func(Event)
+
+	// Record turns on the LLM gateway's full-payload capture for replay.
+	Record bool
 
 	// ElicitHandler, when set, lets the root agent ask the operator a question
 	// mid-call: the root's MCP client advertises the elicitation capability and
@@ -417,6 +426,7 @@ func bootAgent(ctx context.Context, in bootInput) (*mcp.Client, *workingSet, err
 			if err != nil {
 				return nil, nil, err
 			}
+			llmCfg.Record = in.Record
 			if err := startLLMGateway(ctx, sess, in.RunID, []string{network}, egressNet, llmCfg, in, td); err != nil {
 				return nil, nil, err
 			}

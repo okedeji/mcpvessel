@@ -276,6 +276,7 @@ func bootTree(ctx context.Context, in bootInput, tree *runTree, plan *runPlan, r
 		if err != nil {
 			return nil, nil, err
 		}
+		llmCfg.Record = in.Record
 		if err := startLLMGateway(ctx, sess, runID, plan.LLMNets, egressNet, llmCfg, in, td); err != nil {
 			return nil, nil, err
 		}

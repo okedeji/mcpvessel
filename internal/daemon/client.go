@@ -73,43 +73,78 @@ func (c *Client) ListRuns(ctx context.Context) ([]RunInfo, error) {
 // A failure to reach the daemon is reported distinctly from a failure the run
 // itself returned, so the CLI hints "is the daemon running?" only for the former.
 func (c *Client) RunOnce(ctx context.Context, req RunRequest, logs io.Writer) (string, error) {
+	_, result, err := c.runStream(ctx, req, logs)
+	return result, err
+}
+
+// RecordRun runs an agent with replay recording on and returns the run id as
+// well as the result, so the caller can fetch the run's .replay afterward. It is
+// the client behind `agentcage replay record`.
+func (c *Client) RecordRun(ctx context.Context, req RunRequest, logs io.Writer) (runID, result string, err error) {
+	req.Record = true
+	return c.runStream(ctx, req, logs)
+}
+
+// runStream drives one /run request: it streams the run's logs to logs and
+// returns the run id (from the opening frame) and the final result. RunOnce and
+// RecordRun are thin wrappers.
+func (c *Client) runStream(ctx context.Context, req RunRequest, logs io.Writer) (runID, result string, err error) {
 	body, err := json.Marshal(req)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://unix/run", bytes.NewReader(body))
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	resp, err := c.http.Do(httpReq)
 	if err != nil {
-		return "", &Unreachable{err}
+		return "", "", &Unreachable{err}
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("daemon /run: %s", errorBody(resp))
+		return "", "", fmt.Errorf("daemon /run: %s", errorBody(resp))
 	}
 
 	dec := json.NewDecoder(resp.Body)
-	var result string
 	for {
 		var f runFrame
-		if err := dec.Decode(&f); err != nil {
-			if err == io.EOF {
-				return result, nil
+		if derr := dec.Decode(&f); derr != nil {
+			if derr == io.EOF {
+				return runID, result, nil
 			}
-			return "", fmt.Errorf("reading run stream: %w", err)
+			return runID, "", fmt.Errorf("reading run stream: %w", derr)
 		}
 		switch f.Type {
+		case "run_id":
+			runID = f.Data
 		case "log":
 			_, _ = io.WriteString(logs, f.Data)
 		case "result":
 			result = f.Data
 		case "error":
-			return "", fmt.Errorf("%s", f.Data)
+			return runID, "", fmt.Errorf("%s", f.Data)
 		}
 	}
+}
+
+// FetchReplay returns a recorded run's .replay artifact bytes, the daemon-side
+// file `agentcage replay record` saves a host copy of.
+func (c *Client) FetchReplay(ctx context.Context, id string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://unix/runs/"+id+"/replay", nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("contacting the daemon: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("daemon /runs/%s/replay: %s", id, errorBody(resp))
+	}
+	return io.ReadAll(resp.Body)
 }
 
 // Logs streams a run's logs to w. With follow it tails a live run until the run

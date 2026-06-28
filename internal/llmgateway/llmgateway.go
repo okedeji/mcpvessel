@@ -99,6 +99,53 @@ func ParseCallLines(logs string) []CallEvent {
 	return out
 }
 
+// CallRecord is a metered call's full payload, logged per call when the run
+// records for replay. Request is the agent-facing request body, captured before
+// the proxy attaches the provider key, so no key is ever written to a replay.
+// Bodies are the raw captured bytes; the daemon embeds them into the artifact.
+type CallRecord struct {
+	Agent            string `json:"agent"`
+	Model            string `json:"model"`
+	Request          []byte `json:"request,omitempty"`
+	Response         []byte `json:"response,omitempty"`
+	PromptTokens     int64  `json:"prompt_tokens"`
+	CompletionTokens int64  `json:"completion_tokens"`
+	CostMicroUSD     int64  `json:"cost_micro_usd"`
+	StartUnixNano    int64  `json:"start_unix_nano"`
+	Streamed         bool   `json:"streamed,omitempty"`
+}
+
+// ReplayLogPrefix marks a full-payload call record in the gateway's stdout, the
+// heavy counterpart to CallLogPrefix written only when recording.
+const ReplayLogPrefix = "AGENTCAGE_REPLAY "
+
+// WriteReplayLine emits one call record as a prefixed JSON line. The []byte
+// bodies marshal as base64, so a body with newlines stays on one line.
+func WriteReplayLine(w io.Writer, r CallRecord) {
+	b, err := json.Marshal(r)
+	if err != nil {
+		return
+	}
+	_, _ = fmt.Fprintln(w, ReplayLogPrefix+string(b))
+}
+
+// ParseReplayLines returns every call record in the gateway's log output, in the
+// order they were logged.
+func ParseReplayLines(logs string) []CallRecord {
+	var out []CallRecord
+	for _, line := range strings.Split(logs, "\n") {
+		s, ok := strings.CutPrefix(strings.TrimSpace(line), ReplayLogPrefix)
+		if !ok {
+			continue
+		}
+		var r CallRecord
+		if json.Unmarshal([]byte(s), &r) == nil {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
 // Secret is a provider key. It redacts in logs (%v, %s, %#v) but marshals to
 // its real value, because the Config JSON is the secure transport into this
 // gateway's container env, never a log line: the key has to round-trip
@@ -129,6 +176,10 @@ type Config struct {
 	Default        string                `json:"default"`
 	Agents         map[string]AgentRoute `json:"agents"`
 	BudgetMicroUSD int64                 `json:"budget_micro_usd,omitempty"`
+	// Record turns on full-payload capture for replay: the gateway logs each
+	// call's request and response bodies, not just its metered metadata. Off by
+	// default since it is heavy; `agentcage replay record` sets it.
+	Record bool `json:"record,omitempty"`
 }
 
 // AgentRoute is one reasoning agent's LLM route. The gateway addresses it by the
@@ -170,17 +221,26 @@ type Gateway struct {
 	agent http.Handler
 }
 
+// Hooks are the gateway's observation callbacks: the cumulative spend after each
+// metered call, that call's metered event, and (only when recording) its full
+// payload. All are optional and non-nil only in the running gateway, where the
+// cmd wires them to stdout for the runtime to read.
+type Hooks struct {
+	Spend   func(SpendReport)
+	Call    func(CallEvent)
+	Payload func(CallRecord)
+}
+
 // New resolves each agent to an endpoint and model once and builds the gateway.
-// report receives the cumulative spend after each metered call and recordCall
-// receives that call's event; both are non-nil only in the running gateway,
-// where the cmd wires them to stdout for the runtime to read. Either may be nil.
-func New(cfg Config, report func(SpendReport), recordCall func(CallEvent)) *Gateway {
+func New(cfg Config, hooks Hooks) *Gateway {
 	m := &meter{
-		budget:     cfg.BudgetMicroUSD,
-		agents:     map[string]int64{},
-		calls:      map[string]int64{},
-		report:     report,
-		recordCall: recordCall,
+		budget:        cfg.BudgetMicroUSD,
+		agents:        map[string]int64{},
+		calls:         map[string]int64{},
+		report:        hooks.Spend,
+		recordCall:    hooks.Call,
+		recordPayload: hooks.Payload,
+		record:        cfg.Record,
 	}
 	// Keyed by the capability token a caller addresses, but metered by the real
 	// agent key, so the spend tally still attributes to the agent and a forged
@@ -228,6 +288,12 @@ func New(cfg Config, report func(SpendReport), recordCall func(CallEvent)) *Gate
 			body = rewriteModel(body, rt.model)
 			r.Body = io.NopCloser(bytes.NewReader(body))
 			r.ContentLength = int64(len(body))
+			// Stash the agent-facing request for replay. This is the body before
+			// the proxy attaches the provider key (a header, not part of the body),
+			// so a recorded request never carries a key.
+			if m.record {
+				r = r.WithContext(context.WithValue(r.Context(), callBodyKey{}, append([]byte(nil), body...)))
+			}
 		}
 		rt.proxy.ServeHTTP(w, r)
 	})
@@ -275,13 +341,35 @@ func (g *Gateway) handleSpend(w http.ResponseWriter, _ *http.Request) {
 // budget. It snapshots and reports after each debit so the latest log line is
 // always the run's current total.
 type meter struct {
-	mu         sync.Mutex
-	budget     int64
-	total      int64
-	agents     map[string]int64
-	calls      map[string]int64
-	report     func(SpendReport)
-	recordCall func(CallEvent)
+	mu            sync.Mutex
+	budget        int64
+	total         int64
+	agents        map[string]int64
+	calls         map[string]int64
+	report        func(SpendReport)
+	recordCall    func(CallEvent)
+	recordPayload func(CallRecord)
+	record        bool
+}
+
+// recordPayloadFor logs one call's full payload for replay, computing the call's
+// cost the same way debit does. A no-op when no payload hook is wired.
+func (m *meter) recordPayloadFor(agentKey, model string, ep Endpoint, request, response []byte, u usage, start time.Time, streamed bool) {
+	if m.recordPayload == nil {
+		return
+	}
+	cost := u.PromptTokens*ep.PriceIn/1_000_000 + u.CompletionTokens*ep.PriceOut/1_000_000
+	m.recordPayload(CallRecord{
+		Agent:            agentKey,
+		Model:            model,
+		Request:          request,
+		Response:         response,
+		PromptTokens:     u.PromptTokens,
+		CompletionTokens: u.CompletionTokens,
+		CostMicroUSD:     cost,
+		StartUnixNano:    start.UnixNano(),
+		Streamed:         streamed,
+	})
 }
 
 // overBudget reports whether spend has reached the budget, read live so a
@@ -382,6 +470,17 @@ func callStart(ctx context.Context) time.Time {
 	return time.Now()
 }
 
+// callBodyKey carries the captured request body to the response side when
+// recording, so the replay event pairs the request with its response.
+type callBodyKey struct{}
+
+func callBody(ctx context.Context) []byte {
+	if b, ok := ctx.Value(callBodyKey{}).([]byte); ok {
+		return b
+	}
+	return nil
+}
+
 // usage is the token accounting OpenAI returns. Endpoints that omit it leave
 // the call unmetered (fail-soft: budget is a cost guardrail, not an isolation
 // gate, and the major endpoints all return usage).
@@ -395,9 +494,15 @@ type usage struct {
 // carries it in the final SSE chunk, scanned as it flows to the client.
 func meterResponse(ep Endpoint, m *meter, agentKey, model string) func(*http.Response) error {
 	return func(resp *http.Response) error {
-		start := callStart(resp.Request.Context())
+		ctx := resp.Request.Context()
+		start := callStart(ctx)
 		if strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream") {
-			resp.Body = &streamMeter{src: resp.Body, ep: ep, meter: m, agentKey: agentKey, model: model, start: start}
+			sm := &streamMeter{src: resp.Body, ep: ep, meter: m, agentKey: agentKey, model: model, start: start}
+			if m.record {
+				sm.record = true
+				sm.request = callBody(ctx)
+			}
+			resp.Body = sm
 			return nil
 		}
 		body, err := io.ReadAll(resp.Body)
@@ -410,6 +515,9 @@ func meterResponse(ep Endpoint, m *meter, agentKey, model string) func(*http.Res
 		}
 		if json.Unmarshal(body, &parsed) == nil {
 			m.debit(agentKey, ep, parsed.Usage, model, start)
+		}
+		if m.record {
+			m.recordPayloadFor(agentKey, model, ep, callBody(ctx), body, parsed.Usage, start, false)
 		}
 		resp.Body = io.NopCloser(bytes.NewReader(body))
 		resp.ContentLength = int64(len(body))
@@ -431,12 +539,24 @@ type streamMeter struct {
 	start    time.Time
 	buf      bytes.Buffer
 	done     bool
+
+	// record, request, and full carry replay capture: the request body the
+	// handler stashed and the whole streamed response, accumulated as it flows so
+	// the call's full payload is recorded without buffering off the client's path.
+	record  bool
+	request []byte
+	full    bytes.Buffer
 }
 
 func (m *streamMeter) Read(p []byte) (int, error) {
 	n, err := m.src.Read(p)
-	if n > 0 && !m.done {
-		m.scan(p[:n])
+	if n > 0 {
+		if m.record {
+			m.full.Write(p[:n])
+		}
+		if !m.done {
+			m.scan(p[:n])
+		}
 	}
 	return n, err
 }
@@ -460,6 +580,9 @@ func (m *streamMeter) scan(b []byte) {
 		}
 		if json.Unmarshal(data, &parsed) == nil && parsed.Usage != nil {
 			m.meter.debit(m.agentKey, m.ep, *parsed.Usage, m.model, m.start)
+			if m.record {
+				m.meter.recordPayloadFor(m.agentKey, m.model, m.ep, m.request, m.full.Bytes(), *parsed.Usage, m.start, true)
+			}
 			m.done = true
 			return
 		}

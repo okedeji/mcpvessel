@@ -227,6 +227,24 @@ func RunTelemetry(ctx context.Context, runID string) (llmgateway.SpendReport, []
 	return report, llmgateway.ParseCallLines(log), found
 }
 
+// RunReplay reads a recording run's full-payload call records off the gateway
+// log, for the daemon to assemble the .replay artifact. ok reports whether the
+// gateway log was readable at all; a non-recording run logs none and comes back
+// empty. Read before teardown removes the gateway, the same constraint RunSpend
+// has.
+func RunReplay(ctx context.Context, runID string) ([]llmgateway.CallRecord, bool) {
+	p, err := DefaultProvisioner()
+	if err != nil {
+		return nil, false
+	}
+	defer func() { _ = p.Close() }()
+	log, ok := readGatewayLog(ctx, p, llmGatewayName(runID))
+	if !ok {
+		return nil, false
+	}
+	return llmgateway.ParseReplayLines(log), true
+}
+
 // readSpend reads the gateway's last logged spend snapshot. The gateway is
 // reaped with rm -f, so its logs are the source of truth while it is still up.
 func readSpend(ctx context.Context, p Provisioner, name string) (llmgateway.SpendReport, bool) {

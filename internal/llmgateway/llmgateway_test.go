@@ -11,7 +11,7 @@ import (
 )
 
 func TestControl_SetBudgetThenSpendReflectsIt(t *testing.T) {
-	gw := New(Config{BudgetMicroUSD: 5000}, nil, nil)
+	gw := New(Config{BudgetMicroUSD: 5000}, Hooks{})
 	control := gw.Control()
 
 	set := httptest.NewRequest(http.MethodPost, "/budget", strings.NewReader(`{"micro_usd":9000}`))
@@ -33,7 +33,7 @@ func TestControl_SetBudgetThenSpendReflectsIt(t *testing.T) {
 }
 
 func TestControl_RejectsNegativeBudget(t *testing.T) {
-	gw := New(Config{BudgetMicroUSD: 5000}, nil, nil)
+	gw := New(Config{BudgetMicroUSD: 5000}, Hooks{})
 	rec := httptest.NewRecorder()
 	gw.Control().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/budget", strings.NewReader(`{"micro_usd":-1}`)))
 	if rec.Code != http.StatusBadRequest {
@@ -75,7 +75,7 @@ func TestHandler_RoutesAttachesKeyOverridesModelAndEnforcesBudget(t *testing.T) 
 		Agents:         map[string]AgentRoute{"tok-r": {Key: "researcher", Model: "openai/gpt-4o"}},
 		BudgetMicroUSD: 5000,
 	}
-	gw := httptest.NewServer(New(cfg, nil, nil).Handler())
+	gw := httptest.NewServer(New(cfg, Hooks{}).Handler())
 	defer gw.Close()
 
 	resp := post(t, gw.URL+"/tok-r/chat/completions", `{"model":"placeholder","messages":[]}`)
@@ -111,7 +111,7 @@ func TestHandler_FallbackUsesDefaultEndpointModel(t *testing.T) {
 		Default: "openai",
 		Agents:  map[string]AgentRoute{"tok-x": {Key: "x", Model: "anthropic/claude-3.5"}},
 	}
-	gw := httptest.NewServer(New(cfg, nil, nil).Handler())
+	gw := httptest.NewServer(New(cfg, Hooks{}).Handler())
 	defer gw.Close()
 
 	post(t, gw.URL+"/tok-x/chat/completions", `{"messages":[]}`)
@@ -121,7 +121,7 @@ func TestHandler_FallbackUsesDefaultEndpointModel(t *testing.T) {
 }
 
 func TestHandler_UnknownAgent(t *testing.T) {
-	gw := httptest.NewServer(New(Config{Agents: map[string]AgentRoute{}}, nil, nil).Handler())
+	gw := httptest.NewServer(New(Config{Agents: map[string]AgentRoute{}}, Hooks{}).Handler())
 	defer gw.Close()
 	if got := post(t, gw.URL+"/ghost/chat/completions", `{}`); got != http.StatusNotFound {
 		t.Errorf("unknown agent status = %d, want 404", got)
@@ -143,7 +143,7 @@ func TestHandler_ReportsPerAgentSpend(t *testing.T) {
 		Agents:         map[string]AgentRoute{"tok-a": {Key: "a", Model: "openai/gpt-4o"}, "tok-b": {Key: "b", Model: "openai/gpt-4o"}},
 		BudgetMicroUSD: 1_000_000,
 	}
-	gw := httptest.NewServer(New(cfg, func(r SpendReport) { last, reports = r, reports+1 }, nil).Handler())
+	gw := httptest.NewServer(New(cfg, Hooks{Spend: func(r SpendReport) { last, reports = r, reports+1 }}).Handler())
 	defer gw.Close()
 
 	// Routed by the opaque token, but metered by the real agent key: a twice, b once.
@@ -182,7 +182,7 @@ func TestHandler_RecordsPerCallEvents(t *testing.T) {
 		Agents:  map[string]AgentRoute{"tok-a": {Key: "a", Model: "openai/gpt-4o"}},
 	}
 	record := func(e CallEvent) { calls = append(calls, e) }
-	gw := httptest.NewServer(New(cfg, nil, record).Handler())
+	gw := httptest.NewServer(New(cfg, Hooks{Call: record}).Handler())
 	defer gw.Close()
 
 	post(t, gw.URL+"/tok-a/chat/completions", `{"messages":[]}`)
@@ -202,6 +202,75 @@ func TestHandler_RecordsPerCallEvents(t *testing.T) {
 	}
 	if c.EndUnixNano < c.StartUnixNano {
 		t.Errorf("end before start: %+v", c)
+	}
+}
+
+func TestHandler_RecordsFullPayloadWhenRecording(t *testing.T) {
+	var seen providerCall
+	provider := fakeProvider(t, &seen)
+	defer provider.Close()
+
+	var records []CallRecord
+	cfg := Config{
+		Endpoints: map[string]Endpoint{
+			"openai": {BaseURL: provider.URL + "/v1", Key: "k", PriceIn: 2_500_000, PriceOut: 10_000_000},
+		},
+		Default: "openai",
+		Agents:  map[string]AgentRoute{"tok-a": {Key: "a", Model: "openai/gpt-4o"}},
+		Record:  true,
+	}
+	gw := httptest.NewServer(New(cfg, Hooks{Payload: func(r CallRecord) { records = append(records, r) }}).Handler())
+	defer gw.Close()
+
+	post(t, gw.URL+"/tok-a/chat/completions", `{"messages":[{"role":"user","content":"hi"}]}`)
+
+	if len(records) != 1 {
+		t.Fatalf("call records = %d, want 1", len(records))
+	}
+	r := records[0]
+	if !strings.Contains(string(r.Request), `"content":"hi"`) {
+		t.Errorf("request not captured: %s", r.Request)
+	}
+	if !strings.Contains(string(r.Response), `"usage"`) {
+		t.Errorf("response not captured: %s", r.Response)
+	}
+	if r.Streamed {
+		t.Error("non-streamed response marked streamed")
+	}
+	if r.CostMicroUSD != 7_500 {
+		t.Errorf("cost = %d, want 7500", r.CostMicroUSD)
+	}
+}
+
+func TestReplayLine_RoundTrips(t *testing.T) {
+	want := CallRecord{Agent: "a", Model: "m", Request: []byte(`{"q":1}`), Response: []byte(`{"a":2}`), PromptTokens: 10, CompletionTokens: 5, CostMicroUSD: 7, StartUnixNano: 1}
+	var buf strings.Builder
+	WriteReplayLine(&buf, want)
+
+	got := ParseReplayLines("noise\n" + buf.String())
+	if len(got) != 1 || got[0].Agent != "a" || string(got[0].Request) != `{"q":1}` || string(got[0].Response) != `{"a":2}` {
+		t.Fatalf("round trip = %+v", got)
+	}
+}
+
+func TestHandler_NoPayloadWhenNotRecording(t *testing.T) {
+	var seen providerCall
+	provider := fakeProvider(t, &seen)
+	defer provider.Close()
+
+	got := 0
+	cfg := Config{
+		Endpoints: map[string]Endpoint{"openai": {BaseURL: provider.URL + "/v1", Key: "k"}},
+		Default:   "openai",
+		Agents:    map[string]AgentRoute{"tok-a": {Key: "a", Model: "openai/gpt-4o"}},
+		// Record is false.
+	}
+	gw := httptest.NewServer(New(cfg, Hooks{Payload: func(CallRecord) { got++ }}).Handler())
+	defer gw.Close()
+
+	post(t, gw.URL+"/tok-a/chat/completions", `{"messages":[]}`)
+	if got != 0 {
+		t.Errorf("payload hook fired %d times with recording off, want 0", got)
 	}
 }
 

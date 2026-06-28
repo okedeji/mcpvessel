@@ -30,6 +30,7 @@ type RunRequest struct {
 	Secrets   map[string]string `json:"secrets,omitempty"`
 	Resources config.Cap        `json:"resources,omitempty"`
 	NoCache   bool              `json:"no_cache,omitempty"`
+	Record    bool              `json:"record,omitempty"`
 }
 
 func (r RunRequest) String() string {
@@ -77,6 +78,7 @@ func (d *Daemon) handleRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	stream := newRunStream(w)
+	started := nowFunc()
 	session, err := d.boot(r.Context(), runtime.RunInput{
 		BundlePath:  b.Path,
 		Name:        b.Name,
@@ -85,6 +87,7 @@ func (d *Daemon) handleRun(w http.ResponseWriter, r *http.Request) {
 		Secrets:     req.Secrets,
 		Resources:   req.Resources,
 		NoCache:     req.NoCache,
+		Record:      req.Record,
 		Interaction: env.InteractionOneShot,
 		Stdout:      io.Discard,
 		Stderr:      stream.logWriter(),
@@ -93,14 +96,20 @@ func (d *Daemon) handleRun(w http.ResponseWriter, r *http.Request) {
 		stream.frame("error", err.Error())
 		return
 	}
+	// The client learns the run id up front, so `replay record` can fetch the
+	// artifact afterward. run/call ignore the frame.
+	stream.frame("run_id", session.RunID())
 
 	result, callErr := session.Call(r.Context(), req.Tool, req.Args)
 	status := history.StatusSucceeded
 	if callErr != nil {
 		status = history.StatusFailed
 	}
-	// Finish before dropRuns tears the gateway down, so the run's final spend is
-	// still readable; finish escalates a failure to over_budget from it.
+	// All gateway reads (replay payloads, then spend) happen before dropRuns tears
+	// the gateway down. writeReplay is a no-op unless this run recorded.
+	if req.Record {
+		d.writeReplay(session.RunID(), b, req, result, callErr, started)
+	}
 	d.finish(session.RunID(), b.Display, status, callErr)
 	d.dropRuns([]*runtime.Session{session})
 	if callErr != nil {
