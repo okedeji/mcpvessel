@@ -1,8 +1,7 @@
 // Package progress renders build progress to a writer. Two renderers
-// ship: Plain (Docker classic line-by-line output, safe everywhere) and
-// TTY (BuildKit-style live-updating dashboard with cursor control). The
-// CLI picks one based on a --progress flag with the same semantics as
-// docker build's --progress.
+// ship: Plain (classic line-by-line output, safe everywhere) and TTY
+// (BuildKit-style live-updating dashboard with cursor control). The CLI
+// picks one based on a --progress flag.
 package progress
 
 import (

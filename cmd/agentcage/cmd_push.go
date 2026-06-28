@@ -21,8 +21,9 @@ func newPushCmd() *cobra.Command {
 
 REF is the agent reference. Shorthand (@org/name:version) resolves to the
 default registry; a fully-qualified ref (ghcr.io/org/name:version) is taken
-as written. Authentication reuses your Docker credentials, so a prior
-'docker login' (or 'agentcage login') against the host is enough.
+as written. Authentication reuses your stored OCI registry credentials, so a
+prior 'agentcage login' against the host (or any login that wrote to the shared
+credential store) is enough.
 
 The bundle comes from the local store: 'agentcage build -t REF' put it there,
 and push reads it back by REF with no file to line up. Pass an explicit bundle

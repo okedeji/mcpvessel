@@ -100,10 +100,10 @@ type buildConfig struct {
 // runBuild assembles the Build options (USES digest resolution, tool
 // introspection) and packages the bundle.
 //
-// With introspection (the default) the heavy visual is BuildKit's
-// Docker-style image build, rendered by runtime.Introspect to stderr; the
-// lightweight parse/hash/seal steps stay quiet so the output reads like a
-// docker build. With --no-introspect there is no image build, so the
+// With introspection (the default) the heavy visual is BuildKit's image
+// build, rendered by runtime.Introspect to stderr; the lightweight
+// parse/hash/seal steps stay quiet so the build output stays the primary
+// thing on screen. With --no-introspect there is no image build, so the
 // 3-step packaging renderer is the primary output, the same as before.
 func runBuild(ctx context.Context, stdout, stderr io.Writer, cfg buildConfig) error {
 	var buildOpts []bundle.Option
@@ -312,7 +312,7 @@ func usesResolverOption(ctx context.Context, w io.Writer, cfg buildConfig) (bund
 }
 
 // humanSize formats n bytes in the smallest binary unit that keeps the
-// number above 1, matching how Docker reports image sizes.
+// number above 1, the conventional way image sizes are shown.
 func humanSize(n int64) string {
 	const (
 		kb = 1 << 10

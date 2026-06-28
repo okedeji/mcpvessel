@@ -15,7 +15,7 @@ import (
 
 // DefaultLimaInstanceName is the single shared Lima VM agentcage
 // provisions on macOS and Windows. One VM hosts every build the user
-// does on this machine, the way Docker Desktop hosts every container.
+// does on this machine.
 const DefaultLimaInstanceName = identity.Name
 
 // LimaStatus is the parsed equivalent of `limactl ls -f "{{.Status}}"`.

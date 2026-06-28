@@ -5,8 +5,8 @@ import (
 	"io"
 )
 
-// Plain is the Docker classic builder format: one line per step start,
-// nothing more. Safe to use anywhere (CI logs, piped output, files).
+// Plain is the classic line-by-line builder format: one line per step
+// start, nothing more. Safe to use anywhere (CI logs, piped output, files).
 type Plain struct {
 	w io.Writer
 }

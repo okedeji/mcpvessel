@@ -19,9 +19,9 @@ type dockerfileInput struct {
 }
 
 // generateDockerfile produces the Dockerfile string that BuildKit's
-// dockerfile.v0 frontend will parse. The Docker-shaped Agentfile
-// directives (FROM, RUN, ENV) pass through unchanged; the only real
-// translation is on ENTRYPOINT, which becomes the JSON-array form:
+// dockerfile.v0 frontend will parse. The Agentfile directives (FROM, RUN,
+// ENV) pass through unchanged; the only real translation is on ENTRYPOINT,
+// which becomes the JSON-array form:
 //
 //	ENTRYPOINT cmd → ENTRYPOINT ["sh", "-c", "cmd"]
 //
@@ -83,7 +83,7 @@ func generateDockerfile(in dockerfileInput) string {
 	}
 
 	// OCI image labels for provenance. LABEL keys are namespaced under
-	// io.agentcage.* so they do not collide with conventional Docker
+	// io.agentcage.* so they do not collide with conventional OCI image
 	// labels (org.opencontainers.image.* etc).
 	for _, k := range sortedKeys(in.Labels) {
 		v := in.Labels[k]

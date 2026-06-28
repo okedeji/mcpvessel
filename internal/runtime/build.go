@@ -192,19 +192,18 @@ func labelsFromManifest(m *bundle.Manifest) map[string]string {
 }
 
 // buildWithProgress runs BuildAgent and renders BuildKit's status
-// stream to w using AutoMode, the same shape `docker build` produces:
-// a live-updating `[+] Building 0.4s (9/9) FINISHED` dashboard when w
-// is a terminal, plain `#1 ... DONE` lines when it is a pipe or file.
-// AutoMode handles the TTY detection for us; CI logs stay readable
-// without us needing to detect them by hand.
+// stream to w using AutoMode: a live-updating `[+] Building 0.4s (9/9)
+// FINISHED` dashboard when w is a terminal, plain `#1 ... DONE` lines
+// when it is a pipe or file. AutoMode handles the TTY detection for us;
+// CI logs stay readable without us needing to detect them by hand.
 //
 // Before status events reach the display we rewrite vertex names so
 // the operator sees agentcage's vocabulary in places where BuildKit
-// would otherwise leak Docker terminology: "Dockerfile" becomes
-// "Agentfile", "docker.io/library/" is stripped from image refs,
-// ".dockerignore" becomes ".agentignore". The Dockerfile frontend
-// itself still parses Dockerfile syntax (that is how BuildKit works),
-// but the operator never has to see the word.
+// would otherwise surface the underlying build terminology: "Dockerfile"
+// becomes "Agentfile", "docker.io/library/" is stripped from image refs,
+// ".dockerignore" becomes ".agentignore". The frontend itself still
+// parses that syntax (that is how BuildKit works), but the operator
+// never has to see it.
 func buildWithProgress(ctx context.Context, bk *BuildKit, in BuildInput, w io.Writer) error {
 	statusCh := make(chan *bkclient.SolveStatus, 16)
 	displayDone := make(chan struct{})

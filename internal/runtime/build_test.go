@@ -131,7 +131,7 @@ func TestRewriteAgentcageDisplay(t *testing.T) {
 		{"[internal] load metadata for docker.io/library/python:3.12-slim", "[internal] load metadata for python:3.12-slim"},
 		{"FROM docker.io/library/node:20-slim", "FROM node:20-slim"},
 		{"docker.io/myorg/custom:1.0", "myorg/custom:1.0"},
-		// Non-Docker strings pass through unchanged.
+		// Strings without build terminology pass through unchanged.
 		{"[2/4] WORKDIR /agent", "[2/4] WORKDIR /agent"},
 		{"exporting to image", "exporting to image"},
 	}

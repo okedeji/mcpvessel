@@ -4,8 +4,8 @@
 // A bundle ships as a single OCI layer (the gzip-tar .agent file) under
 // an image manifest whose artifactType marks it as agentcage's. Any OCI
 // registry can store, dedupe, and serve it without understanding what a
-// bundle is. Authentication reuses the operator's Docker credentials, so
-// there is no agentcage-specific login.
+// bundle is. Authentication reuses the operator's stored OCI registry
+// credentials, so there is no agentcage-specific login.
 //
 // Pulls are content-addressed: a bundle fetched once lands in the local
 // cache keyed by its manifest digest, and a later pull of the same digest
@@ -45,22 +45,22 @@ const (
 )
 
 // Client talks to remote OCI registries on the operator's behalf. The
-// auth client is built once from Docker credentials and reused across
-// repositories so a multi-pull resolve does not re-read config per call.
+// auth client is built once from the stored OCI credentials and reused
+// across repositories so a multi-pull resolve does not re-read config per call.
 type Client struct {
 	cacheDir string
 	auth     remote.Client
 }
 
-// New builds a Client with Docker-config authentication and the default
+// New builds a Client with credential-store authentication and the default
 // on-disk cache (~/.agentcage/cache). It fails closed: an unreadable
-// Docker credential store is an error, not a silent fall-through to
-// anonymous access, so a private pull does not surprise the operator with
-// a 401 three layers down.
+// credential store is an error, not a silent fall-through to anonymous
+// access, so a private pull does not surprise the operator with a 401 three
+// layers down.
 func New() (*Client, error) {
 	store, err := credentials.NewStoreFromDocker(credentials.StoreOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("reading docker credentials: %w", err)
+		return nil, fmt.Errorf("reading registry credentials: %w", err)
 	}
 	cache, err := cacheDir()
 	if err != nil {
@@ -139,7 +139,7 @@ func (c *Client) Pull(ctx context.Context, ref reference.Reference) (bundlePath,
 }
 
 // Login validates username/password against the registry host and stores
-// the credential in the shared Docker keychain, so later push and pull
+// the credential in the shared OCI credential store, so later push and pull
 // authenticate without re-entering it. A credential the registry rejects
 // is an error: a login that silently failed is worse than no login.
 func Login(ctx context.Context, host, username, password string) error {

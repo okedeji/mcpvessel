@@ -24,9 +24,9 @@ func newLoginCmd() *cobra.Command {
 		Long: `Store credentials for an OCI registry so push and pull can authenticate.
 
 REGISTRY defaults to the agentcage default host (ghcr.io, or AGENTCAGE_REGISTRY).
-Credentials land in the shared Docker keychain, so a later 'docker push' to the
-same host is authenticated too, and a prior 'docker login' means you do not need
-this command at all.
+Credentials land in the shared OCI credential store, so any registry tool that
+reads the same store stays authenticated to this host too, and an existing login
+for it means you do not need this command at all.
 
 Pass --password-stdin to feed a token without it landing in your shell history.`,
 		Example: `  agentcage login ghcr.io -u okedeji --password-stdin < token.txt

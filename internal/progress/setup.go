@@ -336,8 +336,8 @@ func displayLen(s string) int {
 	return n
 }
 
-// humanDuration formats a duration the way `docker pull` and `cargo`
-// do: sub-minute as seconds with one decimal, longer as "1m 22s".
+// humanDuration formats a duration as sub-minute seconds with one
+// decimal, longer as "1m 22s".
 func humanDuration(d time.Duration) string {
 	if d < time.Minute {
 		return fmt.Sprintf("%.1fs", d.Seconds())
