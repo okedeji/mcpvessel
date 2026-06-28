@@ -1,9 +1,7 @@
 // Package telemetry holds a run's trace model: the span tree the daemon builds
 // from a run's recorded events and `agentcage trace` renders. It is the shared
-// shape between the daemon that writes it into the history, the CLI that prints
-// it, and the OTLP exporter that ships it to a backend, so none of them spells
-// the schema twice. The model is exporter-agnostic; mapping it onto OpenTelemetry
-// spans is the exporter's job, not this package's.
+// shape between the daemon that writes it into the history and the CLI that
+// prints it, so neither spells the schema twice.
 package telemetry
 
 import "time"

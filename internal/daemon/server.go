@@ -70,12 +70,14 @@ func Serve(ctx context.Context, d *Daemon, socketPath string) error {
 		}
 	}
 
-	// A Prometheus scrape endpoint on its own TCP listener, only when the operator
-	// asked for one. Best-effort: a metrics listener that will not bind warns and
-	// the daemon serves runs without it.
-	if cfg, err := config.Load(); err == nil && cfg.Telemetry.MetricsAddr != "" {
-		if stop := d.startMetrics(cfg.Telemetry.MetricsAddr); stop != nil {
-			defer stop()
+	// A Prometheus scrape endpoint on its own TCP listener, on by default and
+	// off when the operator says so. Best-effort: a metrics listener that will not
+	// bind warns and the daemon serves runs without it.
+	if cfg, err := config.Load(); err == nil {
+		if addr := cfg.Telemetry.EffectiveMetricsAddr(); addr != "" {
+			if stop := d.startMetrics(addr); stop != nil {
+				defer stop()
+			}
 		}
 	}
 

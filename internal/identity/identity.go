@@ -3,8 +3,8 @@
 //
 // Every spot that announces "I am agentcage" reads from here: the CLI
 // verb, the MCP handshake's client name, the bundle's BuiltWith field,
-// the containerd namespace, the default Lima instance, future OCI labels,
-// OTel resource attributes, registry user agents.
+// the containerd namespace, the default Lima instance, and the OCI image
+// labels.
 //
 // Renaming the product is a change to Name. Cutting a release is a
 // change to Version (linker-injected by the Makefile; falls back to

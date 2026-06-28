@@ -46,8 +46,8 @@ const (
 
 // Record is one run's durable entry. Cost and budget are micro-USD integers, the
 // same unit the LLM gateway meters in, so the history never rounds the meter.
-// TraceJSON holds the run's serialized OTel trace when no exporter is configured;
-// it is empty until then.
+// TraceJSON holds the run's serialized trace, what `agentcage trace` renders;
+// it is empty for a run that made no LLM call.
 type Record struct {
 	RunID          string    `json:"run_id"`
 	Ref            string    `json:"ref"`
