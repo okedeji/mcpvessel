@@ -35,7 +35,8 @@ func newLLMGatewayCmd() *cobra.Command {
 				addr = ":" + env.DefaultLLMGatewayPort
 			}
 			report := func(r llmgateway.SpendReport) { llmgateway.WriteSpendLine(os.Stdout, r) }
-			gw := llmgateway.New(cfg, report)
+			recordCall := func(e llmgateway.CallEvent) { llmgateway.WriteCallLine(os.Stdout, e) }
+			gw := llmgateway.New(cfg, report, recordCall)
 
 			// The control surface listens on the container's loopback only, so
 			// agents on the run network cannot reach it; the daemon drives it via

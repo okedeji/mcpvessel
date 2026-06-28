@@ -10,6 +10,7 @@ import (
 	"net/http"
 
 	"github.com/okedeji/agentcage/internal/llmgateway"
+	"github.com/okedeji/agentcage/internal/telemetry"
 )
 
 // Client talks to a running daemon over its Unix socket. The CLI commands that
@@ -162,6 +163,16 @@ func (c *Client) Events(ctx context.Context, onEvent func(Event)) error {
 		}
 		onEvent(e)
 	}
+}
+
+// Trace returns a finished run's trace, the data behind `agentcage trace`. It
+// errors when the run made no LLM call (no trace was built) or is unknown.
+func (c *Client) Trace(ctx context.Context, id string) (*telemetry.Trace, error) {
+	var tr telemetry.Trace
+	if err := c.get(ctx, "/runs/"+id+"/trace", &tr); err != nil {
+		return nil, err
+	}
+	return &tr, nil
 }
 
 // Spend returns a live run's current LLM spend, the data behind `agentcage

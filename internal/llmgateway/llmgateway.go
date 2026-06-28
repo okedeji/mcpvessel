@@ -8,6 +8,7 @@ package llmgateway
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -17,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // SpendLogPrefix marks a spend snapshot line in the gateway's stdout. The
@@ -50,6 +52,51 @@ func ParseSpendLine(logs string) (report SpendReport, found bool) {
 		}
 	}
 	return report, found
+}
+
+// CallEvent is one metered LLM call, logged per call to the gateway's stdout so
+// the daemon can build the run's trace from the captured log the same way it
+// reads the spend snapshot. Times are the gateway clock's unix nanos: internally
+// consistent, so a call's duration is exact even against the daemon's run window.
+type CallEvent struct {
+	Agent            string `json:"agent"`
+	Model            string `json:"model"`
+	PromptTokens     int64  `json:"prompt_tokens"`
+	CompletionTokens int64  `json:"completion_tokens"`
+	CostMicroUSD     int64  `json:"cost_micro_usd"`
+	StartUnixNano    int64  `json:"start_unix_nano"`
+	EndUnixNano      int64  `json:"end_unix_nano"`
+}
+
+// CallLogPrefix marks a per-call event line in the gateway's stdout, the
+// counterpart to SpendLogPrefix. The daemon parses these into the run's trace.
+const CallLogPrefix = "AGENTCAGE_CALL "
+
+// WriteCallLine emits one call event as a prefixed JSON line. The cmd wires it
+// to the gateway's stdout as the Handler's per-call callback.
+func WriteCallLine(w io.Writer, e CallEvent) {
+	b, err := json.Marshal(e)
+	if err != nil {
+		return
+	}
+	_, _ = fmt.Fprintln(w, CallLogPrefix+string(b))
+}
+
+// ParseCallLines returns every call event in the gateway's log output, in the
+// order they were logged.
+func ParseCallLines(logs string) []CallEvent {
+	var out []CallEvent
+	for _, line := range strings.Split(logs, "\n") {
+		s, ok := strings.CutPrefix(strings.TrimSpace(line), CallLogPrefix)
+		if !ok {
+			continue
+		}
+		var e CallEvent
+		if json.Unmarshal([]byte(s), &e) == nil {
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 // Secret is a provider key. It redacts in logs (%v, %s, %#v) but marshals to
@@ -124,14 +171,16 @@ type Gateway struct {
 }
 
 // New resolves each agent to an endpoint and model once and builds the gateway.
-// report, when non-nil, receives the cumulative spend after each metered call;
-// the cmd wires it to stdout so the runtime can read the run's total.
-func New(cfg Config, report func(SpendReport)) *Gateway {
+// report receives the cumulative spend after each metered call and recordCall
+// receives that call's event; both are non-nil only in the running gateway,
+// where the cmd wires them to stdout for the runtime to read. Either may be nil.
+func New(cfg Config, report func(SpendReport), recordCall func(CallEvent)) *Gateway {
 	m := &meter{
-		budget: cfg.BudgetMicroUSD,
-		agents: map[string]int64{},
-		calls:  map[string]int64{},
-		report: report,
+		budget:     cfg.BudgetMicroUSD,
+		agents:     map[string]int64{},
+		calls:      map[string]int64{},
+		report:     report,
+		recordCall: recordCall,
 	}
 	// Keyed by the capability token a caller addresses, but metered by the real
 	// agent key, so the spend tally still attributes to the agent and a forged
@@ -148,7 +197,7 @@ func New(cfg Config, report func(SpendReport)) *Gateway {
 				model = ep.Model
 			}
 		}
-		routes[token] = route{proxy: newProxy(ep, m, ar.Key), model: model}
+		routes[token] = route{proxy: newProxy(ep, m, ar.Key, model), model: model}
 	}
 
 	agent := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -157,6 +206,10 @@ func New(cfg Config, report func(SpendReport)) *Gateway {
 			writeError(w, http.StatusNotFound, "no LLM route for this agent")
 			return
 		}
+		// Stamp the call's start so the response side can time it. The proxy clones
+		// this request with its context, so meterResponse reads it back off the
+		// outbound request.
+		r = r.WithContext(context.WithValue(r.Context(), callStartKey{}, time.Now()))
 		// The gateway is on the wire, so the check is honest: a call only
 		// proceeds while budget remains, and metering happens on the way back.
 		// Worst case is one in-flight call's overshoot. Read live so a mid-run
@@ -222,12 +275,13 @@ func (g *Gateway) handleSpend(w http.ResponseWriter, _ *http.Request) {
 // budget. It snapshots and reports after each debit so the latest log line is
 // always the run's current total.
 type meter struct {
-	mu     sync.Mutex
-	budget int64
-	total  int64
-	agents map[string]int64
-	calls  map[string]int64
-	report func(SpendReport)
+	mu         sync.Mutex
+	budget     int64
+	total      int64
+	agents     map[string]int64
+	calls      map[string]int64
+	report     func(SpendReport)
+	recordCall func(CallEvent)
 }
 
 // overBudget reports whether spend has reached the budget, read live so a
@@ -247,7 +301,7 @@ func (m *meter) setBudget(b int64) {
 	m.budget = b
 }
 
-func (m *meter) debit(agentKey string, ep Endpoint, u usage) {
+func (m *meter) debit(agentKey string, ep Endpoint, u usage, model string, start time.Time) {
 	cost := u.PromptTokens*ep.PriceIn/1_000_000 + u.CompletionTokens*ep.PriceOut/1_000_000
 	m.mu.Lock()
 	m.total += cost
@@ -257,6 +311,17 @@ func (m *meter) debit(agentKey string, ep Endpoint, u usage) {
 	m.mu.Unlock()
 	if m.report != nil {
 		m.report(snap)
+	}
+	if m.recordCall != nil {
+		m.recordCall(CallEvent{
+			Agent:            agentKey,
+			Model:            model,
+			PromptTokens:     u.PromptTokens,
+			CompletionTokens: u.CompletionTokens,
+			CostMicroUSD:     cost,
+			StartUnixNano:    start.UnixNano(),
+			EndUnixNano:      time.Now().UnixNano(),
+		})
 	}
 }
 
@@ -285,7 +350,7 @@ func (m *meter) snapshotLocked() SpendReport {
 // newProxy builds the reverse proxy for one endpoint: it forwards to the
 // endpoint's base URL with the agent path segment dropped, attaches the key,
 // streams responses immediately, and meters cost off the way back.
-func newProxy(ep Endpoint, m *meter, agentKey string) *httputil.ReverseProxy {
+func newProxy(ep Endpoint, m *meter, agentKey, model string) *httputil.ReverseProxy {
 	target, _ := url.Parse(ep.BaseURL)
 	return &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
@@ -302,8 +367,19 @@ func newProxy(ep Endpoint, m *meter, agentKey string) *httputil.ReverseProxy {
 			pr.Out.Header.Set("Accept-Encoding", "identity")
 		},
 		FlushInterval:  -1,
-		ModifyResponse: meterResponse(ep, m, agentKey),
+		ModifyResponse: meterResponse(ep, m, agentKey, model),
 	}
+}
+
+// callStartKey carries a call's start time from the handler to the response side
+// through the request context, so meterResponse can time the whole round-trip.
+type callStartKey struct{}
+
+func callStart(ctx context.Context) time.Time {
+	if t, ok := ctx.Value(callStartKey{}).(time.Time); ok {
+		return t
+	}
+	return time.Now()
 }
 
 // usage is the token accounting OpenAI returns. Endpoints that omit it leave
@@ -317,10 +393,11 @@ type usage struct {
 // meterResponse debits the shared counter from the response's usage block.
 // A non-streaming response carries usage in its JSON body; a streamed one
 // carries it in the final SSE chunk, scanned as it flows to the client.
-func meterResponse(ep Endpoint, m *meter, agentKey string) func(*http.Response) error {
+func meterResponse(ep Endpoint, m *meter, agentKey, model string) func(*http.Response) error {
 	return func(resp *http.Response) error {
+		start := callStart(resp.Request.Context())
 		if strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream") {
-			resp.Body = &streamMeter{src: resp.Body, ep: ep, meter: m, agentKey: agentKey}
+			resp.Body = &streamMeter{src: resp.Body, ep: ep, meter: m, agentKey: agentKey, model: model, start: start}
 			return nil
 		}
 		body, err := io.ReadAll(resp.Body)
@@ -332,7 +409,7 @@ func meterResponse(ep Endpoint, m *meter, agentKey string) func(*http.Response) 
 			Usage usage `json:"usage"`
 		}
 		if json.Unmarshal(body, &parsed) == nil {
-			m.debit(agentKey, ep, parsed.Usage)
+			m.debit(agentKey, ep, parsed.Usage, model, start)
 		}
 		resp.Body = io.NopCloser(bytes.NewReader(body))
 		resp.ContentLength = int64(len(body))
@@ -350,6 +427,8 @@ type streamMeter struct {
 	ep       Endpoint
 	meter    *meter
 	agentKey string
+	model    string
+	start    time.Time
 	buf      bytes.Buffer
 	done     bool
 }
@@ -380,7 +459,7 @@ func (m *streamMeter) scan(b []byte) {
 			Usage *usage `json:"usage"`
 		}
 		if json.Unmarshal(data, &parsed) == nil && parsed.Usage != nil {
-			m.meter.debit(m.agentKey, m.ep, *parsed.Usage)
+			m.meter.debit(m.agentKey, m.ep, *parsed.Usage, m.model, m.start)
 			m.done = true
 			return
 		}

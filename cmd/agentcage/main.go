@@ -37,6 +37,7 @@ func main() {
 	root.AddCommand(newLogsCmd())
 	root.AddCommand(newSpendCmd())
 	root.AddCommand(newEventsCmd())
+	root.AddCommand(newTraceCmd())
 	root.AddCommand(newStopCmd())
 	root.AddCommand(newBudgetCmd())
 	root.AddCommand(newMCPGatewayCmd())

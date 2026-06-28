@@ -192,22 +192,54 @@ func startLLMGateway(ctx context.Context, sess *bootSession, runID string, agent
 }
 
 // RunSpend reads a run's current LLM spend off its gateway, the structured
-// counterpart to printSpendSummary's operator text: the daemon records it into
-// the run history at finish. Best-effort, like the summary. A run that does not
-// reason, or whose gateway is already gone, reports !ok rather than erroring, so
-// it must be read before teardown removes the gateway.
+// counterpart to printSpendSummary's operator text: the daemon serves it live
+// from the spend endpoint. Best-effort. A run that does not reason, or whose
+// gateway is already gone, reports !ok rather than erroring.
 func RunSpend(ctx context.Context, runID string) (llmgateway.SpendReport, bool) {
 	p, err := DefaultProvisioner()
 	if err != nil {
 		return llmgateway.SpendReport{}, false
 	}
 	defer func() { _ = p.Close() }()
-	return readSpend(ctx, p, llmGatewayName(runID))
+	log, ok := readGatewayLog(ctx, p, llmGatewayName(runID))
+	if !ok {
+		return llmgateway.SpendReport{}, false
+	}
+	return llmgateway.ParseSpendLine(log)
+}
+
+// RunTelemetry reads a run's final spend and its per-call events off the gateway
+// log in one pass, for the daemon's finish: the spend lands in the history, the
+// calls build the run's trace. ok reports whether a metered spend snapshot was
+// found; the calls come back regardless. Read before teardown removes the
+// gateway, the same constraint RunSpend has.
+func RunTelemetry(ctx context.Context, runID string) (llmgateway.SpendReport, []llmgateway.CallEvent, bool) {
+	p, err := DefaultProvisioner()
+	if err != nil {
+		return llmgateway.SpendReport{}, nil, false
+	}
+	defer func() { _ = p.Close() }()
+	log, ok := readGatewayLog(ctx, p, llmGatewayName(runID))
+	if !ok {
+		return llmgateway.SpendReport{}, nil, false
+	}
+	report, found := llmgateway.ParseSpendLine(log)
+	return report, llmgateway.ParseCallLines(log), found
 }
 
 // readSpend reads the gateway's last logged spend snapshot. The gateway is
 // reaped with rm -f, so its logs are the source of truth while it is still up.
 func readSpend(ctx context.Context, p Provisioner, name string) (llmgateway.SpendReport, bool) {
+	log, ok := readGatewayLog(ctx, p, name)
+	if !ok {
+		return llmgateway.SpendReport{}, false
+	}
+	return llmgateway.ParseSpendLine(log)
+}
+
+// readGatewayLog captures the gateway container's stdout, where it logs its
+// spend snapshots and per-call events.
+func readGatewayLog(ctx context.Context, p Provisioner, name string) (string, bool) {
 	ctx, cancel := context.WithTimeout(ctx, containerStopTimeout)
 	defer cancel()
 	cmd := p.Nerdctl(ctx, "logs", name)
@@ -215,9 +247,9 @@ func readSpend(ctx context.Context, p Provisioner, name string) (llmgateway.Spen
 	cmd.Stdout = &out
 	cmd.Stderr = &out
 	if cmd.Run() != nil {
-		return llmgateway.SpendReport{}, false
+		return "", false
 	}
-	return llmgateway.ParseSpendLine(out.String())
+	return out.String(), true
 }
 
 // printSpendSummary reads the run's final spend off the LLM gateway's logs and

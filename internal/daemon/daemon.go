@@ -233,7 +233,7 @@ func (d *Daemon) recordStart(info RunInfo) {
 // pass it only for session runs, so a serve front door, which has no run
 // lifecycle, never appears on the feed.
 func (d *Daemon) finish(runID, ref, status string, callErr error) {
-	report, ok := runtime.RunSpend(context.Background(), runID)
+	report, calls, ok := runtime.RunTelemetry(context.Background(), runID)
 	if status == history.StatusFailed && ok && report.BudgetMicroUSD > 0 && report.TotalMicroUSD >= report.BudgetMicroUSD {
 		status = history.StatusOverBudget
 	}
@@ -251,6 +251,11 @@ func (d *Daemon) finish(runID, ref, status string, callErr error) {
 			if ok {
 				rec.CostMicroUSD = report.TotalMicroUSD
 				rec.BudgetMicroUSD = report.BudgetMicroUSD
+			}
+			if len(calls) > 0 {
+				if b, err := json.Marshal(buildTrace(runID, rec.StartedAt, rec.EndedAt, calls)); err == nil {
+					rec.TraceJSON = string(b)
+				}
 			}
 			if err := d.hist.Put(rec); err != nil {
 				fmt.Fprintf(os.Stderr, "warning: recording run finish for %s: %v\n", runID, err)
@@ -339,6 +344,7 @@ func (d *Daemon) Handler() http.Handler {
 	mux.HandleFunc("GET /events", d.handleEvents)
 	mux.HandleFunc("GET /runs/{id}/logs", d.handleRunLogs)
 	mux.HandleFunc("GET /runs/{id}/spend", d.handleRunSpend)
+	mux.HandleFunc("GET /runs/{id}/trace", d.handleRunTrace)
 	mux.HandleFunc("POST /runs/{id}/stop", d.handleStopRun)
 	mux.HandleFunc("POST /serve", d.handleServe)
 	mux.HandleFunc("POST /shutdown", d.handleShutdown)
