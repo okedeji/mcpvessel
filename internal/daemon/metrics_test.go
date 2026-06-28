@@ -18,8 +18,8 @@ func TestWriteMetrics(t *testing.T) {
 	d.hist = store
 
 	for _, r := range []history.Record{
-		{RunID: "r1", Status: history.StatusSucceeded, CostMicroUSD: 12_000},
-		{RunID: "r2", Status: history.StatusSucceeded, CostMicroUSD: 8_000},
+		{RunID: "r1", Status: history.StatusSucceeded, CostMicroUSD: 12_000, TotalTokens: 1_500},
+		{RunID: "r2", Status: history.StatusSucceeded, CostMicroUSD: 8_000, TotalTokens: 500},
 		{RunID: "r3", Status: history.StatusFailed},
 	} {
 		if err := store.Put(r); err != nil {
@@ -37,6 +37,7 @@ func TestWriteMetrics(t *testing.T) {
 		"agentcage_runs_live 0",
 		"# TYPE agentcage_cages_live gauge",
 		"agentcage_cost_usd_total 0.020000",
+		"agentcage_tokens_total 2000",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("metrics output missing %q in:\n%s", want, out)

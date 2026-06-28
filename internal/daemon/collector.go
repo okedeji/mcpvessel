@@ -52,6 +52,16 @@ func buildTrace(runID string, start, end time.Time, calls []llmgateway.CallEvent
 	return &telemetry.Trace{RunID: runID, Root: root}
 }
 
+// totalTokens sums every metered call's prompt and completion tokens, the run's
+// whole token spend for the history record.
+func totalTokens(calls []llmgateway.CallEvent) int64 {
+	var n int64
+	for _, c := range calls {
+		n += c.PromptTokens + c.CompletionTokens
+	}
+	return n
+}
+
 // handleRunTrace serves a run's stored trace JSON. A run with no trace (it made
 // no LLM call, or history is off) is a 404.
 func (d *Daemon) handleRunTrace(w http.ResponseWriter, r *http.Request) {

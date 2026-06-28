@@ -46,12 +46,13 @@ func (d *Daemon) handleMetrics(w http.ResponseWriter, _ *http.Request) {
 
 func (d *Daemon) writeMetrics(b *strings.Builder) {
 	byStatus := map[string]int{}
-	var totalMicroUSD int64
+	var totalMicroUSD, totalTokens int64
 	if d.hist != nil {
 		if recs, err := d.hist.List(); err == nil {
 			for _, r := range recs {
 				byStatus[r.Status]++
 				totalMicroUSD += r.CostMicroUSD
+				totalTokens += r.TotalTokens
 			}
 		}
 	}
@@ -81,4 +82,8 @@ func (d *Daemon) writeMetrics(b *strings.Builder) {
 	fmt.Fprintln(b, "# HELP agentcage_cost_usd_total Metered LLM spend across recorded runs.")
 	fmt.Fprintln(b, "# TYPE agentcage_cost_usd_total counter")
 	fmt.Fprintf(b, "agentcage_cost_usd_total %.6f\n", float64(totalMicroUSD)/1e6)
+
+	fmt.Fprintln(b, "# HELP agentcage_tokens_total Prompt plus completion tokens across recorded runs.")
+	fmt.Fprintln(b, "# TYPE agentcage_tokens_total counter")
+	fmt.Fprintf(b, "agentcage_tokens_total %d\n", totalTokens)
 }

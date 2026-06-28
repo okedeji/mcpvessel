@@ -253,6 +253,7 @@ func (d *Daemon) finish(runID, ref, status string, callErr error) {
 				rec.BudgetMicroUSD = report.BudgetMicroUSD
 			}
 			if len(calls) > 0 {
+				rec.TotalTokens = totalTokens(calls)
 				if b, err := json.Marshal(buildTrace(runID, rec.StartedAt, rec.EndedAt, calls)); err == nil {
 					rec.TraceJSON = string(b)
 				}

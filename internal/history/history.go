@@ -56,6 +56,7 @@ type Record struct {
 	EndedAt        time.Time `json:"ended_at,omitempty"`
 	CostMicroUSD   int64     `json:"cost_micro_usd,omitempty"`
 	BudgetMicroUSD int64     `json:"budget_micro_usd,omitempty"`
+	TotalTokens    int64     `json:"total_tokens,omitempty"`
 	Error          string    `json:"error,omitempty"`
 	TraceJSON      string    `json:"trace_json,omitempty"`
 }
