@@ -20,33 +20,31 @@ func main() {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.AddCommand(newBuildCmd())
-	root.AddCommand(newInitCmd())
-	root.AddCommand(newRunCmd())
-	root.AddCommand(newCallCmd())
-	root.AddCommand(newPushCmd())
-	root.AddCommand(newPullCmd())
-	root.AddCommand(newLoginCmd())
-	root.AddCommand(newInspectCmd())
-	root.AddCommand(newTreeCmd())
-	root.AddCommand(newConfigCmd())
-	root.AddCommand(newSecretsCmd())
-	root.AddCommand(newDaemonCmd())
-	root.AddCommand(newServeCmd())
-	root.AddCommand(newPsCmd())
-	root.AddCommand(newLogsCmd())
-	root.AddCommand(newSpendCmd())
-	root.AddCommand(newEventsCmd())
-	root.AddCommand(newTraceCmd())
-	root.AddCommand(newReplayCmd())
-	root.AddCommand(newStatsCmd())
-	root.AddCommand(newStopCmd())
-	root.AddCommand(newBudgetCmd())
-	root.AddCommand(newMCPGatewayCmd())
-	root.AddCommand(newMCPControlCmd())
-	root.AddCommand(newLLMGatewayCmd())
-	root.AddCommand(newLLMControlCmd())
-	root.AddCommand(newEgressCmd())
+	// Groups organize the commands in --help without nesting them: every command
+	// stays a top-level verb, the way the Docker-mirrored shape wants, but the help
+	// reads by purpose instead of one long list.
+	root.AddGroup(
+		&cobra.Group{ID: "setup", Title: "Setup:"},
+		&cobra.Group{ID: "ship", Title: "Build & distribute:"},
+		&cobra.Group{ID: "run", Title: "Run:"},
+		&cobra.Group{ID: "observe", Title: "Observe:"},
+		&cobra.Group{ID: "configure", Title: "Configure:"},
+	)
+	add := func(group string, cmds ...*cobra.Command) {
+		for _, c := range cmds {
+			c.GroupID = group
+			root.AddCommand(c)
+		}
+	}
+	add("setup", newInitCmd(), newDaemonCmd())
+	add("ship", newBuildCmd(), newPushCmd(), newPullCmd(), newLoginCmd(), newInspectCmd(), newTreeCmd())
+	add("run", newRunCmd(), newCallCmd(), newServeCmd(), newStopCmd(), newBudgetCmd())
+	add("observe", newPsCmd(), newLogsCmd(), newSpendCmd(), newEventsCmd(), newTraceCmd(), newStatsCmd(), newReplayCmd())
+	add("configure", newConfigCmd(), newSecretsCmd())
+
+	// Internal commands the runtime execs inside the gateway and cage containers.
+	// Hidden from help, so they need no group.
+	root.AddCommand(newMCPGatewayCmd(), newMCPControlCmd(), newLLMGatewayCmd(), newLLMControlCmd(), newEgressCmd())
 
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)
