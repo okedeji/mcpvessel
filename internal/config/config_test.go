@@ -1,11 +1,32 @@
 package config
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/okedeji/agentcage/internal/env"
 )
+
+func TestTelemetry_StringRedactsHeadersButJSONKeepsThem(t *testing.T) {
+	tel := Telemetry{
+		MetricsAddr:  "127.0.0.1:9323",
+		OTLPEndpoint: "https://collector.example",
+		OTLPHeaders:  map[string]string{"authorization": "secret-token"},
+		ServiceName:  "agentcage",
+	}
+	if s := tel.String(); strings.Contains(s, "secret-token") {
+		t.Errorf("String leaked a header value: %s", s)
+	} else if !strings.Contains(s, "127.0.0.1:9323") || !strings.Contains(s, "agentcage") {
+		t.Errorf("String dropped a non-secret field: %s", s)
+	}
+	// The on-disk JSON must round-trip the real header value.
+	b, err := json.Marshal(tel)
+	if err != nil || !strings.Contains(string(b), "secret-token") {
+		t.Errorf("JSON must keep the real header: %s (err %v)", b, err)
+	}
+}
 
 func TestLoad_MissingFileIsEmpty(t *testing.T) {
 	t.Setenv(env.Home, t.TempDir())

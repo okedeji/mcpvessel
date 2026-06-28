@@ -61,6 +61,16 @@ func (h *hostCounter) release() {
 	h.mu.Unlock()
 }
 
+func (h *hostCounter) count() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.n
+}
+
+// LiveCages is the number of cages live across every run on this host, the gauge
+// the daemon exports to Prometheus.
+func LiveCages() int { return hostCages.count() }
+
 // reserveBaseline reserves a host-cage slot for each always-on cage a run keeps
 // alive but the working set does not track: the root and the gateway singletons.
 // host_max_live counts every cage (config.go), so these must reserve too, or N

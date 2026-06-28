@@ -25,7 +25,31 @@ type Config struct {
 	Cages     Cages             `json:"cages,omitempty"`
 	Machine   Machine           `json:"machine,omitempty"`
 	Serve     Serve             `json:"serve,omitempty"`
+	Telemetry Telemetry         `json:"telemetry,omitempty"`
 }
+
+// Telemetry is the operator's observability export config. MetricsAddr, when set,
+// is the TCP address the daemon serves Prometheus metrics on (e.g.
+// 127.0.0.1:9323); leave it on loopback so the endpoint is not world-exposed.
+// OTLPEndpoint, when set, ships traces to an OpenTelemetry collector, with
+// OTLPHeaders carrying its auth and ServiceName labeling the export. Empty fields
+// export nothing.
+type Telemetry struct {
+	MetricsAddr  string            `json:"metrics_addr,omitempty"`
+	OTLPEndpoint string            `json:"otlp_endpoint,omitempty"`
+	OTLPHeaders  map[string]string `json:"otlp_headers,omitempty"`
+	ServiceName  string            `json:"service_name,omitempty"`
+}
+
+// String redacts OTLPHeaders so a logged config never leaks an export token,
+// while keeping the rest readable for "loaded config" diagnostics. MarshalJSON
+// stays real because the JSON is the on-disk format the headers round-trip through.
+func (t Telemetry) String() string {
+	return fmt.Sprintf("Telemetry{MetricsAddr:%q OTLPEndpoint:%q OTLPHeaders:%d redacted ServiceName:%q}",
+		t.MetricsAddr, t.OTLPEndpoint, len(t.OTLPHeaders), t.ServiceName)
+}
+
+func (t Telemetry) GoString() string { return t.String() }
 
 // Machine is how much of the host agentcage may use for cages. On macOS it sizes
 // the Lima VM agentcage runs cages in (the VM is a fixed slice of the Mac, so

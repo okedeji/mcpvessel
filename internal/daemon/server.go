@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/okedeji/agentcage/internal/config"
 	"github.com/okedeji/agentcage/internal/history"
 	"github.com/okedeji/agentcage/internal/runtime"
 )
@@ -66,6 +67,15 @@ func Serve(ctx context.Context, d *Daemon, socketPath string) error {
 			fmt.Fprintf(os.Stderr, "warning: reconciling run history: %v\n", err)
 		} else if n > 0 {
 			fmt.Fprintf(os.Stderr, "reconciled %d crashed run(s) from a previous daemon\n", n)
+		}
+	}
+
+	// A Prometheus scrape endpoint on its own TCP listener, only when the operator
+	// asked for one. Best-effort: a metrics listener that will not bind warns and
+	// the daemon serves runs without it.
+	if cfg, err := config.Load(); err == nil && cfg.Telemetry.MetricsAddr != "" {
+		if stop := d.startMetrics(cfg.Telemetry.MetricsAddr); stop != nil {
+			defer stop()
 		}
 	}
 
