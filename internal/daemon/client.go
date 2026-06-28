@@ -10,6 +10,7 @@ import (
 	"net/http"
 
 	"github.com/okedeji/agentcage/internal/llmgateway"
+	"github.com/okedeji/agentcage/internal/runtime"
 	"github.com/okedeji/agentcage/internal/telemetry"
 )
 
@@ -198,6 +199,18 @@ func (c *Client) Events(ctx context.Context, onEvent func(Event)) error {
 		}
 		onEvent(e)
 	}
+}
+
+// Stats returns a live snapshot of every cage's resource usage, the data behind
+// `agentcage stats`.
+func (c *Client) Stats(ctx context.Context) ([]runtime.CageStat, error) {
+	var body struct {
+		Cages []runtime.CageStat `json:"cages"`
+	}
+	if err := c.get(ctx, "/stats", &body); err != nil {
+		return nil, err
+	}
+	return body.Cages, nil
 }
 
 // Trace returns a finished run's trace, the data behind `agentcage trace`. It

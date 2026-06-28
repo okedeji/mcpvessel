@@ -39,6 +39,7 @@ func main() {
 	root.AddCommand(newEventsCmd())
 	root.AddCommand(newTraceCmd())
 	root.AddCommand(newReplayCmd())
+	root.AddCommand(newStatsCmd())
 	root.AddCommand(newStopCmd())
 	root.AddCommand(newBudgetCmd())
 	root.AddCommand(newMCPGatewayCmd())

@@ -342,6 +342,7 @@ func (d *Daemon) Handler() http.Handler {
 	mux.HandleFunc("POST /runs/{id}/call", d.handleCallRun)
 	mux.HandleFunc("POST /runs/{id}/budget", d.handleSetBudget)
 	mux.HandleFunc("GET /events", d.handleEvents)
+	mux.HandleFunc("GET /stats", d.handleStats)
 	mux.HandleFunc("GET /runs/{id}/logs", d.handleRunLogs)
 	mux.HandleFunc("GET /runs/{id}/spend", d.handleRunSpend)
 	mux.HandleFunc("GET /runs/{id}/trace", d.handleRunTrace)
