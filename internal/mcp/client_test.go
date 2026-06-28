@@ -104,6 +104,64 @@ func TestConnectHTTP_RetriesThenDeadline(t *testing.T) {
 	}
 }
 
+// TestConnect_AnswersElicitation proves the agent-facing wiring: a client built
+// with WithElicitation advertises the capability, so the server can ask a
+// question mid-call, and the question reaches the handler whose answer the
+// server then folds into its result.
+func TestConnect_AnswersElicitation(t *testing.T) {
+	srvConn, cliConn := net.Pipe()
+	t.Cleanup(func() {
+		_ = srvConn.Close()
+		_ = cliConn.Close()
+	})
+
+	server := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "agentcage-test-server", Version: "0.0.0"}, nil)
+	registerAskTool(server)
+
+	serverCtx, cancelServer := context.WithCancel(context.Background())
+	t.Cleanup(cancelServer)
+	go func() {
+		_ = server.Run(serverCtx, &mcpsdk.IOTransport{Reader: srvConn, Writer: srvConn})
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var asked string
+	client, err := Connect(ctx, cliConn, cliConn, WithElicitation(func(_ context.Context, q *ElicitRequest) (*ElicitResult, error) {
+		asked = q.Message
+		return &ElicitResult{Action: "accept", Content: map[string]any{"answer": "blue"}}, nil
+	}))
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+
+	got, err := client.CallTool(ctx, "ask", nil)
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if asked != "color?" {
+		t.Errorf("handler saw %q, want color?", asked)
+	}
+	if !contains(got, "blue") {
+		t.Errorf("result = %q, want it to carry the answer", got)
+	}
+}
+
+// TestConnect_ElicitationUnadvertisedByDefault is the gate: a plain client never
+// advertises elicitation, so a server that tries to ask fails the call closed.
+// This is what keeps a one-shot run/call from offering a question channel.
+func TestConnect_ElicitationUnadvertisedByDefault(t *testing.T) {
+	client, _ := testServer(t, registerAskTool)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if _, err := client.CallTool(ctx, "ask", nil); err == nil {
+		t.Fatal("expected the call to fail closed when the client cannot answer an elicitation")
+	}
+}
+
 func TestListTools_EmptyServer(t *testing.T) {
 	client, _ := testServer(t, nil)
 
@@ -300,6 +358,24 @@ func registerGreetTool(s *mcpsdk.Server) {
 		return &mcpsdk.CallToolResult{
 			Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: text}},
 		}, greetOutput{Greeting: text}, nil
+	})
+}
+
+// registerAskTool exposes a tool that asks the caller a question mid-call and
+// folds the answer into its result, the server side of an elicitation round trip.
+func registerAskTool(s *mcpsdk.Server) {
+	mcpsdk.AddTool(s, &mcpsdk.Tool{
+		Name:        "ask",
+		Description: "asks the caller a question, then answers",
+	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, _ struct{}) (*mcpsdk.CallToolResult, struct{}, error) {
+		res, err := req.Session.Elicit(ctx, &mcpsdk.ElicitParams{Message: "color?"})
+		if err != nil {
+			return nil, struct{}{}, err
+		}
+		answer, _ := res.Content["answer"].(string)
+		return &mcpsdk.CallToolResult{
+			Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "you said " + answer}},
+		}, struct{}{}, nil
 	})
 }
 

@@ -26,6 +26,72 @@ type Client struct {
 	session *mcpsdk.ClientSession
 }
 
+// ElicitRequest is a question an agent raises in the middle of a call: a
+// human-readable message and, when it wants a structured answer, a JSON Schema
+// of the fields it expects. It is the agentcage-shaped view of MCP's
+// elicitation/create.
+type ElicitRequest struct {
+	Message string
+	Schema  map[string]any
+}
+
+// ElicitResult is the caller's answer. Action is "accept", "decline", or
+// "cancel"; Content holds the submitted fields and is present only on "accept".
+type ElicitResult struct {
+	Action  string
+	Content map[string]any
+}
+
+// ElicitHandler answers an agent's mid-call question. serve supplies one backed
+// by the operator's MCP client. Wiring a handler is also what advertises the
+// elicitation capability, so an agent can only ask when a handler is present;
+// that is the gate that keeps a one-shot run/call from offering a question
+// channel that has no one on the other end.
+type ElicitHandler func(ctx context.Context, q *ElicitRequest) (*ElicitResult, error)
+
+// Option configures a Client at connect time.
+type Option func(*options)
+
+type options struct {
+	onElicit ElicitHandler
+}
+
+// WithElicitation makes the client answer the server's elicitation/create
+// requests through h and advertise the elicitation capability so the server may
+// ask. A nil h leaves the capability unadvertised, the default, so the server
+// cannot elicit.
+func WithElicitation(h ElicitHandler) Option {
+	return func(o *options) { o.onElicit = h }
+}
+
+// clientOptions folds the agentcage options into the SDK's ClientOptions,
+// returning nil when nothing is set so the client advertises no extra
+// capabilities. The SDK auto-advertises the elicitation capability the moment
+// an ElicitationHandler is non-nil, so a handler is set only when the caller
+// asked for one.
+func clientOptions(opts []Option) *mcpsdk.ClientOptions {
+	var o options
+	for _, opt := range opts {
+		opt(&o)
+	}
+	if o.onElicit == nil {
+		return nil
+	}
+	h := o.onElicit
+	return &mcpsdk.ClientOptions{
+		ElicitationHandler: func(ctx context.Context, req *mcpsdk.ElicitRequest) (*mcpsdk.ElicitResult, error) {
+			res, err := h(ctx, &ElicitRequest{
+				Message: req.Params.Message,
+				Schema:  schemaToMap(req.Params.RequestedSchema),
+			})
+			if err != nil {
+				return nil, err
+			}
+			return &mcpsdk.ElicitResult{Action: res.Action, Content: res.Content}, nil
+		},
+	}
+}
+
 // Connect establishes an MCP session over the given stdio pair.
 //
 // `reader` is what we read agent responses from (the agent's stdout).
@@ -36,11 +102,11 @@ type Client struct {
 // The MCP handshake (initialize) runs as part of Connect; by the time
 // it returns, the agent has reported its protocol version and is ready
 // for tool calls.
-func Connect(ctx context.Context, reader io.Reader, writer io.Writer) (*Client, error) {
+func Connect(ctx context.Context, reader io.Reader, writer io.Writer, opts ...Option) (*Client, error) {
 	c := mcpsdk.NewClient(&mcpsdk.Implementation{
 		Name:    identity.Name,
 		Version: identity.Version,
-	}, nil)
+	}, clientOptions(opts))
 	session, err := c.Connect(ctx, &mcpsdk.IOTransport{
 		Reader: io.NopCloser(reader),
 		Writer: nopWriteCloser{writer},
@@ -60,11 +126,11 @@ func Connect(ctx context.Context, reader io.Reader, writer io.Writer) (*Client, 
 // connect is retried until it succeeds or ctx is done. The retry is on the
 // handshake, not on a hung server: connection-refused fails fast, so the wait
 // is paced by connectRetryInterval and bounded by the caller's ctx deadline.
-func ConnectHTTP(ctx context.Context, endpoint string) (*Client, error) {
+func ConnectHTTP(ctx context.Context, endpoint string, opts ...Option) (*Client, error) {
 	c := mcpsdk.NewClient(&mcpsdk.Implementation{
 		Name:    identity.Name,
 		Version: identity.Version,
-	}, nil)
+	}, clientOptions(opts))
 	for {
 		session, err := c.Connect(ctx, &mcpsdk.StreamableClientTransport{Endpoint: endpoint}, nil)
 		if err == nil {
