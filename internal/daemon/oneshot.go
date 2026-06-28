@@ -18,10 +18,9 @@ import (
 // daemon-side of `agentcage run` and `agentcage call`. The CLI resolves the
 // tool and authorizes it before sending; the daemon executes and owns the run.
 //
-// Secrets and Env travel from the CLI over the daemon's local Unix socket, the
-// same way `docker run -e` hands values to dockerd. String and GoString redact
-// both so a logged request never leaks them; MarshalJSON stays real because it
-// is the wire format the daemon injects from.
+// Secrets and Env travel from the CLI over the daemon's local Unix socket.
+// String and GoString redact both so a logged request never leaks them;
+// MarshalJSON stays real because it is the wire format the daemon injects from.
 type RunRequest struct {
 	Ref       string            `json:"ref"`
 	Tool      string            `json:"tool"`

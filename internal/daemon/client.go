@@ -8,6 +8,8 @@ import (
 	"io"
 	"net"
 	"net/http"
+
+	"github.com/okedeji/agentcage/internal/llmgateway"
 )
 
 // Client talks to a running daemon over its Unix socket. The CLI commands that
@@ -107,6 +109,40 @@ func (c *Client) RunOnce(ctx context.Context, req RunRequest, logs io.Writer) (s
 			return "", fmt.Errorf("%s", f.Data)
 		}
 	}
+}
+
+// Logs streams a run's logs to w. With follow it tails a live run until the run
+// ends; without it, it writes the run's log to date and returns. It is the
+// client behind `agentcage logs`.
+func (c *Client) Logs(ctx context.Context, id string, follow bool, w io.Writer) error {
+	path := "/runs/" + id + "/logs"
+	if follow {
+		path += "?follow=true"
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://unix"+path, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return &Unreachable{err}
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("daemon %s: %s", path, errorBody(resp))
+	}
+	_, err = io.Copy(w, resp.Body)
+	return err
+}
+
+// Spend returns a live run's current LLM spend, the data behind `agentcage
+// spend`. It errors when the run is not reasoning or no longer running.
+func (c *Client) Spend(ctx context.Context, id string) (llmgateway.SpendReport, error) {
+	var report llmgateway.SpendReport
+	if err := c.get(ctx, "/runs/"+id+"/spend", &report); err != nil {
+		return llmgateway.SpendReport{}, err
+	}
+	return report, nil
 }
 
 // StartRun asks the daemon to boot and hold an agent, returning the run id the

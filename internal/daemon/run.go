@@ -41,16 +41,21 @@ func (d *Daemon) boot(ctx context.Context, in runtime.RunInput, display string) 
 	if in.Stderr == nil {
 		in.Stderr = os.Stderr
 	}
+	// Tee the run's stderr to its durable log. The file attaches after Acquire,
+	// once the run id exists, so `agentcage logs` can read the run after it ends.
+	rl := &runLog{inner: in.Stderr}
+	in.Stderr = rl
 	session, err := runtime.Acquire(ctx, in)
 	if err != nil {
 		return nil, err
 	}
+	logFile := attachRunLog(rl, session.RunID())
 	// Activation runs on the same context the run boots against: a held run's
 	// background context so it outlives the request, a one-shot's request context
 	// so it ends with the call. Release cancels it.
 	session.StartWorkingSet(ctx)
 	info := RunInfo{ID: session.RunID(), Ref: display, Status: "running", StartedAt: nowFunc()}
-	d.hold(info, session)
+	d.hold(info, session, logFile)
 	d.recordStart(info)
 	return session, nil
 }

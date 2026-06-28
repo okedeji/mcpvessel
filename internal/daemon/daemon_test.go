@@ -47,7 +47,7 @@ func TestFront_ClosesWhenLastRunStops(t *testing.T) {
 
 func TestRegistry_HoldTake(t *testing.T) {
 	d := New()
-	d.hold(RunInfo{ID: "researcher-abc"}, nil)
+	d.hold(RunInfo{ID: "researcher-abc"}, nil, nil)
 	if _, ok := d.take("researcher-abc"); !ok {
 		t.Error("take of a held run should report true")
 	}
@@ -72,7 +72,7 @@ func TestListRuns_MergesHistoryAndLive(t *testing.T) {
 	if err := store.Put(history.Record{RunID: "done-1", Ref: "@me/echo:1", Status: history.StatusSucceeded, StartedAt: now.Add(-time.Minute), EndedAt: now, CostMicroUSD: 12_000}); err != nil {
 		t.Fatal(err)
 	}
-	d.hold(RunInfo{ID: "live-1", Ref: "@me/researcher:1", Status: "running", StartedAt: now}, nil)
+	d.hold(RunInfo{ID: "live-1", Ref: "@me/researcher:1", Status: "running", StartedAt: now}, nil, nil)
 	if err := store.Put(history.Record{RunID: "live-1", Ref: "@me/researcher:1", Status: history.StatusRunning, StartedAt: now}); err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func TestServe_SocketRoundTrip(t *testing.T) {
 		Ref:       "@me/researcher:0.1",
 		Status:    "running",
 		StartedAt: time.Now(),
-	}, nil)
+	}, nil, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	errc := make(chan error, 1)

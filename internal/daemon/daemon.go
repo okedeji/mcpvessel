@@ -95,6 +95,9 @@ type heldRun struct {
 	// of per-client instances rather than one held session. Exactly one is set.
 	session *runtime.Session
 	manager *instanceManager
+	// logFile is the run's durable log, teed from its stderr; closed on release.
+	// nil for a serve entry and for a run whose log could not be opened.
+	logFile *os.File
 }
 
 // New returns a daemon with an empty registry.
@@ -102,11 +105,11 @@ func New() *Daemon {
 	return &Daemon{runs: map[string]*heldRun{}, shutdown: make(chan struct{})}
 }
 
-// hold records a booted run and its Session under the run id.
-func (d *Daemon) hold(info RunInfo, session *runtime.Session) {
+// hold records a booted run, its Session, and its durable log under the run id.
+func (d *Daemon) hold(info RunInfo, session *runtime.Session, logFile *os.File) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.runs[info.ID] = &heldRun{info: info, session: session}
+	d.runs[info.ID] = &heldRun{info: info, session: session, logFile: logFile}
 }
 
 // holdServe records a serve-managed exposed agent: a registry entry whose
@@ -144,8 +147,12 @@ func (d *Daemon) take(id string) (*heldRun, bool) {
 	return r, true
 }
 
-// release tears down a held entry, whichever kind it is.
+// release tears down a held entry, whichever kind it is, and closes its durable
+// log so the daemon does not leak a file handle per finished run.
 func (r *heldRun) release() error {
+	if r.logFile != nil {
+		_ = r.logFile.Close()
+	}
 	if r.manager != nil {
 		return r.manager.releaseAll()
 	}
@@ -153,6 +160,20 @@ func (r *heldRun) release() error {
 		return r.session.Release()
 	}
 	return nil
+}
+
+// attachRunLog opens a run's durable log and tees its stderr into it. Best
+// effort: a log that will not open leaves the run's output on the stream only
+// and returns nil, never failing the boot. The returned file is closed on
+// release.
+func attachRunLog(rl *runLog, runID string) *os.File {
+	f, err := openRunLog(runID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: opening run log for %s: %v\n", runID, err)
+		return nil
+	}
+	rl.attach(f)
+	return f
 }
 
 // nowFunc is overridable so StartedAt stays testable without a real clock.
@@ -309,6 +330,8 @@ func (d *Daemon) Handler() http.Handler {
 	mux.HandleFunc("POST /runs", d.handleStartRun)
 	mux.HandleFunc("POST /runs/{id}/call", d.handleCallRun)
 	mux.HandleFunc("POST /runs/{id}/budget", d.handleSetBudget)
+	mux.HandleFunc("GET /runs/{id}/logs", d.handleRunLogs)
+	mux.HandleFunc("GET /runs/{id}/spend", d.handleRunSpend)
 	mux.HandleFunc("POST /runs/{id}/stop", d.handleStopRun)
 	mux.HandleFunc("POST /serve", d.handleServe)
 	mux.HandleFunc("POST /shutdown", d.handleShutdown)
