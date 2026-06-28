@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -539,9 +540,12 @@ func startAttachedAgent(ctx context.Context, sess *bootSession, in bootInput, td
 	}
 	td.push(func() error {
 		// Closing stdin is the agent's signal to exit; --rm then removes
-		// the container and Wait reaps the subprocess.
+		// the container and Wait reaps the subprocess. A signal kill here is the
+		// teardown doing its job (a held instance's attached process is killed as
+		// the run comes down), so only a non-zero exit code, the agent actually
+		// crashing, is worth surfacing.
 		_ = stdinPipe.Close()
-		if err := cmd.Wait(); err != nil {
+		if err := cmd.Wait(); err != nil && !killedBySignal(err) {
 			return fmt.Errorf("container subprocess exited with error: %w", err)
 		}
 		return nil
@@ -557,6 +561,15 @@ func startAttachedAgent(ctx context.Context, sess *bootSession, in bootInput, td
 	td.push(client.Close)
 
 	return client, nil
+}
+
+// killedBySignal reports whether a process exited because a signal stopped it
+// rather than returning a status. ExitCode is -1 only for a signal kill once the
+// process has been waited on, which during teardown means we stopped it on
+// purpose, not that it crashed.
+func killedBySignal(err error) bool {
+	var exit *exec.ExitError
+	return errors.As(err, &exit) && exit.ProcessState.ExitCode() == -1
 }
 
 // deriveImageRef is the local containerd image ref for an agent: its name
