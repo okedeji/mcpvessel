@@ -211,8 +211,8 @@ func (d *Daemon) recordStart(info RunInfo) {
 // a failed call to over_budget when that spend shows the budget was exhausted,
 // writes the terminal history record, and publishes the run.ended event. The
 // event fires even with history off; the history write is best-effort. Callers
-// pass it only for session runs, so a serve front door, which has no run
-// lifecycle, never appears on the feed.
+// are one-shot runs and served per-client instances; a serve front door owns a
+// pool rather than a run, so it never finishes here and stays off the feed.
 func (d *Daemon) finish(runID, ref, status string, callErr error) {
 	report, calls, ok := runtime.RunTelemetry(context.Background(), runID)
 	if status == history.StatusFailed && ok && report.BudgetMicroUSD > 0 && report.TotalMicroUSD >= report.BudgetMicroUSD {

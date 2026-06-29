@@ -33,12 +33,23 @@ const instanceReapInterval = 30 * time.Second
 // common burst. A var so a test can shrink it.
 var instanceSaturationWait = 5 * time.Second
 
-// instance is one client's live agent: the held Session, when it was last used,
-// and how many calls are in flight so the reaper never takes one mid-call.
+// instance is one client's live agent: the held Session, its run id (for the
+// history record and the lifecycle feed), when it was last used, and how many
+// calls are in flight so the reaper never takes one mid-call.
 type instance struct {
 	session  managedSession
+	runID    string
 	lastUse  time.Time
 	inFlight int
+}
+
+// instanceHooks reports a per-client instance's run lifecycle to the daemon:
+// onStart when its cage boots, onEnd just before it is reaped or released, so a
+// served instance is recorded and streamed exactly like a one-shot run. Both are
+// nil in tests, where the manager runs without a daemon to report to.
+type instanceHooks struct {
+	onStart func(runID string)
+	onEnd   func(runID string)
 }
 
 // instanceBoot is an in-progress boot, so concurrent first-calls for one client
@@ -61,6 +72,7 @@ type instanceBoot struct {
 type instanceManager struct {
 	address    string
 	boot       func(ctx context.Context, runID string) (managedSession, error)
+	hooks      instanceHooks
 	maxClients int
 	idleTTL    time.Duration
 
@@ -74,11 +86,13 @@ type instanceManager struct {
 
 // newInstanceManager builds a manager and starts its reaper. boot acquires a
 // fresh instance for the given run id; the caller wires it to runtime.Acquire.
-func newInstanceManager(address string, maxClients int, idleTTL time.Duration, boot func(ctx context.Context, runID string) (managedSession, error)) *instanceManager {
+// hooks report each instance's run lifecycle to the daemon.
+func newInstanceManager(address string, maxClients int, idleTTL time.Duration, boot func(ctx context.Context, runID string) (managedSession, error), hooks instanceHooks) *instanceManager {
 	ctx, cancel := context.WithCancel(context.Background())
 	m := &instanceManager{
 		address:    address,
 		boot:       boot,
+		hooks:      hooks,
 		maxClients: maxClients,
 		idleTTL:    idleTTL,
 		instances:  map[string]*instance{},
@@ -88,6 +102,24 @@ func newInstanceManager(address string, maxClients int, idleTTL time.Duration, b
 	}
 	go m.reapLoop(ctx)
 	return m
+}
+
+// endInstance reports an instance's run as finished, then releases it. The order
+// matters: onEnd reads the run's final spend off the gateway, so it must run
+// while the instance's containers are still up, before Release tears them down.
+func (m *instanceManager) endInstance(inst *instance) error {
+	if m.hooks.onEnd != nil {
+		m.hooks.onEnd(inst.runID)
+	}
+	return inst.session.Release()
+}
+
+// clientCount is the number of live per-client instances, the slice of
+// agentcage_serve_clients this manager contributes.
+func (m *instanceManager) clientCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.instances)
 }
 
 // acquire returns the session for a client, booting one on its first call, and a
@@ -163,7 +195,7 @@ func (m *instanceManager) getOrBoot(ctx context.Context, sessionID string) (*ins
 			inst := m.instances[victim]
 			delete(m.instances, victim)
 			m.mu.Unlock()
-			_ = inst.session.Release()
+			_ = m.endInstance(inst)
 			continue
 		}
 		m.mu.Unlock()
@@ -178,14 +210,20 @@ func (m *instanceManager) getOrBoot(ctx context.Context, sessionID string) (*ins
 	}
 }
 
-// bootOne acquires a fresh instance under a per-session run id, so concurrent
-// instances of the same bundle get distinct container names.
+// bootOne acquires a fresh instance under a per-boot run id, so concurrent
+// instances of the same bundle get distinct container names and each lifetime
+// gets its own history record. onStart runs once the cage is up, recording the
+// run as the one-shot path does.
 func (m *instanceManager) bootOne(ctx context.Context, sessionID string) (*instance, error) {
-	session, err := m.boot(ctx, runtime.InstanceRunID(m.address, sessionID))
+	runID := runtime.InstanceRunID(m.address, sessionID)
+	session, err := m.boot(ctx, runID)
 	if err != nil {
 		return nil, err
 	}
-	return &instance{session: session, lastUse: nowFunc()}, nil
+	if m.hooks.onStart != nil {
+		m.hooks.onStart(runID)
+	}
+	return &instance{session: session, runID: runID, lastUse: nowFunc()}, nil
 }
 
 // liveLocked is the number of instances holding a client slot: live plus
@@ -243,7 +281,7 @@ func (m *instanceManager) reapIdle() {
 	m.mu.Unlock()
 
 	for _, inst := range victims {
-		_ = inst.session.Release()
+		_ = m.endInstance(inst)
 	}
 	if len(victims) > 0 {
 		m.signalSlotFree()
@@ -275,7 +313,7 @@ func (m *instanceManager) releaseAll() error {
 
 	var errs []error
 	for _, inst := range insts {
-		if err := inst.session.Release(); err != nil {
+		if err := m.endInstance(inst); err != nil {
 			errs = append(errs, err)
 		}
 	}

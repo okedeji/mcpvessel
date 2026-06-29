@@ -39,7 +39,7 @@ func newTestManager(t *testing.T, maxClients int, idleTTL time.Duration, gate ch
 			<-gate
 		}
 		return &fakeSession{id: runID}, nil
-	})
+	}, instanceHooks{})
 	t.Cleanup(func() { _ = m.releaseAll() })
 	return m, &boots
 }
@@ -172,6 +172,58 @@ func TestInstanceManager_FailsClosedWhenFullOfLiveClients(t *testing.T) {
 	// A newcomer cannot evict a live client, so it waits then fails closed.
 	if _, _, err := m.acquire(ctx, "newcomer"); err == nil {
 		t.Fatal("expected a capacity error when full of live clients")
+	}
+}
+
+func TestInstanceManager_LifecycleHooksRecordEachInstanceOnce(t *testing.T) {
+	var mu sync.Mutex
+	var started, ended []string
+	hooks := instanceHooks{
+		onStart: func(id string) { mu.Lock(); defer mu.Unlock(); started = append(started, id) },
+		onEnd:   func(id string) { mu.Lock(); defer mu.Unlock(); ended = append(ended, id) },
+	}
+	m := newInstanceManager("agent", 8, time.Minute,
+		func(_ context.Context, runID string) (managedSession, error) {
+			return &fakeSession{id: runID}, nil
+		}, hooks)
+	t.Cleanup(func() { _ = m.releaseAll() })
+	ctx := context.Background()
+
+	_, ra, err := m.acquire(ctx, "client-a")
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	ra()
+
+	mu.Lock()
+	if len(started) != 1 {
+		t.Fatalf("onStart fired %d times, want 1 (one boot)", len(started))
+	}
+	if len(ended) != 0 {
+		t.Fatalf("onEnd fired before the instance was released")
+	}
+	runID := started[0]
+	mu.Unlock()
+	if got := m.clientCount(); got != 1 {
+		t.Errorf("clientCount = %d, want 1", got)
+	}
+
+	// Reusing a live instance is not a new boot, so onStart must not re-fire.
+	_, ra2, _ := m.acquire(ctx, "client-a")
+	ra2()
+	mu.Lock()
+	if len(started) != 1 {
+		t.Errorf("onStart re-fired on instance reuse: %d", len(started))
+	}
+	mu.Unlock()
+
+	if err := m.releaseAll(); err != nil {
+		t.Fatalf("releaseAll: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(ended) != 1 || ended[0] != runID {
+		t.Errorf("onEnd = %v, want exactly one call for %q", ended, runID)
 	}
 }
 

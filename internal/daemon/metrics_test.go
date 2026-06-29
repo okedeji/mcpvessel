@@ -36,6 +36,7 @@ func TestWriteMetrics(t *testing.T) {
 		`agentcage_runs_total{status="failed"} 1`,
 		"agentcage_runs_live 0",
 		"# TYPE agentcage_cages_live gauge",
+		"agentcage_serve_clients 0",
 		"agentcage_cost_usd_total 0.020000",
 		"agentcage_tokens_total 2000",
 	} {

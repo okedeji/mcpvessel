@@ -12,6 +12,7 @@ import (
 	"github.com/okedeji/agentcage/internal/bundle"
 	"github.com/okedeji/agentcage/internal/config"
 	"github.com/okedeji/agentcage/internal/env"
+	"github.com/okedeji/agentcage/internal/history"
 	"github.com/okedeji/agentcage/internal/locate"
 	"github.com/okedeji/agentcage/internal/mcp"
 	"github.com/okedeji/agentcage/internal/reference"
@@ -129,6 +130,7 @@ func (d *Daemon) registerExposed(display string, exposed []runtime.ExposedAgent,
 		}
 
 		ea := ea // capture per iteration for the boot closure
+		display := display
 		mgr := newInstanceManager(ea.Address, cfg.EffectiveMaxClients(), cfg.EffectiveClientIdleTTL(),
 			func(ctx context.Context, runID string) (managedSession, error) {
 				session, err := runtime.Acquire(ctx, runtime.RunInput{
@@ -148,6 +150,20 @@ func (d *Daemon) registerExposed(display string, exposed []runtime.ExposedAgent,
 				// manager, not by any one request.
 				session.StartWorkingSet(context.Background())
 				return session, nil
+			},
+			// A served instance is a run: record and stream it like a one-shot, so
+			// ps, the events feed, and its cost/trace/replay all see each client's
+			// instance. The front door above is the pool, not a run, so it stays off
+			// the feed; these hooks are the per-client lifecycle inside it.
+			instanceHooks{
+				onStart: func(runID string) {
+					info := RunInfo{ID: runID, Ref: display, Status: history.StatusRunning, StartedAt: nowFunc()}
+					d.recordStart(info)
+					d.events.publish(Event{Time: info.StartedAt, Type: EventRunStarted, RunID: runID, Ref: display})
+				},
+				onEnd: func(runID string) {
+					d.finish(runID, display, history.StatusStopped, nil)
+				},
 			})
 
 		d.holdServe(RunInfo{ID: ea.Address, Ref: display, Status: "serving", StartedAt: nowFunc()}, mgr)

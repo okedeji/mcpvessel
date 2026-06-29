@@ -34,9 +34,9 @@ func (d *Daemon) startMetrics(addr string) func() {
 }
 
 // handleMetrics serves the daemon's Prometheus metrics: run counts by status and
-// total spend from the history, plus live run and cage gauges. It is served on a
-// separate TCP listener (Prometheus scrapes TCP, not the control socket), only
-// when the operator sets telemetry.metrics_addr.
+// total spend from the history, plus live run, cage, and serve-client gauges. It
+// is served on a separate TCP listener (Prometheus scrapes TCP, not the control
+// socket), only when the operator sets telemetry.metrics_addr.
 func (d *Daemon) handleMetrics(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 	var b strings.Builder
@@ -58,7 +58,21 @@ func (d *Daemon) writeMetrics(b *strings.Builder) {
 	}
 	d.mu.Lock()
 	liveRuns := len(d.runs)
+	managers := make([]*instanceManager, 0)
+	for _, r := range d.runs {
+		if r.manager != nil {
+			managers = append(managers, r.manager)
+		}
+	}
 	d.mu.Unlock()
+
+	// Sum the per-client instances outside d.mu: clientCount takes each manager's
+	// own lock, and an onEnd hook takes d.mu, so holding d.mu here would invert
+	// that order.
+	serveClients := 0
+	for _, m := range managers {
+		serveClients += m.clientCount()
+	}
 
 	fmt.Fprintln(b, "# HELP agentcage_runs_total Runs recorded in the history, by status.")
 	fmt.Fprintln(b, "# TYPE agentcage_runs_total counter")
@@ -78,6 +92,10 @@ func (d *Daemon) writeMetrics(b *strings.Builder) {
 	fmt.Fprintln(b, "# HELP agentcage_cages_live Cages live across every run on this host.")
 	fmt.Fprintln(b, "# TYPE agentcage_cages_live gauge")
 	fmt.Fprintf(b, "agentcage_cages_live %d\n", runtime.LiveCages())
+
+	fmt.Fprintln(b, "# HELP agentcage_serve_clients Per-client instances live behind serve front doors.")
+	fmt.Fprintln(b, "# TYPE agentcage_serve_clients gauge")
+	fmt.Fprintf(b, "agentcage_serve_clients %d\n", serveClients)
 
 	fmt.Fprintln(b, "# HELP agentcage_cost_usd_total Metered LLM spend across recorded runs.")
 	fmt.Fprintln(b, "# TYPE agentcage_cost_usd_total counter")
