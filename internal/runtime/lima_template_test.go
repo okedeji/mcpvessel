@@ -37,7 +37,7 @@ func TestGenerateLimaTemplate_AppliesResourceDefaults(t *testing.T) {
 	})
 	for _, want := range []string{
 		"cpus: 4",
-		"memory: 4GiB",
+		"memory: 8GiB",
 		"disk: 60GiB",
 	} {
 		if !strings.Contains(got, want) {

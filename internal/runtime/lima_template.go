@@ -25,9 +25,14 @@ type LimaTemplateInput struct {
 	DiskSizeGiB int
 }
 
+// The memory default is what the cage caps and live-cage counts are sized
+// against (resources.go, config.go): 8 GiB leaves room for a handful of
+// concurrent cages after the host reserve, where 4 forced the memory clamp to
+// shrink almost every multi-cage run. An operator on a small machine lowers it
+// (machine.memory_gib) and the admission math follows.
 const (
 	defaultLimaCPUs        = 4
-	defaultLimaMemoryGiB   = 4
+	defaultLimaMemoryGiB   = 8
 	defaultLimaDiskSizeGiB = 60
 )
 
