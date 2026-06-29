@@ -2,6 +2,8 @@ package runtime
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -198,7 +200,11 @@ func Acquire(ctx context.Context, in RunInput) (*Session, error) {
 		if name == "" {
 			name = strings.TrimSuffix(filepath.Base(in.BundlePath), filepath.Ext(in.BundlePath))
 		}
-		runID = deriveRunID(name, manifest.FilesHash)
+		// A unique suffix makes every invocation distinct, so repeated runs of one
+		// bundle are separate rows in ps and the history rather than overwriting a
+		// single record, and two concurrent runs never share a container name. The
+		// content hash stays in the id so the name still reads as that agent's run.
+		runID = deriveRunID(name, manifest.FilesHash) + "-" + uniqueSuffix()
 	}
 
 	// An interactive boot gets a question channel: the serve front door binds the
@@ -655,6 +661,18 @@ func deriveRunID(name, filesHash string) string {
 		suffix = "run"
 	}
 	return sanitizeRef(name) + "-" + suffix
+}
+
+// uniqueSuffix is a short random token that disambiguates one invocation's run id
+// from the next of the same bundle. Random rather than a clock so two runs in the
+// same instant cannot collide; the time fallback only matters if the OS RNG is
+// unavailable, which it never is in practice.
+func uniqueSuffix() string {
+	var b [4]byte
+	if _, err := rand.Read(b[:]); err == nil {
+		return hex.EncodeToString(b[:])
+	}
+	return fmt.Sprintf("%x", time.Now().UnixNano())
 }
 
 // sanitizeRef converts a bundle basename into a fragment that is safe

@@ -39,6 +39,19 @@ func TestDeriveRunID_StableForSameBundleAndHash(t *testing.T) {
 	}
 }
 
+// uniqueSuffix is what makes a full run id distinct per invocation even when
+// deriveRunID is identical, so repeated runs of one bundle do not collide.
+func TestUniqueSuffix_DiffersAcrossCalls(t *testing.T) {
+	seen := make(map[string]bool, 200)
+	for i := 0; i < 200; i++ {
+		s := uniqueSuffix()
+		if seen[s] {
+			t.Fatalf("uniqueSuffix collided after %d calls: %q", i, s)
+		}
+		seen[s] = true
+	}
+}
+
 func TestDeriveRunID_ChangesWithHash(t *testing.T) {
 	a := deriveRunID("researcher", "sha256:aaaaaaaaaaaaaaaa")
 	b := deriveRunID("researcher", "sha256:bbbbbbbbbbbbbbbb")
