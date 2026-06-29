@@ -29,7 +29,7 @@ func HostStats(ctx context.Context) ([]CageStat, bool) {
 	defer func() { _ = p.Close() }()
 	ctx, cancel := context.WithTimeout(ctx, containerStopTimeout)
 	defer cancel()
-	cmd := p.Nerdctl(ctx, "stats", "--no-stream", "--format", "{{json .}}")
+	cmd := p.Nerdctl(ctx, "stats", "--no-stream", "--no-trunc", "--format", "{{json .}}")
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = io.Discard
