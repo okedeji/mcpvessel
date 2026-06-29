@@ -128,18 +128,20 @@ type Cages struct {
 	KeepWarm       []string `json:"keep_warm,omitempty"`        // agent refs kept booted even when idle
 }
 
-// Cage policy defaults. The per-run elastic cap is well above a normal sequential
+// Cage policy defaults, sized to roughly fit the default machine rather than a
+// large host: the memory admission clamps the per-run cap to what actually fits,
+// so a default that overshot the VM only ever surfaced as a confusing "reduced
+// from N to 1" note. The per-run cap still sits well above a sequential
 // tool-calling chain's peak (one active path through the tree), so only a wide
-// parallel fan-out feels it; the compulsory always-warm cages sit outside it. The
-// host cap is the machine's cage ceiling across concurrent runs, a multiple of the
-// per-run cap. Prewarm covers the common case where a root fans out to a handful
-// of workers it hits first. The idle TTL is long enough that a cage called on a
-// human-interactive cadence stays warm between turns, short enough that a finished
-// branch frees its slot within a few minutes.
+// parallel fan-out feels it. The host cap stays a high ceiling across concurrent
+// runs, with the memory floor the harder limit beneath it. Prewarm covers the
+// first couple of workers a root hits. The idle TTL is long enough that a cage
+// called on a human-interactive cadence stays warm between turns, short enough
+// that a finished branch frees its slot within a few minutes.
 const (
-	DefaultMaxLiveCages     = 32
+	DefaultMaxLiveCages     = 12
 	DefaultHostMaxLiveCages = 128
-	DefaultPrewarm          = 8
+	DefaultPrewarm          = 2
 	DefaultIdleTTLSeconds   = 300
 )
 
@@ -206,14 +208,15 @@ type Serve struct {
 	ClientIdleTTLSeconds int `json:"client_idle_ttl_seconds,omitempty"` // reap an instance whose client has gone quiet this long
 }
 
-// Serve policy defaults. The client cap is well above a handful of concurrent
-// callers but bounded so a popular agent cannot spawn instances without limit;
-// the host floor (cages.host_max_live plus live memory) is the harder ceiling
-// underneath it. The idle TTL is long enough that a client on a human-interactive
+// Serve policy defaults. The client cap admits a handful of concurrent callers,
+// bounded so a popular agent cannot spawn instances without limit; the host floor
+// (cages.host_max_live plus live memory) is the harder ceiling underneath it, and
+// each instance is a whole agent tree, so this sits where a few fit the default
+// machine. The idle TTL is long enough that a client on a human-interactive
 // cadence stays warm between turns, short enough that an abandoned session frees
 // its instance within a quarter hour.
 const (
-	DefaultMaxClients           = 16
+	DefaultMaxClients           = 8
 	DefaultClientIdleTTLSeconds = 900
 )
 
