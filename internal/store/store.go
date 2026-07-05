@@ -16,6 +16,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/okedeji/agentcage/internal/env"
@@ -134,6 +135,121 @@ func (s *Store) FindByHash(hash string) (bundlePath string, ok bool, err error) 
 // refs/<registry>/<repository>/<tag>.
 func (s *Store) refPath(ref reference.Reference) string {
 	return filepath.Join(s.dir, "refs", ref.Registry, filepath.FromSlash(ref.Repository), ref.Tag)
+}
+
+// Entry is one stored bundle as List reports it. Ref is the fully-qualified
+// reference a build -t indexed it under, empty for a bundle stored only by
+// content hash. Two tags on the same bytes produce two entries sharing a Hash.
+type Entry struct {
+	Ref  string
+	Hash string
+	Size int64
+}
+
+// List returns every stored bundle, one entry per (bundle, ref) pairing plus a
+// ref-less entry for a bundle no tag points at. It backs `agentcage store ls`,
+// the first read surface over the store, so an operator can see what resolves
+// locally without a registry.
+func List() ([]Entry, error) {
+	s, err := New()
+	if err != nil {
+		return nil, err
+	}
+	refs, err := s.refsByHash()
+	if err != nil {
+		return nil, err
+	}
+
+	dir := filepath.Join(s.dir, "bundles")
+	files, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("reading store bundles: %w", err)
+	}
+
+	var out []Entry
+	for _, f := range files {
+		name := f.Name()
+		if f.IsDir() || !strings.HasSuffix(name, ".agent") {
+			continue
+		}
+		hash := unsanitizeHash(strings.TrimSuffix(name, ".agent"))
+		var size int64
+		if info, err := f.Info(); err == nil {
+			size = info.Size()
+		}
+		tags := refs[hash]
+		if len(tags) == 0 {
+			out = append(out, Entry{Hash: hash, Size: size})
+			continue
+		}
+		for _, ref := range tags {
+			out = append(out, Entry{Ref: ref, Hash: hash, Size: size})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Ref != out[j].Ref {
+			return out[i].Ref < out[j].Ref
+		}
+		return out[i].Hash < out[j].Hash
+	})
+	return out, nil
+}
+
+// refsByHash reads the ref index into a files_hash -> reference-strings map, so
+// List can label each bundle with the tags that point at it.
+func (s *Store) refsByHash() (map[string][]string, error) {
+	root := filepath.Join(s.dir, "refs")
+	out := map[string][]string{}
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		hash, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("reading store ref %s: %w", rel, err)
+		}
+		out[strings.TrimSpace(string(hash))] = append(out[strings.TrimSpace(string(hash))], refFromRelPath(rel))
+		return nil
+	})
+	if os.IsNotExist(err) {
+		return map[string][]string{}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("reading store refs: %w", err)
+	}
+	return out, nil
+}
+
+// refFromRelPath rebuilds a display reference from a ref index path
+// <registry>/<repo...>/<tag>, rendered the way an operator named it: the
+// @org/name shorthand for the default registry, the full host otherwise.
+func refFromRelPath(rel string) string {
+	parts := strings.Split(filepath.ToSlash(rel), "/")
+	if len(parts) < 3 {
+		return rel
+	}
+	return reference.Reference{
+		Registry:   parts[0],
+		Repository: strings.Join(parts[1:len(parts)-1], "/"),
+		Tag:        parts[len(parts)-1],
+	}.Display()
+}
+
+// unsanitizeHash reverses PathFor's ':' -> '-' so a bundle filename reads back
+// as a content hash. A sha256 hex body has no '-', so only the scheme's colon
+// is restored.
+func unsanitizeHash(name string) string {
+	return strings.Replace(name, "-", ":", 1)
 }
 
 // CopyTo writes a copy of the bundle at src to dst. It backs the -o flag: a

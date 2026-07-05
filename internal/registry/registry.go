@@ -20,15 +20,18 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	oras "oras.land/oras-go/v2"
 	"oras.land/oras-go/v2/content"
+	"oras.land/oras-go/v2/content/memory"
 	"oras.land/oras-go/v2/registry/remote"
 	"oras.land/oras-go/v2/registry/remote/auth"
 	"oras.land/oras-go/v2/registry/remote/credentials"
 	"oras.land/oras-go/v2/registry/remote/retry"
 
+	"github.com/okedeji/agentcage/internal/bundle"
 	"github.com/okedeji/agentcage/internal/env"
 	"github.com/okedeji/agentcage/internal/reference"
 )
@@ -87,7 +90,7 @@ func (c *Client) Push(ctx context.Context, ref reference.Reference, bundlePath s
 	if err != nil {
 		return "", err
 	}
-	desc, err := packAndPush(ctx, repo, ref.Tag, bundlePath)
+	desc, err := packBundle(ctx, repo, ref.Tag, bundlePath)
 	if err != nil {
 		return "", fmt.Errorf("pushing %s: %w", ref.OCIRef(), err)
 	}
@@ -183,14 +186,24 @@ func resolveTarget(ref reference.Reference) string {
 	return ref.Tag
 }
 
-// packAndPush uploads the bundle blob, packs an OCI image manifest that
-// references it, tags the manifest, and returns the manifest descriptor.
-// dst is an oras.Target so the body runs against an in-memory store in
-// tests without a network or credentials.
-func packAndPush(ctx context.Context, dst oras.Target, tag, bundlePath string) (ocispec.Descriptor, error) {
+// packBundle uploads the bundle blob to dst, packs an OCI image manifest that
+// references it, and (when tag is non-empty) tags the manifest, returning the
+// manifest descriptor. dst is an oras.Target so the body runs against a remote
+// repository (Push), an in-memory store (BundleDigest), or a test store.
+//
+// The manifest's created annotation is pinned to the bundle's own build time,
+// not the current wall clock, so the manifest digest is a deterministic
+// function of the bundle bytes. That is what lets BundleDigest compute, before
+// any push, the exact digest a later push will produce: a locally locked USES
+// digest stays valid once its dependency is pushed.
+func packBundle(ctx context.Context, dst oras.Target, tag, bundlePath string) (ocispec.Descriptor, error) {
 	data, err := os.ReadFile(bundlePath)
 	if err != nil {
 		return ocispec.Descriptor{}, fmt.Errorf("reading bundle %s: %w", bundlePath, err)
+	}
+	m, err := bundle.ReadManifest(bundlePath)
+	if err != nil {
+		return ocispec.Descriptor{}, fmt.Errorf("reading bundle manifest %s: %w", bundlePath, err)
 	}
 	blob := content.NewDescriptorFromBytes(BundleMediaType, data)
 
@@ -206,14 +219,58 @@ func packAndPush(ctx context.Context, dst oras.Target, tag, bundlePath string) (
 
 	manifestDesc, err := oras.PackManifest(ctx, dst, oras.PackManifestVersion1_1, ArtifactType, oras.PackManifestOptions{
 		Layers: []ocispec.Descriptor{blob},
+		ManifestAnnotations: map[string]string{
+			ocispec.AnnotationCreated: m.BuiltAt.UTC().Format(time.RFC3339),
+		},
 	})
 	if err != nil {
 		return ocispec.Descriptor{}, fmt.Errorf("packing manifest: %w", err)
 	}
-	if err := dst.Tag(ctx, manifestDesc, tag); err != nil {
-		return ocispec.Descriptor{}, fmt.Errorf("tagging %s: %w", tag, err)
+	if tag != "" {
+		if err := dst.Tag(ctx, manifestDesc, tag); err != nil {
+			return ocispec.Descriptor{}, fmt.Errorf("tagging %s: %w", tag, err)
+		}
 	}
 	return manifestDesc, nil
+}
+
+// BundleDigest computes the OCI manifest digest the bundle would be pushed
+// under, without any network access, by packing its manifest against an
+// in-memory store. It is deterministic and equals the digest Push returns, so a
+// locally built bundle can be locked into a parent's USES and later pulled back
+// by that same digest. The build seeds the pull cache under it (SeedCache) so
+// the runtime resolves a local dependency without a registry.
+func BundleDigest(bundlePath string) (string, error) {
+	desc, err := packBundle(context.Background(), memory.New(), "", bundlePath)
+	if err != nil {
+		return "", err
+	}
+	return desc.Digest.String(), nil
+}
+
+// SeedCache writes the bundle at bundlePath into the local pull cache under
+// digest, so a later Pull of that digest is a local hit with no network. The
+// build uses it to make a locally built dependency reachable by the runtime,
+// which pulls sub-agents by their locked digest. digest must be the bundle's
+// own BundleDigest; seeding a mismatched digest would hand the runtime the
+// wrong bytes for a lock.
+//
+// It is a package function, not a Client method, because seeding is a local
+// filesystem write that a purely local build must do without registry
+// credentials.
+func SeedCache(digest, bundlePath string) error {
+	dir, err := cacheDir()
+	if err != nil {
+		return err
+	}
+	data, err := os.ReadFile(bundlePath)
+	if err != nil {
+		return fmt.Errorf("reading bundle %s: %w", bundlePath, err)
+	}
+	if err := writeCache(bundleCachePath(dir, digest), data); err != nil {
+		return fmt.Errorf("seeding cache for %s: %w", digest, err)
+	}
+	return nil
 }
 
 // fetchBundle resolves a reference to its manifest, finds the single
@@ -266,11 +323,16 @@ func bundleLayer(layers []ocispec.Descriptor) (ocispec.Descriptor, bool) {
 	return ocispec.Descriptor{}, false
 }
 
-// cachePath is where a bundle of the given digest lives on disk. The ':'
-// in a digest is not portable in a filename, so sha256:abc becomes
-// sha256-abc.
+// cachePath is where a bundle of the given digest lives on disk.
 func (c *Client) cachePath(digest string) string {
-	return filepath.Join(c.cacheDir, "bundles", strings.ReplaceAll(digest, ":", "-")+".agent")
+	return bundleCachePath(c.cacheDir, digest)
+}
+
+// bundleCachePath is where a bundle of the given digest lives under cacheDir.
+// The ':' in a digest is not portable in a filename, so sha256:abc becomes
+// sha256-abc.
+func bundleCachePath(cacheDir, digest string) string {
+	return filepath.Join(cacheDir, "bundles", strings.ReplaceAll(digest, ":", "-")+".agent")
 }
 
 func writeCache(path string, data []byte) error {

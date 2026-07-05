@@ -172,6 +172,17 @@ func buildIntoStore(ctx context.Context, stdout, stderr io.Writer, cfg buildConf
 	if err := runBuild(ctx, stdout, stderr, cfg); err != nil {
 		return "", "", err
 	}
+
+	// Seed the pull cache under the bundle's OCI digest so a parent that USES
+	// this agent can be built and run against it locally, without pushing it
+	// first: the runtime pulls sub-agents by digest and finds this seeded entry.
+	digest, err := registry.BundleDigest(cfg.outPath)
+	if err != nil {
+		return "", "", fmt.Errorf("computing bundle digest: %w", err)
+	}
+	if err := registry.SeedCache(digest, cfg.outPath); err != nil {
+		return "", "", err
+	}
 	return hash, cfg.outPath, nil
 }
 
@@ -249,7 +260,7 @@ func reportBuild(stdout io.Writer, cfg buildConfig, ref reference.Reference, has
 	}
 	dur := elapsed.Round(time.Millisecond)
 	if ref.Tag != "" {
-		_, _ = fmt.Fprintf(stdout, "Successfully built %s (%s) in %s\n", ref.OCIRef(), size, dur)
+		_, _ = fmt.Fprintf(stdout, "Successfully built %s (%s) in %s\n", ref.Display(), size, dur)
 	} else {
 		_, _ = fmt.Fprintf(stdout, "Successfully built %s (%s) in %s\n", hash, size, dur)
 		_, _ = fmt.Fprintln(stdout, "Tip: run it by this hash; -t @org/name:version names it for push; -o file.agent writes a portable copy")
@@ -335,12 +346,18 @@ func usesResolverOption(ctx context.Context, w io.Writer, cfg buildConfig) (bund
 		return nil, nil
 	}
 
-	reg, err := registry.New()
+	st, err := store.New()
 	if err != nil {
 		return nil, err
 	}
+	// The registry client is only needed for a dependency the local store does
+	// not hold. Build it lazily-tolerant: a fully local USES graph resolves
+	// with no credentials, and a missing registry surfaces only if a remote
+	// dependency is actually reached.
+	reg, regErr := registry.New()
+
 	_, _ = fmt.Fprintf(w, "Resolving %d USES dependencies\n", len(af.Uses))
-	result, err := resolve.New(reg).Resolve(ctx, af.Uses, resolve.Options{
+	result, err := resolve.New(storeFirstResolver{store: st, reg: reg, regErr: regErr}).Resolve(ctx, af.Uses, resolve.Options{
 		ParentKey:      cfg.tag,
 		SkipCycleCheck: cfg.skipCycleCheck,
 	})
@@ -355,6 +372,50 @@ func usesResolverOption(ctx context.Context, w io.Writer, cfg buildConfig) (bund
 		}
 		return digest, nil
 	}), nil
+}
+
+// storeFirstResolver resolves a USES dependency from the local store before the
+// registry, so an agent builds against a sibling built locally with build -t
+// without pushing it first. The digest it locks is the deterministic OCI digest
+// a later push produces, so the lock stays valid across the push.
+type storeFirstResolver struct {
+	store  *store.Store
+	reg    *registry.Client
+	regErr error
+}
+
+func (r storeFirstResolver) registryClient() (*registry.Client, error) {
+	if r.reg == nil {
+		return nil, fmt.Errorf("dependency is not in the local store and the registry is unavailable: %w", r.regErr)
+	}
+	return r.reg, nil
+}
+
+func (r storeFirstResolver) Resolve(ctx context.Context, ref reference.Reference) (string, error) {
+	if path, ok, err := r.store.Get(ref); err != nil {
+		return "", err
+	} else if ok {
+		return registry.BundleDigest(path)
+	}
+	reg, err := r.registryClient()
+	if err != nil {
+		return "", err
+	}
+	return reg.Resolve(ctx, ref)
+}
+
+func (r storeFirstResolver) Pull(ctx context.Context, ref reference.Reference) (bundlePath, digest string, err error) {
+	if path, ok, err := r.store.Get(ref); err != nil {
+		return "", "", err
+	} else if ok {
+		d, err := registry.BundleDigest(path)
+		return path, d, err
+	}
+	reg, err := r.registryClient()
+	if err != nil {
+		return "", "", err
+	}
+	return reg.Pull(ctx, ref)
 }
 
 // humanSize formats n bytes in the smallest binary unit that keeps the

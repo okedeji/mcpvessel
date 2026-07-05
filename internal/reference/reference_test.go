@@ -114,5 +114,40 @@ func TestOCIRef_DigestWinsOverTag(t *testing.T) {
 	}
 }
 
+func TestDisplay_ShorthandForDefaultRegistry(t *testing.T) {
+	t.Setenv("AGENTCAGE_REGISTRY", "")
+
+	cases := []struct {
+		name string
+		ref  Reference
+		want string
+	}{
+		{"default registry with tag", Reference{Registry: "ghcr.io", Repository: "okedeji/researcher", Tag: "0.1"}, "@okedeji/researcher:0.1"},
+		{"default registry with digest", Reference{Registry: "ghcr.io", Repository: "okedeji/researcher", Digest: "sha256:" + hex64}, "@okedeji/researcher@sha256:" + hex64},
+		{"explicit host keeps its host", Reference{Registry: "quay.io", Repository: "acme/agent", Tag: "2.0"}, "quay.io/acme/agent:2.0"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.ref.Display(); got != tc.want {
+				t.Errorf("Display() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestDisplay_HonorsRegistryOverride(t *testing.T) {
+	// When the operator points the default at their own host, a ref to that
+	// host reads as shorthand; ghcr is then just another explicit host.
+	t.Setenv("AGENTCAGE_REGISTRY", "registry.acme.internal")
+	local := Reference{Registry: "registry.acme.internal", Repository: "team/agent", Tag: "1"}
+	if got := local.Display(); got != "@team/agent:1" {
+		t.Errorf("Display() = %q, want @team/agent:1", got)
+	}
+	ghcr := Reference{Registry: "ghcr.io", Repository: "team/agent", Tag: "1"}
+	if got := ghcr.Display(); got != "ghcr.io/team/agent:1" {
+		t.Errorf("Display() = %q, want the explicit ghcr host", got)
+	}
+}
+
 // hex64 is a stand-in 64-char sha256 hex body for digest cases.
 const hex64 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"

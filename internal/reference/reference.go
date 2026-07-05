@@ -155,6 +155,26 @@ func (r Reference) OCIRef() string {
 	return base
 }
 
+// Display renders a reference for a human naming a local artifact: the
+// @org/name shorthand when the registry is the default, and the full
+// host/repository form for an explicit registry. It exists because OCIRef
+// always spells out the default host, which reads as a registry association a
+// local-only bundle does not have. Registry operations (push, pull, login) keep
+// OCIRef, since there the real host is the point.
+func (r Reference) Display() string {
+	if r.Registry != defaultRegistry() {
+		return r.OCIRef()
+	}
+	base := "@" + r.Repository
+	if r.Digest != "" {
+		return base + "@" + r.Digest
+	}
+	if r.Tag != "" {
+		return base + ":" + r.Tag
+	}
+	return base
+}
+
 // String returns the canonical OCI reference.
 func (r Reference) String() string {
 	return r.OCIRef()

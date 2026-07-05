@@ -68,7 +68,7 @@ func Bundle(ctx context.Context, arg string) (Result, error) {
 	if p, ok, err := st.Get(ref); err != nil {
 		return Result{}, err
 	} else if ok {
-		return Result{Path: p, Display: ref.OCIRef(), Name: path.Base(ref.Repository)}, nil
+		return Result{Path: p, Display: ref.Display(), Name: path.Base(ref.Repository)}, nil
 	}
 
 	client, err := registry.New()

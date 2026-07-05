@@ -54,6 +54,59 @@ func TestStore_PutThenGetByRef(t *testing.T) {
 	}
 }
 
+func TestList_TaggedAndUntagged(t *testing.T) {
+	s := newTestStore(t)
+	write := func(hash string) {
+		dst := s.PathFor(hash)
+		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(dst, []byte("bundle bytes"), 0o644); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+	}
+	write("sha256:tagged1")
+	write("sha256:untagged1")
+	ref, err := reference.Parse("@okedeji/researcher:0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Tag(ref, "sha256:tagged1"); err != nil {
+		t.Fatalf("Tag: %v", err)
+	}
+
+	entries, err := List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	got := map[string]string{} // hash -> ref
+	for _, e := range entries {
+		got[e.Hash] = e.Ref
+	}
+	// A default-registry ref reads back as the @org/name shorthand the operator
+	// wrote, not the ghcr host it resolves to.
+	if got["sha256:tagged1"] != "@okedeji/researcher:0.1" {
+		t.Errorf("tagged bundle ref = %q, want the @org/name shorthand", got["sha256:tagged1"])
+	}
+	if _, ok := got["sha256:untagged1"]; !ok {
+		t.Error("untagged bundle missing from the listing")
+	}
+	if got["sha256:untagged1"] != "" {
+		t.Errorf("untagged bundle ref = %q, want empty", got["sha256:untagged1"])
+	}
+}
+
+func TestList_EmptyStore(t *testing.T) {
+	newTestStore(t)
+	entries, err := List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("List on an empty store = %v, want none", entries)
+	}
+}
+
 func TestStore_FindByHashFullAndPrefix(t *testing.T) {
 	s := newTestStore(t)
 	const hash = "sha256:abc123def456"
