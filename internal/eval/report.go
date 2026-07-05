@@ -2,6 +2,7 @@ package eval
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -46,8 +47,18 @@ func (r Report) Elapsed() time.Duration {
 	return time.Duration(r.ElapsedMS) * time.Millisecond
 }
 
-// FormatUSD renders a micro-USD amount as a dollar figure at cent-plus
-// precision, the scale an eval's per-case costs land at.
+// FormatUSD renders a micro-USD amount as a dollar figure, keeping full
+// micro-dollar precision for small values and trimming trailing zeros past two
+// decimals so a round amount stays short. A tiny LLM call reads as $0.000007
+// rather than rounding away to $0.000; a whole-dollar budget stays $5.00.
 func FormatUSD(microUSD int64) string {
-	return fmt.Sprintf("$%.3f", float64(microUSD)/1_000_000)
+	s := fmt.Sprintf("%d.%06d", microUSD/1_000_000, microUSD%1_000_000)
+	s = strings.TrimRight(s, "0")
+	switch dot := strings.IndexByte(s, '.'); {
+	case dot == len(s)-1:
+		s += "00"
+	case len(s)-dot-1 < 2:
+		s += "0"
+	}
+	return "$" + s
 }

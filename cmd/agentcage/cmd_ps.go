@@ -65,7 +65,7 @@ func cost(microUSD int64) string {
 	if microUSD == 0 {
 		return ""
 	}
-	return fmt.Sprintf("$%.4f", float64(microUSD)/1e6)
+	return "$" + formatUSDMicros(microUSD)
 }
 
 // since formats how long a run has been up as a single coarse unit ("3s", "5m",

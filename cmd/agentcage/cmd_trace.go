@@ -75,7 +75,7 @@ func spanAttrs(s *telemetry.Span) string {
 		parts = append(parts, fmt.Sprintf("%d->%d tok", in, out))
 	}
 	if micro, ok := numAttr(s.Attributes["cost_micro_usd"]); ok && micro > 0 {
-		parts = append(parts, fmt.Sprintf("$%.4f", float64(micro)/1e6))
+		parts = append(parts, "$"+formatUSDMicros(micro))
 	}
 	return strings.Join(parts, "  ")
 }

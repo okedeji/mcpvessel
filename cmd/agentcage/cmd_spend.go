@@ -79,9 +79,9 @@ func watchSpend(ctx context.Context, c *daemon.Client, id string, w io.Writer) e
 // spendTotalLine is the one-line total, with the budget when there is one.
 func spendTotalLine(r llmgateway.SpendReport) string {
 	if r.BudgetMicroUSD > 0 {
-		return fmt.Sprintf("LLM spend: $%.4f of $%.4f budget", dollars(r.TotalMicroUSD), dollars(r.BudgetMicroUSD))
+		return fmt.Sprintf("LLM spend: $%s of $%s budget", formatUSDMicros(r.TotalMicroUSD), formatUSDMicros(r.BudgetMicroUSD))
 	}
-	return fmt.Sprintf("LLM spend: $%.4f (no budget set)", dollars(r.TotalMicroUSD))
+	return fmt.Sprintf("LLM spend: $%s (no budget set)", formatUSDMicros(r.TotalMicroUSD))
 }
 
 // printSpend writes the total and a per-agent breakdown, agents in a stable
@@ -99,8 +99,6 @@ func printSpend(w io.Writer, r llmgateway.SpendReport) {
 		if a.Calls == 1 {
 			unit = "call"
 		}
-		_, _ = fmt.Fprintf(w, "  %-12s $%.4f  (%d %s)\n", k, dollars(a.SpentMicroUSD), a.Calls, unit)
+		_, _ = fmt.Fprintf(w, "  %-12s $%s  (%d %s)\n", k, formatUSDMicros(a.SpentMicroUSD), a.Calls, unit)
 	}
 }
-
-func dollars(microUSD int64) float64 { return float64(microUSD) / 1e6 }
