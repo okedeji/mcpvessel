@@ -26,31 +26,33 @@ const startTimeout = 5 * time.Second
 // per run, so this is more generous than startup.
 const stopTimeout = 30 * time.Second
 
-// Stop asks a running daemon to shut down and waits until it stops answering. It
-// is a no-op when no daemon is running. The shutdown ack can race the socket
-// closing, so success is confirmed by polling, not by the request's result.
-func Stop(ctx context.Context) error {
+// Stop asks a running daemon to shut down and waits until it stops answering.
+// It reports whether a daemon was actually running, so a caller can tell "I
+// stopped it" from "there was nothing to stop". The shutdown ack can race the
+// socket closing, so success is confirmed by polling, not by the request's
+// result.
+func Stop(ctx context.Context) (stopped bool, err error) {
 	socket, err := SocketPath()
 	if err != nil {
-		return err
+		return false, err
 	}
 	c := Dial(socket)
 	if !answers(ctx, c) {
-		return nil
+		return false, nil
 	}
 	_ = c.Shutdown(ctx)
 
 	deadline := time.Now().Add(stopTimeout)
 	for {
 		if !answers(ctx, c) {
-			return nil
+			return true, nil
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("daemon did not stop within %s; check ~/.agentcage/daemon.log", stopTimeout)
+			return false, fmt.Errorf("daemon did not stop within %s; check ~/.agentcage/daemon.log", stopTimeout)
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return false, ctx.Err()
 		case <-time.After(100 * time.Millisecond):
 		}
 	}

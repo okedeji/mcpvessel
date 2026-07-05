@@ -37,5 +37,37 @@ It runs in the foreground and shuts down cleanly on SIGINT or SIGTERM.`,
 			return daemon.Serve(ctx, daemon.New(), socket)
 		},
 	}
+	cmd.AddCommand(newDaemonStopCmd())
 	return cmd
+}
+
+func newDaemonStopCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "stop",
+		Short: "Stop the running daemon, releasing its agents cleanly",
+		Long: `Ask the running daemon to shut down.
+
+It releases every running agent, and the containers and networks behind them,
+before it exits, so nothing is orphaned. This is the supported alternative to
+killing the process: a SIGKILL would leave a run's containers and per-run
+network behind for the next startup to sweep. A no-op when nothing is running.
+
+In production the process manager owns the daemon (systemd on Linux, launchd on
+the macOS host) and stops it with SIGTERM, which runs this same clean shutdown.
+Use this command for local development, where you started the daemon yourself.`,
+		Example: `  agentcage daemon stop`,
+		Args:    cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			stopped, err := daemon.Stop(cmd.Context())
+			if err != nil {
+				return err
+			}
+			msg := "no daemon is running"
+			if stopped {
+				msg = "daemon stopped"
+			}
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), msg)
+			return nil
+		},
+	}
 }

@@ -66,7 +66,7 @@ Examples:
 			if recreate {
 				stderr := cmd.ErrOrStderr()
 				_, _ = fmt.Fprintln(stderr, "Recreating the runtime...")
-				if err := daemon.Stop(ctx); err != nil {
+				if _, err := daemon.Stop(ctx); err != nil {
 					return fmt.Errorf("stopping the daemon before recreate: %w", err)
 				}
 				if err := provisioner.DestroyVM(ctx, io.Discard, stderr); err != nil {
