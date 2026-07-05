@@ -137,6 +137,29 @@ func printManifest(w io.Writer, path string, m *bundle.Manifest) {
 			_, _ = fmt.Fprintln(w, line)
 		}
 	}
+
+	if m.Evals != nil {
+		_, _ = fmt.Fprintln(w, "\nEvals:")
+		_, _ = fmt.Fprintf(w, "  suite       %s\n", af.Eval)
+		_, _ = fmt.Fprintf(w, "  status      %s\n", evalStatusLine(m.Evals))
+	}
+}
+
+// evalStatusLine renders the manifest's eval block: a declared-but-never-run
+// suite reads apart from one that ran, since the run fields stay nil until a
+// full-suite run stamps them.
+func evalStatusLine(e *bundle.Evals) string {
+	if e.Passed == nil || e.Failed == nil {
+		return "declared, never run"
+	}
+	line := fmt.Sprintf("%d passed, %d failed", *e.Passed, *e.Failed)
+	if e.JudgeScore != nil {
+		line += fmt.Sprintf("  judge %.2f", *e.JudgeScore)
+	}
+	if e.LastRunAt != nil {
+		line += "  last run " + e.LastRunAt.Format(time.RFC3339)
+	}
+	return line
 }
 
 // sortedKeys returns a map's keys in a stable order so inspect output is

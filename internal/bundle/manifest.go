@@ -15,9 +15,25 @@ type Manifest struct {
 	SpecVersion string        `json:"spec_version"`
 	Agentfile   AgentfileSpec `json:"agentfile"`
 	Tools       []Tool        `json:"tools,omitempty"`
+	Evals       *Evals        `json:"evals,omitempty"`
 	FilesHash   string        `json:"files_hash"`
 	BuiltAt     time.Time     `json:"built_at"`
 	BuiltWith   string        `json:"built_with"`
+}
+
+// Evals is the eval status carried in a manifest. Declared is set at build
+// time from the EVAL directive; the run fields are stamped after a full-suite
+// run of `agentcage eval` or `agentcage push --with-evals`.
+//
+// The run fields are pointers so a bundle that declares an EVAL suite but has
+// never run it (all nil) reads apart from one that ran and scored zero. A
+// consumer sees "declared, never run" versus "0 passed" without guessing.
+type Evals struct {
+	Declared   bool       `json:"declared"`
+	LastRunAt  *time.Time `json:"last_run_at,omitempty"`
+	Passed     *int       `json:"passed,omitempty"`
+	Failed     *int       `json:"failed,omitempty"`
+	JudgeScore *float64   `json:"judge_score,omitempty"`
 }
 
 // Tool is one entry in the agent's tool catalog. The catalog lists every

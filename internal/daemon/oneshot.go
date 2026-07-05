@@ -1,11 +1,13 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/okedeji/agentcage/internal/config"
 	"github.com/okedeji/agentcage/internal/env"
@@ -31,6 +33,10 @@ type RunRequest struct {
 	Resources config.Cap        `json:"resources,omitempty"`
 	NoCache   bool              `json:"no_cache,omitempty"`
 	Record    bool              `json:"record,omitempty"`
+	// TimeoutSeconds bounds the tool call, not the boot: the first run of an
+	// agent builds its image, which can take minutes and must not count against
+	// an eval case's max_duration_seconds. Zero means no deadline.
+	TimeoutSeconds int64 `json:"timeout_seconds,omitempty"`
 }
 
 func (r RunRequest) String() string {
@@ -43,9 +49,16 @@ func (r RunRequest) GoString() string { return r.String() }
 // runFrame is one line of the POST /run NDJSON stream: a chunk of the run's logs
 // (build progress and the agent's stderr), the final result, or a terminal
 // error. The CLI prints log frames as they arrive and the result at the end.
+//
+// The terminal result and error frames also carry the run's LLM spend and the
+// tool call's wall time, so a client (the eval runner) reads a run's cost and
+// duration off the wire without a follow-up query the best-effort history store
+// might not answer. Log and run_id frames leave both zero; omitempty drops them.
 type runFrame struct {
-	Type string `json:"type"` // "log" | "result" | "error"
-	Data string `json:"data"`
+	Type         string `json:"type"` // "log" | "run_id" | "result" | "error"
+	Data         string `json:"data"`
+	CostMicroUSD int64  `json:"cost_micro_usd,omitempty"`
+	CallMS       int64  `json:"call_ms,omitempty"`
 }
 
 // handleRun boots a one-shot run, streams its logs while it works, and ends with
@@ -68,6 +81,10 @@ func (d *Daemon) handleRun(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Tool == "" {
 		writeError(w, http.StatusBadRequest, "tool is required (the CLI resolves MAIN or an explicit tool)")
+		return
+	}
+	if req.TimeoutSeconds < 0 {
+		writeError(w, http.StatusBadRequest, "timeout_seconds must not be negative")
 		return
 	}
 
@@ -100,7 +117,18 @@ func (d *Daemon) handleRun(w http.ResponseWriter, r *http.Request) {
 	// artifact afterward. run/call ignore the frame.
 	stream.frame("run_id", session.RunID())
 
-	result, callErr := session.Call(r.Context(), req.Tool, req.Args)
+	// Time the tool call alone, not the boot above it: a first-use image build
+	// dwarfs any call and would make an eval's per-case duration meaningless.
+	// The deadline wraps only the call for the same reason.
+	callCtx := r.Context()
+	if req.TimeoutSeconds > 0 {
+		var cancel context.CancelFunc
+		callCtx, cancel = context.WithTimeout(callCtx, time.Duration(req.TimeoutSeconds)*time.Second)
+		defer cancel()
+	}
+	callStart := nowFunc()
+	result, callErr := session.Call(callCtx, req.Tool, req.Args)
+	callMS := nowFunc().Sub(callStart).Milliseconds()
 	status := history.StatusSucceeded
 	if callErr != nil {
 		status = history.StatusFailed
@@ -110,13 +138,15 @@ func (d *Daemon) handleRun(w http.ResponseWriter, r *http.Request) {
 	if req.Record {
 		d.writeReplay(session.RunID(), b, req, result, callErr, started)
 	}
-	d.finish(session.RunID(), b.Display, status, callErr)
+	cost := d.finish(session.RunID(), b.Display, status, callErr)
 	d.dropRuns([]*runtime.Session{session})
+	// The cost rides the error frame too: a case that overspent and failed still
+	// reports the money it burned.
 	if callErr != nil {
-		stream.frame("error", callErr.Error())
+		stream.endFrame("error", callErr.Error(), cost, callMS)
 		return
 	}
-	stream.frame("result", result)
+	stream.endFrame("result", result, cost, callMS)
 }
 
 // runStream writes runFrames to the response, flushing each so the CLI sees logs
@@ -137,9 +167,19 @@ func newRunStream(w http.ResponseWriter) *runStream {
 }
 
 func (s *runStream) frame(typ, data string) {
+	s.write(runFrame{Type: typ, Data: data})
+}
+
+// endFrame writes a terminal frame carrying the run's cost and call duration
+// alongside the result or error.
+func (s *runStream) endFrame(typ, data string, costMicroUSD, callMS int64) {
+	s.write(runFrame{Type: typ, Data: data, CostMicroUSD: costMicroUSD, CallMS: callMS})
+}
+
+func (s *runStream) write(f runFrame) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_ = s.enc.Encode(runFrame{Type: typ, Data: data})
+	_ = s.enc.Encode(f)
 	if s.flusher != nil {
 		s.flusher.Flush()
 	}

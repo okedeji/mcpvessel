@@ -213,7 +213,11 @@ func (d *Daemon) recordStart(info RunInfo) {
 // event fires even with history off; the history write is best-effort. Callers
 // are one-shot runs and served per-client instances; a serve front door owns a
 // pool rather than a run, so it never finishes here and stays off the feed.
-func (d *Daemon) finish(runID, ref, status string, callErr error) {
+//
+// It returns the run's final spend in micro-USD (0 when the run made no metered
+// call) so handleRun can stamp it onto the run frame, the honest channel for a
+// one-shot's cost since the best-effort history store may never hold it.
+func (d *Daemon) finish(runID, ref, status string, callErr error) int64 {
 	report, calls, ok := runtime.RunTelemetry(context.Background(), runID)
 	if status == history.StatusFailed && ok && report.BudgetMicroUSD > 0 && report.TotalMicroUSD >= report.BudgetMicroUSD {
 		status = history.StatusOverBudget
@@ -250,6 +254,7 @@ func (d *Daemon) finish(runID, ref, status string, callErr error) {
 		e.Detail = callErr.Error()
 	}
 	d.events.publish(e)
+	return report.TotalMicroUSD
 }
 
 // runInfoFromRecord projects a stored record onto the ps wire shape.

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"time"
 
 	"github.com/okedeji/agentcage/internal/llmgateway"
 	"github.com/okedeji/agentcage/internal/runtime"
@@ -67,6 +68,15 @@ func (c *Client) ListRuns(ctx context.Context) ([]RunInfo, error) {
 	return body.Runs, nil
 }
 
+// RunUsage is what a completed run cost and how long its tool call took, read
+// off the terminal run frame. CallDuration times the tool call alone, not the
+// boot the first run of an agent pays for.
+type RunUsage struct {
+	RunID        string
+	CostMicroUSD int64
+	CallDuration time.Duration
+}
+
 // RunOnce runs an agent to completion through the daemon: it streams the run's
 // logs to logs as they arrive and returns the final tool result. It is the
 // daemon-client behind `agentcage run` and `agentcage call`.
@@ -74,8 +84,17 @@ func (c *Client) ListRuns(ctx context.Context) ([]RunInfo, error) {
 // A failure to reach the daemon is reported distinctly from a failure the run
 // itself returned, so the CLI hints "is the daemon running?" only for the former.
 func (c *Client) RunOnce(ctx context.Context, req RunRequest, logs io.Writer) (string, error) {
-	_, result, err := c.runStream(ctx, req, logs)
+	result, _, err := c.runStream(ctx, req, logs)
 	return result, err
+}
+
+// RunOnceUsage runs an agent to completion like RunOnce and also returns what
+// the run cost and how long its call took. It is the client behind the eval
+// runner, which checks a case's output against its cost and duration ceilings.
+// The usage is populated even when the run returns an error, so a case that
+// overspent and failed still reports its spend.
+func (c *Client) RunOnceUsage(ctx context.Context, req RunRequest, logs io.Writer) (string, RunUsage, error) {
+	return c.runStream(ctx, req, logs)
 }
 
 // RecordRun runs an agent with replay recording on and returns the run id as
@@ -83,29 +102,30 @@ func (c *Client) RunOnce(ctx context.Context, req RunRequest, logs io.Writer) (s
 // the client behind `agentcage replay record`.
 func (c *Client) RecordRun(ctx context.Context, req RunRequest, logs io.Writer) (runID, result string, err error) {
 	req.Record = true
-	return c.runStream(ctx, req, logs)
+	result, usage, err := c.runStream(ctx, req, logs)
+	return usage.RunID, result, err
 }
 
 // runStream drives one /run request: it streams the run's logs to logs and
-// returns the run id (from the opening frame) and the final result. RunOnce and
-// RecordRun are thin wrappers.
-func (c *Client) runStream(ctx context.Context, req RunRequest, logs io.Writer) (runID, result string, err error) {
+// returns the final result plus the run's usage (id, cost, call duration).
+// RunOnce, RunOnceUsage, and RecordRun are thin wrappers.
+func (c *Client) runStream(ctx context.Context, req RunRequest, logs io.Writer) (result string, usage RunUsage, err error) {
 	body, err := json.Marshal(req)
 	if err != nil {
-		return "", "", err
+		return "", usage, err
 	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://unix/run", bytes.NewReader(body))
 	if err != nil {
-		return "", "", err
+		return "", usage, err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	resp, err := c.http.Do(httpReq)
 	if err != nil {
-		return "", "", &Unreachable{err}
+		return "", usage, &Unreachable{err}
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return "", "", fmt.Errorf("daemon /run: %s", errorBody(resp))
+		return "", usage, fmt.Errorf("daemon /run: %s", errorBody(resp))
 	}
 
 	dec := json.NewDecoder(resp.Body)
@@ -113,19 +133,23 @@ func (c *Client) runStream(ctx context.Context, req RunRequest, logs io.Writer) 
 		var f runFrame
 		if derr := dec.Decode(&f); derr != nil {
 			if derr == io.EOF {
-				return runID, result, nil
+				return result, usage, nil
 			}
-			return runID, "", fmt.Errorf("reading run stream: %w", derr)
+			return result, usage, fmt.Errorf("reading run stream: %w", derr)
 		}
 		switch f.Type {
 		case "run_id":
-			runID = f.Data
+			usage.RunID = f.Data
 		case "log":
 			_, _ = io.WriteString(logs, f.Data)
 		case "result":
 			result = f.Data
+			usage.CostMicroUSD = f.CostMicroUSD
+			usage.CallDuration = time.Duration(f.CallMS) * time.Millisecond
 		case "error":
-			return runID, "", fmt.Errorf("%s", f.Data)
+			usage.CostMicroUSD = f.CostMicroUSD
+			usage.CallDuration = time.Duration(f.CallMS) * time.Millisecond
+			return result, usage, fmt.Errorf("%s", f.Data)
 		}
 	}
 }

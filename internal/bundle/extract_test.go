@@ -57,6 +57,56 @@ ENTRYPOINT python3 agent.py
 	}
 }
 
+func TestReadSourceFile_RoundTrip(t *testing.T) {
+	src := t.TempDir()
+	writeFile(t, filepath.Join(src, "Agentfile"), "FROM x\nENTRYPOINT y\n")
+	writeFile(t, filepath.Join(src, "tests", "eval.yaml"), "version: 0.1\ncases: []\n")
+
+	out := filepath.Join(t.TempDir(), "a.agent")
+	if err := Build(src, out); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	body, err := ReadSourceFile(out, "tests/eval.yaml")
+	if err != nil {
+		t.Fatalf("ReadSourceFile: %v", err)
+	}
+	if string(body) != "version: 0.1\ncases: []\n" {
+		t.Errorf("body = %q", string(body))
+	}
+}
+
+func TestReadSourceFile_Missing(t *testing.T) {
+	src := t.TempDir()
+	writeFile(t, filepath.Join(src, "Agentfile"), "FROM x\nENTRYPOINT y\n")
+
+	out := filepath.Join(t.TempDir(), "a.agent")
+	if err := Build(src, out); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	_, err := ReadSourceFile(out, "tests/eval.yaml")
+	if err == nil || !strings.Contains(err.Error(), "does not contain") {
+		t.Errorf("expected a missing-entry error, got %v", err)
+	}
+}
+
+func TestReadSourceFile_RefusesEscape(t *testing.T) {
+	src := t.TempDir()
+	writeFile(t, filepath.Join(src, "Agentfile"), "FROM x\nENTRYPOINT y\n")
+
+	out := filepath.Join(t.TempDir(), "a.agent")
+	if err := Build(src, out); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	// A traversal path cleans to a files/ entry that cannot exist, so the read
+	// fails closed rather than reaching outside the source root.
+	if _, err := ReadSourceFile(out, "../../etc/passwd"); err == nil {
+		t.Error("expected an error for a path escaping the source root")
+	}
+}
+
 func TestExtract_MissingBundle(t *testing.T) {
 	_, err := Extract(filepath.Join(t.TempDir(), "nope.agent"), t.TempDir())
 	if err == nil || !strings.Contains(err.Error(), "open bundle") {

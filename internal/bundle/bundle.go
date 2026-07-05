@@ -228,10 +228,15 @@ func buildManifest(af *agentfile.Agentfile, hash string, cfg options) (*Manifest
 	if af.Model != nil {
 		spec.Model = af.Model.Provider + "/" + af.Model.Name
 	}
+	var evals *Evals
+	if af.Eval != "" {
+		evals = &Evals{Declared: true}
+	}
 	return &Manifest{
 		SpecVersion: specVersion,
 		Agentfile:   spec,
 		Tools:       tools,
+		Evals:       evals,
 		FilesHash:   hash,
 		BuiltAt:     nowFunc().UTC(),
 		BuiltWith:   builtWith,

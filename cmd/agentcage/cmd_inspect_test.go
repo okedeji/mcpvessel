@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/okedeji/agentcage/internal/bundle"
 )
@@ -61,6 +62,43 @@ func TestPrintManifest_RendersCatalogAndUses(t *testing.T) {
 			t.Errorf("inspect output missing %q:\n%s", want, out)
 		}
 	}
+}
+
+func TestPrintManifest_EvalStatus(t *testing.T) {
+	base := func() *bundle.Manifest {
+		return &bundle.Manifest{
+			SpecVersion: "0.1",
+			FilesHash:   "sha256:abc",
+			Agentfile:   bundle.AgentfileSpec{From: "x", Entrypoint: "y", Main: "respond", Eval: "tests/eval.yaml"},
+		}
+	}
+
+	t.Run("declared but never run", func(t *testing.T) {
+		m := base()
+		m.Evals = &bundle.Evals{Declared: true}
+		var buf bytes.Buffer
+		printManifest(&buf, "a.agent", m)
+		out := buf.String()
+		if !strings.Contains(out, "Evals:") || !strings.Contains(out, "declared, never run") {
+			t.Errorf("missing never-run status:\n%s", out)
+		}
+	})
+
+	t.Run("stamped", func(t *testing.T) {
+		m := base()
+		at := time.Date(2026, 7, 4, 10, 12, 0, 0, time.UTC)
+		passed, failed := 4, 1
+		score := 0.83
+		m.Evals = &bundle.Evals{Declared: true, Passed: &passed, Failed: &failed, JudgeScore: &score, LastRunAt: &at}
+		var buf bytes.Buffer
+		printManifest(&buf, "a.agent", m)
+		out := buf.String()
+		for _, want := range []string{"4 passed, 1 failed", "judge 0.83", "last run 2026-07-04T10:12:00Z"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("stamped status missing %q:\n%s", want, out)
+			}
+		}
+	})
 }
 
 func TestSchemaSignature(t *testing.T) {

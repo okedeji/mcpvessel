@@ -11,6 +11,7 @@ require (
 	github.com/tonistiigi/fsutil v0.0.0-20251211185533-a2aa163d723f
 	go.etcd.io/bbolt v1.4.3
 	golang.org/x/term v0.43.0
+	gopkg.in/yaml.v3 v3.0.1
 	oras.land/oras-go/v2 v2.6.1
 )
 

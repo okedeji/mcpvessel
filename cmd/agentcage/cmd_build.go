@@ -13,6 +13,7 @@ import (
 
 	"github.com/okedeji/agentcage/internal/agentfile"
 	"github.com/okedeji/agentcage/internal/bundle"
+	"github.com/okedeji/agentcage/internal/eval"
 	"github.com/okedeji/agentcage/internal/progress"
 	"github.com/okedeji/agentcage/internal/reference"
 	"github.com/okedeji/agentcage/internal/registry"
@@ -144,41 +145,86 @@ func runBuild(ctx context.Context, stdout, stderr io.Writer, cfg buildConfig) er
 	return err
 }
 
-// buildToStore hashes the source, builds the bundle into the content-addressed
-// store, indexes it by ref when -t is given, writes the -o copy when asked, and
-// reports the result. The store is the build's output; push, run, and call read
-// it back by ref.
-func buildToStore(ctx context.Context, stdout, stderr io.Writer, cfg buildConfig) error {
-	start := time.Now()
-
+// buildIntoStore hashes the source and builds the bundle into the content-
+// addressed store, returning the content hash and the store path it wrote. It
+// is the core buildToStore reports on, and the seam `agentcage eval .` reuses
+// to make a source directory runnable before evaluating it.
+func buildIntoStore(ctx context.Context, stdout, stderr io.Writer, cfg buildConfig) (hash, storePath string, err error) {
 	st, err := store.New()
 	if err != nil {
-		return err
+		return "", "", err
 	}
 
 	// Anchor the hash on the store dir, which sits outside the source tree:
 	// it excludes nothing from the walk, so this value matches the files_hash
 	// bundle.Build recomputes when it writes into the store, and the store
 	// path lands where a later run resolves the same source to.
-	hash, err := bundle.HashSource(cfg.srcDir, st.Dir())
+	hash, err = bundle.HashSource(cfg.srcDir, st.Dir())
 	if err != nil {
-		return err
+		return "", "", err
 	}
 	cfg.outPath = st.PathFor(hash)
 
+	if err := validateEvalSuite(cfg); err != nil {
+		return "", "", err
+	}
+
+	if err := runBuild(ctx, stdout, stderr, cfg); err != nil {
+		return "", "", err
+	}
+	return hash, cfg.outPath, nil
+}
+
+// validateEvalSuite fails the build when the Agentfile declares an EVAL suite
+// that escapes the source tree, is missing, or does not parse. This is the
+// domain check the parser defers: the parser takes the raw path on faith; the
+// build confirms it points at a real, well-formed suite before the bundle ships
+// claiming one. A malformed Agentfile is bundle.Build's to report, so a parse
+// failure here is not ours.
+func validateEvalSuite(cfg buildConfig) error {
+	af, err := agentfile.ParseFile(filepath.Join(cfg.srcDir, bundle.AgentfileName))
+	if err != nil || af.Eval == "" {
+		return nil
+	}
+	rel := filepath.Clean(af.Eval)
+	if filepath.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("EVAL %s: path escapes the source directory", af.Eval)
+	}
+	if _, err := eval.LoadSuiteFile(filepath.Join(cfg.srcDir, rel)); err != nil {
+		return fmt.Errorf("EVAL %s: %w", af.Eval, err)
+	}
+	return nil
+}
+
+// buildToStore builds the bundle into the content-addressed store, indexes it
+// by ref when -t is given, writes the -o copy when asked, and reports the
+// result. The store is the build's output; push, run, and call read it back by
+// ref.
+func buildToStore(ctx context.Context, stdout, stderr io.Writer, cfg buildConfig) error {
+	start := time.Now()
+
+	// Parse the ref before the build so a bad -t fails fast, not after the
+	// expensive image build.
 	var ref reference.Reference
 	if cfg.tag != "" {
+		var err error
 		ref, err = reference.Parse(cfg.tag)
 		if err != nil {
 			return err
 		}
 	}
 
-	if err := runBuild(ctx, stdout, stderr, cfg); err != nil {
+	hash, storePath, err := buildIntoStore(ctx, stdout, stderr, cfg)
+	if err != nil {
 		return err
 	}
+	cfg.outPath = storePath
 
 	if ref.Tag != "" {
+		st, err := store.New()
+		if err != nil {
+			return err
+		}
 		if err := st.Tag(ref, hash); err != nil {
 			return err
 		}

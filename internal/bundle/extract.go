@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 )
@@ -136,6 +137,53 @@ func ReadManifest(bundlePath string) (*Manifest, error) {
 		}
 	}
 	return nil, fmt.Errorf("bundle %s is missing %s", bundlePath, manifestFilename)
+}
+
+// ReadSourceFile returns the bytes of one files/ entry from a bundle. It is
+// for a consumer that needs a single packed file (the eval suite the EVAL
+// directive points at) without paying for a full Extract of the source tree.
+//
+// rel is the path relative to the source root, the same form the manifest
+// records (for example "tests/eval.yaml"). A rel that escapes the source root
+// is rejected before any read.
+func ReadSourceFile(bundlePath, rel string) ([]byte, error) {
+	clean := path.Clean("/" + filepath.ToSlash(rel))
+	if clean == "/" {
+		return nil, fmt.Errorf("bundle %s: empty source file path", bundlePath)
+	}
+	want := filesPrefix + strings.TrimPrefix(clean, "/")
+
+	f, err := os.Open(bundlePath)
+	if err != nil {
+		return nil, fmt.Errorf("open bundle %s: %w", bundlePath, err)
+	}
+	defer func() { _ = f.Close() }()
+
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		return nil, fmt.Errorf("gunzip bundle %s: %w", bundlePath, err)
+	}
+	defer func() { _ = gz.Close() }()
+	tr := tar.NewReader(gz)
+
+	for {
+		hdr, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("read tar header: %w", err)
+		}
+		if hdr.Name != want {
+			continue
+		}
+		body, err := io.ReadAll(tr)
+		if err != nil {
+			return nil, fmt.Errorf("reading %s from bundle %s: %w", rel, bundlePath, err)
+		}
+		return body, nil
+	}
+	return nil, fmt.Errorf("bundle %s does not contain %s", bundlePath, rel)
 }
 
 func decodeManifest(r io.Reader) (*Manifest, error) {

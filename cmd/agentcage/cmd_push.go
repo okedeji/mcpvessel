@@ -1,11 +1,16 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/okedeji/agentcage/internal/bundle"
+	"github.com/okedeji/agentcage/internal/eval"
 	"github.com/okedeji/agentcage/internal/reference"
 	"github.com/okedeji/agentcage/internal/registry"
 	"github.com/okedeji/agentcage/internal/store"
@@ -14,6 +19,8 @@ import (
 func newPushCmd() *cobra.Command {
 	var bundlePath string
 	var jsonOut bool
+	var withEvals bool
+	var judgeModel string
 	cmd := &cobra.Command{
 		Use:   "push REF [BUNDLE]",
 		Short: "Push an agent bundle to an OCI registry",
@@ -57,6 +64,12 @@ path (positional or -b) to push a file built elsewhere or with -o.`,
 				return err
 			}
 
+			if withEvals {
+				if err := stampEvalsBeforePush(cmd.Context(), cmd.ErrOrStderr(), args[0], path, judgeModel); err != nil {
+					return err
+				}
+			}
+
 			w := cmd.OutOrStdout()
 			if !jsonOut {
 				_, _ = fmt.Fprintf(w, "Pushing %s to %s/%s\n", path, ref.Registry, ref.Repository)
@@ -78,7 +91,56 @@ path (positional or -b) to push a file built elsewhere or with -o.`,
 	}
 	cmd.Flags().StringVarP(&bundlePath, "bundle", "b", "", "path to a .agent file (default: read from the store by ref)")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit machine-readable JSON")
+	cmd.Flags().BoolVar(&withEvals, "with-evals", false, "run the eval suite and record the results into the manifest before pushing")
+	cmd.Flags().StringVar(&judgeModel, "judge-model", "", "provider/model to grade judged cases (default: your default provider)")
 	return cmd
+}
+
+// stampEvalsBeforePush runs the agent's full eval suite, records the results
+// into the bundle's manifest, and pushes even when cases fail: the manifest
+// block is a transparency signal, not a gate. An operator who wants a gate
+// checks 'agentcage eval' exit code first. It reports to stderr so a --json
+// push keeps stdout clean for the digest.
+//
+// The suite runs against the resolved bundle path, not the ref, so a bundle
+// pushed with an explicit -b that is not indexed in the store still evaluates.
+func stampEvalsBeforePush(ctx context.Context, w io.Writer, displayRef, bundlePath, judgeModel string) error {
+	manifest, err := bundle.ReadManifest(bundlePath)
+	if err != nil {
+		return err
+	}
+	if manifest.Agentfile.Eval == "" {
+		return fmt.Errorf("--with-evals: bundle %s declares no EVAL suite", displayRef)
+	}
+	data, err := bundle.ReadSourceFile(bundlePath, manifest.Agentfile.Eval)
+	if err != nil {
+		return err
+	}
+	suite, err := eval.LoadSuite(data)
+	if err != nil {
+		return err
+	}
+
+	report, err := runSuiteForBundle(ctx, suiteParams{
+		ref:        bundlePath,
+		manifest:   manifest,
+		suite:      suite,
+		judgeModel: judgeModel,
+		results:    w,
+		logs:       w,
+	})
+	if err != nil {
+		return err
+	}
+	printSummary(w, displayRef, report)
+
+	if err := eval.Stamp(bundlePath, report, time.Now()); err != nil {
+		return fmt.Errorf("recording eval results: %w", err)
+	}
+	if report.Failed > 0 {
+		_, _ = fmt.Fprintf(w, "warning: %d of %d cases failed; pushing anyway\n", report.Failed, report.Passed+report.Failed)
+	}
+	return nil
 }
 
 // bundleFromStore locates the bundle the build stored for ref. arg is the

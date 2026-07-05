@@ -120,6 +120,71 @@ func TestBuildToStore_TagIndexed(t *testing.T) {
 	}
 }
 
+func TestValidateEvalSuite(t *testing.T) {
+	writeAgentfile := func(dir, eval string) {
+		body := "FROM x\nMAIN respond\nENTRYPOINT y\n"
+		if eval != "" {
+			body = "FROM x\nMAIN respond\nEVAL " + eval + "\nENTRYPOINT y\n"
+		}
+		if err := os.WriteFile(filepath.Join(dir, "Agentfile"), []byte(body), 0o644); err != nil {
+			t.Fatalf("write Agentfile: %v", err)
+		}
+	}
+
+	t.Run("valid suite passes", func(t *testing.T) {
+		src := t.TempDir()
+		writeAgentfile(src, "tests/eval.yaml")
+		if err := os.MkdirAll(filepath.Join(src, "tests"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(src, "tests", "eval.yaml"),
+			[]byte("version: 0.1\ncases:\n  - name: c\n    input:\n      tool: respond\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := validateEvalSuite(buildConfig{srcDir: src}); err != nil {
+			t.Errorf("validateEvalSuite: %v", err)
+		}
+	})
+
+	t.Run("no EVAL is a no-op", func(t *testing.T) {
+		src := t.TempDir()
+		writeAgentfile(src, "")
+		if err := validateEvalSuite(buildConfig{srcDir: src}); err != nil {
+			t.Errorf("validateEvalSuite: %v", err)
+		}
+	})
+
+	t.Run("missing suite file fails", func(t *testing.T) {
+		src := t.TempDir()
+		writeAgentfile(src, "tests/eval.yaml")
+		err := validateEvalSuite(buildConfig{srcDir: src})
+		if err == nil || !strings.Contains(err.Error(), "tests/eval.yaml") {
+			t.Errorf("err = %v, want a missing-file error naming the path", err)
+		}
+	})
+
+	t.Run("invalid yaml fails", func(t *testing.T) {
+		src := t.TempDir()
+		writeAgentfile(src, "eval.yaml")
+		if err := os.WriteFile(filepath.Join(src, "eval.yaml"), []byte("version: 0.1\ncases:\n  - name: c\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		err := validateEvalSuite(buildConfig{srcDir: src})
+		if err == nil || !strings.Contains(err.Error(), "no input.tool") {
+			t.Errorf("err = %v, want a schema-validation error", err)
+		}
+	})
+
+	t.Run("escaping path fails", func(t *testing.T) {
+		src := t.TempDir()
+		writeAgentfile(src, "../outside.yaml")
+		err := validateEvalSuite(buildConfig{srcDir: src})
+		if err == nil || !strings.Contains(err.Error(), "escapes the source directory") {
+			t.Errorf("err = %v, want an escape error", err)
+		}
+	})
+}
+
 func TestRunBuild_PropagatesBundleError(t *testing.T) {
 	// Source dir has no Agentfile, so bundle.Build returns an error.
 	srcDir := t.TempDir()

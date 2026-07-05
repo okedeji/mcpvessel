@@ -326,6 +326,52 @@ ENTRYPOINT python3 agent.py
 	}
 }
 
+func TestBuild_EvalDirectiveMarksDeclared(t *testing.T) {
+	src := t.TempDir()
+	writeFile(t, filepath.Join(src, "Agentfile"), `FROM python:3.12-slim
+MAIN respond
+EVAL tests/eval.yaml
+ENTRYPOINT python3 agent.py
+`)
+	writeFile(t, filepath.Join(src, "agent.py"), "print('x')\n")
+	writeFile(t, filepath.Join(src, "tests", "eval.yaml"), "version: 0.1\n")
+
+	out := filepath.Join(t.TempDir(), "a.agent")
+	if err := Build(src, out); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	manifest, _ := extract(t, out)
+
+	if manifest.Agentfile.Eval != "tests/eval.yaml" {
+		t.Errorf("Agentfile.Eval = %q, want tests/eval.yaml", manifest.Agentfile.Eval)
+	}
+	if manifest.Evals == nil {
+		t.Fatal("Evals block is nil, want declared")
+	}
+	if !manifest.Evals.Declared {
+		t.Error("Evals.Declared = false, want true")
+	}
+	// Declared but never run: the run fields stay nil so a consumer reads
+	// "declared, never run" apart from "ran and scored zero".
+	if manifest.Evals.Passed != nil || manifest.Evals.Failed != nil || manifest.Evals.LastRunAt != nil {
+		t.Errorf("run fields set on a never-run bundle: %+v", manifest.Evals)
+	}
+}
+
+func TestBuild_NoEvalDirectiveOmitsEvalsBlock(t *testing.T) {
+	src := t.TempDir()
+	minimalSource(t, src)
+
+	out := filepath.Join(t.TempDir(), "a.agent")
+	if err := Build(src, out); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	manifest, _ := extract(t, out)
+	if manifest.Evals != nil {
+		t.Errorf("Evals = %+v, want nil for a bundle with no EVAL directive", manifest.Evals)
+	}
+}
+
 func TestBuild_ExcludesOwnTempFileWhenBuildingIntoSourceDir(t *testing.T) {
 	// Building with the output inside the source directory must not
 	// package the build's own .tmp staging file. The hash walk runs
