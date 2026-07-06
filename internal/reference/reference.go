@@ -141,6 +141,36 @@ func DefaultRegistry() string {
 	return defaultRegistry()
 }
 
+// publicHosts are the OCI registries whose artifacts the wider ecosystem can
+// pull without a private credential, so a push to one is a candidate for MCP
+// Registry publication. A host not on this list is treated as private.
+var publicHosts = map[string]bool{
+	"docker.io": true,
+	"ghcr.io":   true,
+	"quay.io":   true,
+}
+
+// IsPublicHost reports whether host is a known public OCI registry.
+func IsPublicHost(host string) bool {
+	return publicHosts[host]
+}
+
+// ReverseDNSName derives the MCP Registry name a reference publishes under,
+// io.github.<owner>/<name>. It maps only GHCR, because GitHub is the namespace
+// agentcage proves ownership of at login; any other host, or a repository path
+// that is not a plain owner/name, has no identity to map and reports false so
+// the caller asks for an explicit name instead of guessing one.
+func (r Reference) ReverseDNSName() (string, bool) {
+	if r.Registry != "ghcr.io" {
+		return "", false
+	}
+	owner, name, ok := strings.Cut(r.Repository, "/")
+	if !ok || owner == "" || name == "" || strings.Contains(name, "/") {
+		return "", false
+	}
+	return "io.github." + owner + "/" + name, true
+}
+
 // OCIRef is the canonical host/repository[:tag|@digest] string the
 // registry layer pulls and pushes against. Digest wins over tag when
 // both are set so a locked reference fetches exactly what it pinned.

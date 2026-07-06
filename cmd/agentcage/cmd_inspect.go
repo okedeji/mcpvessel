@@ -1,18 +1,21 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"sort"
 	"strconv"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/okedeji/agentcage/internal/bundle"
 	"github.com/okedeji/agentcage/internal/locate"
+	"github.com/okedeji/agentcage/internal/mcpregistry"
 	"github.com/okedeji/agentcage/internal/runtime"
 )
 
@@ -23,9 +26,12 @@ func newInspectCmd() *cobra.Command {
 		Short: "Show an agent's manifest and tool catalog",
 		Long: `Print the parsed Agentfile, build metadata, and tool catalog of an agent.
 
-The argument is either a local .agent file or a registry reference. A reference
-is pulled (cache-first), so you can inspect any published agent without
-building or running it: 'agentcage inspect @anthropic/web-search:1.2.0'.
+The argument is either a local .agent file, an OCI registry reference, or an MCP
+Registry name. An OCI reference is pulled (cache-first), so you can inspect any
+published agent without building or running it. A reverse-DNS MCP Registry name
+(io.github.user/server) shows that entry's catalog detail (its packages, the env
+and secret inputs it declares, and whether it can be imported) without pulling
+anything, so you can see what an MCP needs before you import it.
 
 The tool catalog lists every tool the agent declares, each marked with its
 visibility. Main and public tools are callable from outside the cage; private
@@ -33,9 +39,14 @@ tools are listed so a reviewer can see the full surface, but only the agent
 itself can call them.`,
 		Example: `  agentcage inspect researcher.agent
   agentcage inspect @anthropic/web-search:1.2.0
+  agentcage inspect io.github.modelcontextprotocol/filesystem
   agentcage inspect researcher.agent --json`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if name, ok := locate.RegistryName(args[0]); ok {
+				return inspectRegistryEntry(cmd.Context(), cmd.OutOrStdout(), name, jsonOut)
+			}
+
 			b, err := locate.Bundle(cmd.Context(), args[0])
 			if err != nil {
 				return err
@@ -56,6 +67,78 @@ itself can call them.`,
 	}
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit the manifest as JSON")
 	return cmd
+}
+
+// inspectRegistryEntry resolves an MCP Registry name and prints its catalog
+// detail, so an operator sees what a server ships and needs before importing it.
+func inspectRegistryEntry(ctx context.Context, w io.Writer, name string, jsonOut bool) error {
+	server, err := mcpregistry.New().Resolve(ctx, name)
+	if err != nil {
+		return err
+	}
+	if jsonOut {
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		return enc.Encode(server)
+	}
+	printRegistryEntry(w, server)
+	return nil
+}
+
+// printRegistryEntry renders an MCP Registry entry: its identity, each package
+// with the inputs it declares, and any remotes. It closes with how to act on it:
+// an importable server names the import command; a remote-only one names the
+// escape hatch, since a cage cannot contain a hosted endpoint.
+func printRegistryEntry(w io.Writer, s *mcpregistry.Server) {
+	_, _ = fmt.Fprintf(w, "Registry entry: %s\n", s.Name)
+	if s.Description != "" {
+		_, _ = fmt.Fprintf(w, "Description:    %s\n", s.Description)
+	}
+	if s.Version != "" {
+		_, _ = fmt.Fprintf(w, "Version:        %s\n", s.Version)
+	}
+	if s.Repository != nil && s.Repository.URL != "" {
+		_, _ = fmt.Fprintf(w, "Repository:     %s\n", s.Repository.URL)
+	}
+	if eval := s.EvalSummary(); eval != "" {
+		_, _ = fmt.Fprintf(w, "Evals:          %s\n", eval)
+	}
+
+	for _, p := range s.Packages {
+		_, _ = fmt.Fprintf(w, "\nPackage:        %s %s", p.RegistryType, p.Identifier)
+		if p.Version != "" {
+			_, _ = fmt.Fprintf(w, "@%s", p.Version)
+		}
+		if p.Transport.Type != "" {
+			_, _ = fmt.Fprintf(w, " (%s)", p.Transport.Type)
+		}
+		_, _ = fmt.Fprintln(w)
+		if len(p.EnvironmentVariables) > 0 {
+			_, _ = fmt.Fprintln(w, "  inputs:")
+			tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+			for _, e := range p.EnvironmentVariables {
+				tag := ""
+				switch {
+				case e.IsSecret:
+					tag = "(secret)"
+				case e.IsRequired:
+					tag = "(required)"
+				}
+				_, _ = fmt.Fprintf(tw, "    %s\t%s\t%s\n", e.Name, tag, e.Description)
+			}
+			_ = tw.Flush()
+		}
+	}
+	for _, r := range s.Remotes {
+		_, _ = fmt.Fprintf(w, "\nRemote:         %s %s\n", r.Type, r.URL)
+	}
+
+	switch {
+	case len(s.Packages) > 0:
+		_, _ = fmt.Fprintf(w, "\nImport it with: agentcage import %s\n", s.Name)
+	case len(s.Remotes) > 0:
+		_, _ = fmt.Fprintln(w, "\nThis is a remote MCP server; it cannot be imported into a cage. Reach it from an agent that declares EGRESS allow:<host> and its SECRETS.")
+	}
 }
 
 // printManifest renders the human-readable inspect view: build metadata,

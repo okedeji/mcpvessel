@@ -267,14 +267,20 @@ func catalogFromIntrospection(af *agentfile.Agentfile, introspected []Introspect
 	if af.Main != "" && !served[af.Main] {
 		return nil, fmt.Errorf("MAIN %q is not one of the agent's tools", af.Main)
 	}
+
+	// EXPOSE * makes every served tool public. It is how a wrapped tool
+	// collection (import) opts its whole surface in without naming tools it
+	// only learns at introspection; a name check would be meaningless on it.
+	exposeAll := false
+	exposed := make(map[string]bool, len(af.Expose))
 	for _, name := range af.Expose {
+		if name == "*" {
+			exposeAll = true
+			continue
+		}
 		if !served[name] {
 			return nil, fmt.Errorf("EXPOSE %q is not one of the agent's tools", name)
 		}
-	}
-
-	exposed := make(map[string]bool, len(af.Expose))
-	for _, name := range af.Expose {
 		exposed[name] = true
 	}
 
@@ -287,7 +293,7 @@ func catalogFromIntrospection(af *agentfile.Agentfile, introspected []Introspect
 		switch {
 		case t.Name == af.Main:
 			visibility = VisibilityMain
-		case exposed[t.Name]:
+		case exposeAll || exposed[t.Name]:
 			visibility = VisibilityPublic
 		}
 		tools = append(tools, Tool{
@@ -348,6 +354,11 @@ func catalogFromAgentfile(af *agentfile.Agentfile) []Tool {
 		tools = append(tools, Tool{Name: af.Main, Visibility: VisibilityMain})
 	}
 	for _, name := range af.Expose {
+		// EXPOSE * expands only against introspected tools, which the
+		// declared-only path does not have, so it names no tool here.
+		if name == "*" {
+			continue
+		}
 		tools = append(tools, Tool{Name: name, Visibility: VisibilityPublic})
 	}
 	return tools

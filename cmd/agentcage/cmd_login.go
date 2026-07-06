@@ -11,29 +11,48 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
+	"github.com/okedeji/agentcage/internal/config"
+	"github.com/okedeji/agentcage/internal/env"
+	"github.com/okedeji/agentcage/internal/githubauth"
+	"github.com/okedeji/agentcage/internal/mcpregistry"
 	"github.com/okedeji/agentcage/internal/reference"
 	"github.com/okedeji/agentcage/internal/registry"
 )
+
+// mcpRegistryTarget is the reserved login argument that means the MCP Registry
+// rather than an OCI host: 'agentcage login mcp-registry' runs the GitHub
+// device flow instead of storing OCI credentials.
+const mcpRegistryTarget = "mcp-registry"
 
 func newLoginCmd() *cobra.Command {
 	var username, password string
 	var passwordStdin bool
 	cmd := &cobra.Command{
-		Use:   "login [REGISTRY]",
-		Short: "Log in to an OCI registry",
-		Long: `Store credentials for an OCI registry so push and pull can authenticate.
+		Use:   "login [REGISTRY | mcp-registry]",
+		Short: "Log in to an OCI registry or the MCP Registry",
+		Long: `Store credentials for an OCI registry so push and pull can authenticate, or
+authenticate to the MCP Registry so push can publish public agents there.
 
 REGISTRY defaults to the agentcage default host (ghcr.io, or AGENTCAGE_REGISTRY).
 Credentials land in the shared OCI credential store, so any registry tool that
 reads the same store stays authenticated to this host too, and an existing login
 for it means you do not need this command at all.
 
+'agentcage login mcp-registry' runs GitHub's device flow to prove the namespace
+you publish under, then caches the registry token under ~/.agentcage. It needs a
+GitHub OAuth app client id in AGENTCAGE_GITHUB_CLIENT_ID.
+
 Pass --password-stdin to feed a token without it landing in your shell history.`,
 		Example: `  agentcage login ghcr.io -u okedeji --password-stdin < token.txt
   agentcage login
+  agentcage login mcp-registry
   agentcage login registry.acme.internal -u ci`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) > 0 && args[0] == mcpRegistryTarget {
+				return loginMCPRegistry(cmd)
+			}
+
 			host := reference.DefaultRegistry()
 			if len(args) > 0 {
 				host = args[0]
@@ -64,6 +83,64 @@ Pass --password-stdin to feed a token without it landing in your shell history.`
 	cmd.Flags().StringVarP(&password, "password", "p", "", "registry password or token (prefer --password-stdin)")
 	cmd.Flags().BoolVar(&passwordStdin, "password-stdin", false, "read the password from stdin")
 	return cmd
+}
+
+// loginMCPRegistry proves the operator's GitHub identity through the device
+// flow, exchanges it for a registry bearer, and caches that bearer so a later
+// push can publish. It fails closed when no OAuth app is configured: there is
+// no anonymous publish, so a login that cannot get a token should say why, not
+// pretend to succeed.
+func loginMCPRegistry(cmd *cobra.Command) error {
+	clientID := config.LookupEnv(env.GitHubClientID)
+	if clientID == "" {
+		return fmt.Errorf("publishing to the MCP Registry needs a GitHub OAuth app; set it with 'agentcage config env set %s <client-id>'", env.GitHubClientID)
+	}
+
+	ghToken, err := githubauth.DeviceFlow(cmd.Context(), githubauth.Config{
+		ClientID: clientID,
+		Notify: func(p githubauth.Prompt) {
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Open %s and enter code: %s\n", p.VerificationURI, p.UserCode)
+		},
+	})
+	if err != nil {
+		return err
+	}
+
+	token, err := mcpregistry.New().ExchangeGitHubToken(cmd.Context(), ghToken)
+	if err != nil {
+		return err
+	}
+	if err := mcpregistry.SaveToken(token); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Login Succeeded")
+	return nil
+}
+
+// isInteractive reports whether the command can prompt: its stdin is a real
+// terminal. A pipe or a test buffer is not, so a non-interactive run falls back
+// to defaults instead of blocking on a prompt no one will answer.
+func isInteractive(cmd *cobra.Command) bool {
+	f, ok := cmd.InOrStdin().(*os.File)
+	return ok && term.IsTerminal(int(f.Fd()))
+}
+
+// confirm asks a yes/no question and returns the answer, defaulting to yes on an
+// empty line. It writes the prompt to stderr so a --json command keeps stdout
+// clean. Callers gate it behind isInteractive; on a stray EOF it takes the
+// default rather than looping.
+func confirm(cmd *cobra.Command, prompt string) bool {
+	_, _ = fmt.Fprint(cmd.ErrOrStderr(), prompt+" [Y/n] ")
+	line, err := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(line)) {
+	case "", "y", "yes":
+		return true
+	default:
+		return false
+	}
 }
 
 // nonInteractiveCredentials resolves credentials from flags and stdin

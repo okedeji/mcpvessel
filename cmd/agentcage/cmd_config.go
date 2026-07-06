@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -30,8 +31,82 @@ and point an endpoint at it with --key-ref. The config file never holds a secret
 	cmd.AddCommand(
 		newConfigProviderCmd(), newConfigResourcesCmd(), newConfigModelsCmd(),
 		newConfigCagesCmd(), newConfigMachineCmd(), newConfigServeCmd(),
-		newConfigMetricsCmd(), newConfigShowCmd(), newConfigPathCmd(),
+		newConfigMetricsCmd(), newConfigEnvCmd(), newConfigShowCmd(), newConfigPathCmd(),
 	)
+	return cmd
+}
+
+func newConfigEnvCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "env",
+		Short: "Persist an AGENTCAGE_* setting so you need not export it each shell",
+		Long: `Persist an agentcage environment knob in config.json so it survives across
+shells without an export, for example the MCP Registry login's GitHub client id.
+
+These are non-secret settings, not credentials; a secret belongs in
+'agentcage secrets'. A real environment variable of the same name overrides the
+stored value, so a shell or CI override still wins for that run.`,
+		Example: `  agentcage config env set AGENTCAGE_GITHUB_CLIENT_ID Iv1.abc123
+  agentcage config env ls
+  agentcage config env rm AGENTCAGE_GITHUB_CLIENT_ID`,
+	}
+	set := &cobra.Command{
+		Use:   "set NAME VALUE",
+		Short: "Persist an env knob",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := config.Load()
+			if err != nil {
+				return err
+			}
+			c.SetEnv(args[0], args[1])
+			if err := c.Save(); err != nil {
+				return err
+			}
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Set %s\n", args[0])
+			return nil
+		},
+	}
+	ls := &cobra.Command{
+		Use:   "ls",
+		Short: "List persisted env knobs",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			c, err := config.Load()
+			if err != nil {
+				return err
+			}
+			names := make([]string, 0, len(c.Env))
+			for n := range c.Env {
+				names = append(names, n)
+			}
+			sort.Strings(names)
+			for _, n := range names {
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%-32s %s\n", n, c.Env[n])
+			}
+			return nil
+		},
+	}
+	rm := &cobra.Command{
+		Use:   "rm NAME",
+		Short: "Remove a persisted env knob",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := config.Load()
+			if err != nil {
+				return err
+			}
+			if !c.RemoveEnv(args[0]) {
+				return fmt.Errorf("%s is not set", args[0])
+			}
+			if err := c.Save(); err != nil {
+				return err
+			}
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Removed %s\n", args[0])
+			return nil
+		},
+	}
+	cmd.AddCommand(set, ls, rm)
 	return cmd
 }
 

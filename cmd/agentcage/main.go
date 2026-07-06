@@ -37,7 +37,7 @@ func main() {
 		}
 	}
 	add("setup", newInitCmd(), newDaemonCmd())
-	add("ship", newBuildCmd(), newPushCmd(), newPullCmd(), newLoginCmd(), newInspectCmd(), newTreeCmd(), newStoreCmd())
+	add("ship", newBuildCmd(), newImportCmd(), newPushCmd(), newPullCmd(), newRegisterCmd(), newSearchCmd(), newLoginCmd(), newInspectCmd(), newTreeCmd(), newStoreCmd())
 	add("run", newRunCmd(), newCallCmd(), newEvalCmd(), newServeCmd(), newStopCmd(), newBudgetCmd())
 	add("observe", newPsCmd(), newLogsCmd(), newSpendCmd(), newEventsCmd(), newTraceCmd(), newStatsCmd(), newReplayCmd())
 	add("configure", newConfigCmd(), newSecretsCmd())

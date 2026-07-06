@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/okedeji/agentcage/internal/mcpregistry"
 	"github.com/okedeji/agentcage/internal/reference"
 	"github.com/okedeji/agentcage/internal/registry"
 	"github.com/okedeji/agentcage/internal/store"
@@ -53,6 +54,14 @@ func Bundle(ctx context.Context, arg string) (Result, error) {
 		return Result{Path: p, Display: arg, Name: shortHash(arg)}, nil
 	}
 
+	if name, ok := RegistryName(arg); ok {
+		resolved, err := resolveReverseDNS(ctx, name)
+		if err != nil {
+			return Result{}, err
+		}
+		arg = resolved
+	}
+
 	ref, err := reference.Parse(arg)
 	if err != nil {
 		return Result{}, fmt.Errorf("%q is neither a local bundle nor a registry reference: %w", arg, err)
@@ -80,6 +89,71 @@ func Bundle(ctx context.Context, arg string) (Result, error) {
 		return Result{}, err
 	}
 	return Result{Path: p, Display: ref.OCIRef(), Name: path.Base(ref.Repository)}, nil
+}
+
+// RegistryName reports whether arg is an MCP Registry name (io.github.user/server)
+// rather than an OCI reference, and returns it unchanged when so. The grammar is
+// the discriminator: a registry name has exactly one slash, a dotted namespace
+// on the left, and no tag or digest, which no valid agentcage OCI ref matches
+// (those carry a host/org/name path of two slashes, or an @ shorthand). So the
+// check never steals an input the reference parser would otherwise accept. It is
+// exported so inspect can route a registry name to the registry view.
+func RegistryName(arg string) (string, bool) {
+	if strings.HasPrefix(arg, "@") || strings.Contains(arg, "@") {
+		return "", false
+	}
+	left, right, ok := strings.Cut(arg, "/")
+	if !ok || right == "" || strings.Contains(right, "/") || strings.Contains(right, ":") {
+		return "", false
+	}
+	if !isReverseDNSNamespace(left) {
+		return "", false
+	}
+	return arg, true
+}
+
+// isReverseDNSNamespace reports whether s is a reverse-DNS domain: two or more
+// dot-separated alphanumeric labels. It is what separates a registry name's
+// namespace from a relative path like "./x" or a bare word, so the caller does
+// not mistake a file for a server. Uppercase is allowed because the registry
+// preserves the case of a GitHub username, e.g. io.github.Digital-Defiance.
+func isReverseDNSNamespace(s string) bool {
+	labels := strings.Split(s, ".")
+	if len(labels) < 2 {
+		return false
+	}
+	for _, l := range labels {
+		if l == "" {
+			return false
+		}
+		for _, c := range l {
+			switch {
+			case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '-':
+			default:
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// resolveReverseDNS asks the MCP Registry what OCI artifact a name points at and
+// returns the ref the rest of Bundle resolves against. An entry with no OCI
+// package is a server agentcage cannot pull, named as such rather than failing
+// later with an opaque reference error.
+func resolveReverseDNS(ctx context.Context, name string) (string, error) {
+	server, err := mcpregistry.New().Resolve(ctx, name)
+	if err != nil {
+		return "", err
+	}
+	ref, version, ok := server.OCIReference()
+	if !ok {
+		return "", fmt.Errorf("%s: MCP Registry entry has no OCI artifact to pull", name)
+	}
+	if version != "" {
+		return ref + ":" + version, nil
+	}
+	return ref, nil
 }
 
 // fileName is a bundle file's name without its .agent extension.

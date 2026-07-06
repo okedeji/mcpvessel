@@ -45,6 +45,13 @@ const (
 	// ArtifactType marks the bundle's OCI manifest so a registry browser
 	// can tell an agentcage bundle from an ordinary container image.
 	ArtifactType = "application/vnd.agentcage.bundle.v1"
+
+	// mcpServerNameAnnotation is the ownership annotation the MCP Registry
+	// requires on a published OCI artifact: it must name the reverse-DNS
+	// server the artifact belongs to, so a registry entry cannot point at an
+	// image whose author did not opt into being that server. Push stamps it
+	// on a GHCR ref, whose reverse-DNS name is derivable.
+	mcpServerNameAnnotation = "io.modelcontextprotocol.server.name"
 )
 
 // Client talks to remote OCI registries on the operator's behalf. The
@@ -90,7 +97,15 @@ func (c *Client) Push(ctx context.Context, ref reference.Reference, bundlePath s
 	if err != nil {
 		return "", err
 	}
-	desc, err := packBundle(ctx, repo, ref.Tag, bundlePath)
+
+	// A GHCR ref maps to a reverse-DNS server name, so a push to one is
+	// publish-bound: stamp the ownership annotation the MCP Registry checks.
+	var annotations map[string]string
+	if name, ok := ref.ReverseDNSName(); ok {
+		annotations = map[string]string{mcpServerNameAnnotation: name}
+	}
+
+	desc, err := packBundle(ctx, repo, ref.Tag, bundlePath, annotations)
 	if err != nil {
 		return "", fmt.Errorf("pushing %s: %w", ref.OCIRef(), err)
 	}
@@ -139,6 +154,27 @@ func (c *Client) Pull(ctx context.Context, ref reference.Reference) (bundlePath,
 		return "", "", fmt.Errorf("caching %s: %w", ref.OCIRef(), err)
 	}
 	return path, digest, nil
+}
+
+// ResolvePublic reports the digest a reference points at using no credentials.
+// It succeeds only for an artifact that is actually pushed and publicly
+// pullable: a public repo grants an anonymous pull token, a private or missing
+// one fails auth. Publish uses it as the gate before advertising a bundle on the
+// MCP Registry, so a metadata pointer never outruns the public artifact it names.
+func ResolvePublic(ctx context.Context, ref reference.Reference) (string, error) {
+	repo, err := remote.NewRepository(ref.Registry + "/" + ref.Repository)
+	if err != nil {
+		return "", fmt.Errorf("addressing %s/%s: %w", ref.Registry, ref.Repository, err)
+	}
+	// No Credential func: the auth client negotiates an anonymous pull token,
+	// which a public repo grants and a private one refuses. That refusal is the
+	// signal, so this deliberately does not fall back to stored credentials.
+	repo.Client = &auth.Client{Client: retry.DefaultClient, Cache: auth.NewCache()}
+	desc, err := repo.Resolve(ctx, resolveTarget(ref))
+	if err != nil {
+		return "", fmt.Errorf("resolving %s anonymously: %w", ref.OCIRef(), err)
+	}
+	return desc.Digest.String(), nil
 }
 
 // Login validates username/password against the registry host and stores
@@ -196,7 +232,7 @@ func resolveTarget(ref reference.Reference) string {
 // function of the bundle bytes. That is what lets BundleDigest compute, before
 // any push, the exact digest a later push will produce: a locally locked USES
 // digest stays valid once its dependency is pushed.
-func packBundle(ctx context.Context, dst oras.Target, tag, bundlePath string) (ocispec.Descriptor, error) {
+func packBundle(ctx context.Context, dst oras.Target, tag, bundlePath string, annotations map[string]string) (ocispec.Descriptor, error) {
 	data, err := os.ReadFile(bundlePath)
 	if err != nil {
 		return ocispec.Descriptor{}, fmt.Errorf("reading bundle %s: %w", bundlePath, err)
@@ -217,12 +253,28 @@ func packBundle(ctx context.Context, dst oras.Target, tag, bundlePath string) (o
 		}
 	}
 
-	manifestDesc, err := oras.PackManifest(ctx, dst, oras.PackManifestVersion1_1, ArtifactType, oras.PackManifestOptions{
-		Layers: []ocispec.Descriptor{blob},
-		ManifestAnnotations: map[string]string{
-			ocispec.AnnotationCreated: m.BuiltAt.UTC().Format(time.RFC3339),
-		},
-	})
+	manifestAnnotations := map[string]string{
+		ocispec.AnnotationCreated: m.BuiltAt.UTC().Format(time.RFC3339),
+	}
+	for k, v := range annotations {
+		manifestAnnotations[k] = v
+	}
+
+	opts := oras.PackManifestOptions{
+		Layers:              []ocispec.Descriptor{blob},
+		ManifestAnnotations: manifestAnnotations,
+	}
+	// The MCP Registry reads its ownership marker from the image config's
+	// Labels, not the manifest annotations, so a publish-bound push carries a
+	// config blob with those labels in place of the empty artifact config.
+	if len(annotations) > 0 {
+		cfgDesc, err := pushConfigWithLabels(ctx, dst, annotations)
+		if err != nil {
+			return ocispec.Descriptor{}, err
+		}
+		opts.ConfigDescriptor = &cfgDesc
+	}
+	manifestDesc, err := oras.PackManifest(ctx, dst, oras.PackManifestVersion1_1, ArtifactType, opts)
 	if err != nil {
 		return ocispec.Descriptor{}, fmt.Errorf("packing manifest: %w", err)
 	}
@@ -234,6 +286,33 @@ func packBundle(ctx context.Context, dst oras.Target, tag, bundlePath string) (o
 	return manifestDesc, nil
 }
 
+// pushConfigWithLabels uploads an OCI image config whose Labels carry the given
+// markers, and returns its descriptor. The MCP Registry's ownership check reads
+// the server-name label from here, the same place a Dockerfile LABEL lands.
+func pushConfigWithLabels(ctx context.Context, dst oras.Target, labels map[string]string) (ocispec.Descriptor, error) {
+	cfg := struct {
+		Config struct {
+			Labels map[string]string `json:"Labels"`
+		} `json:"config"`
+	}{}
+	cfg.Config.Labels = labels
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		return ocispec.Descriptor{}, fmt.Errorf("encoding image config: %w", err)
+	}
+	desc := content.NewDescriptorFromBytes(ocispec.MediaTypeImageConfig, data)
+	exists, err := dst.Exists(ctx, desc)
+	if err != nil {
+		return ocispec.Descriptor{}, fmt.Errorf("checking config blob: %w", err)
+	}
+	if !exists {
+		if err := dst.Push(ctx, desc, bytes.NewReader(data)); err != nil {
+			return ocispec.Descriptor{}, fmt.Errorf("uploading image config: %w", err)
+		}
+	}
+	return desc, nil
+}
+
 // BundleDigest computes the OCI manifest digest the bundle would be pushed
 // under, without any network access, by packing its manifest against an
 // in-memory store. It is deterministic and equals the digest Push returns, so a
@@ -241,7 +320,7 @@ func packBundle(ctx context.Context, dst oras.Target, tag, bundlePath string) (o
 // by that same digest. The build seeds the pull cache under it (SeedCache) so
 // the runtime resolves a local dependency without a registry.
 func BundleDigest(bundlePath string) (string, error) {
-	desc, err := packBundle(context.Background(), memory.New(), "", bundlePath)
+	desc, err := packBundle(context.Background(), memory.New(), "", bundlePath, nil)
 	if err != nil {
 		return "", err
 	}

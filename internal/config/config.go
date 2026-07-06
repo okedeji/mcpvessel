@@ -26,6 +26,7 @@ type Config struct {
 	Machine   Machine           `json:"machine,omitempty"`
 	Serve     Serve             `json:"serve,omitempty"`
 	Telemetry Telemetry         `json:"telemetry,omitempty"`
+	Env       map[string]string `json:"env,omitempty"` // persisted AGENTCAGE_* knobs; a real environment variable of the same name overrides one here
 }
 
 // DefaultMetricsAddr is where the daemon serves Prometheus metrics unless the
@@ -449,6 +450,53 @@ func (c *Config) RemoveCap(ref string) bool {
 	}
 	delete(c.Resources.Agents, ref)
 	return true
+}
+
+// SetEnv persists an env knob, or removes it when value is empty.
+func (c *Config) SetEnv(name, value string) {
+	if value == "" {
+		delete(c.Env, name)
+		return
+	}
+	if c.Env == nil {
+		c.Env = map[string]string{}
+	}
+	c.Env[name] = value
+}
+
+// RemoveEnv drops a persisted env knob, reporting whether it was present.
+func (c *Config) RemoveEnv(name string) bool {
+	if _, ok := c.Env[name]; !ok {
+		return false
+	}
+	delete(c.Env, name)
+	return true
+}
+
+// LookupEnv resolves an env knob the way agentcage reads its own settings: a
+// real, non-empty environment variable wins so a shell or CI override takes
+// effect for this run, and only when that is absent does the persisted config
+// value apply. A blank env var counts as unset, so exporting an empty value does
+// not blank out a good config value. A config that cannot be read falls back to
+// the environment alone rather than failing the caller.
+func LookupEnv(name string) string {
+	if v := strings.TrimSpace(os.Getenv(name)); v != "" {
+		return v
+	}
+	c, err := Load()
+	if err != nil {
+		return ""
+	}
+	return c.Env[name]
+}
+
+// LookupEnvOr is LookupEnv with a built-in default for when neither the
+// environment nor the config sets the knob.
+func LookupEnvOr(name, def string) string {
+	if v := LookupEnv(name); v != "" {
+		return v
+	}
+	return def
 }
 
 // Path resolves ~/.agentcage/config.json, honoring AGENTCAGE_HOME the

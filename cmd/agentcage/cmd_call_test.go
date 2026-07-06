@@ -107,6 +107,25 @@ func TestAssertToolIsPublic_ToolCollectionWithExpose(t *testing.T) {
 	}
 }
 
+func TestAssertToolIsPublic_UsesCatalogWhenPresent(t *testing.T) {
+	// EXPOSE * leaves the raw directive as "*", but the catalog carries the
+	// expanded per-tool visibility, and the check must read the catalog.
+	m := &bundle.Manifest{
+		Agentfile: bundle.AgentfileSpec{Expose: []string{"*"}},
+		Tools: []bundle.Tool{
+			{Name: "echo", Visibility: bundle.VisibilityPublic},
+			{Name: "debug_env", Visibility: bundle.VisibilityPrivate},
+		},
+	}
+	if err := assertToolIsPublic(m, "echo"); err != nil {
+		t.Errorf("echo is public in the catalog, got: %v", err)
+	}
+	err := assertToolIsPublic(m, "debug_env")
+	if err == nil || !strings.Contains(err.Error(), "echo") {
+		t.Fatalf("err = %v, want a rejection listing echo as the public tool", err)
+	}
+}
+
 func TestAssertToolIsPublic_NoPublicSurfaceAtAll(t *testing.T) {
 	m := &bundle.Manifest{Agentfile: bundle.AgentfileSpec{}}
 	err := assertToolIsPublic(m, "anything")

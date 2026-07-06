@@ -38,6 +38,15 @@ const (
 	Registry = Prefix + "REGISTRY"
 	// Home overrides the ~/.agentcage root for cache and state.
 	Home = Prefix + "HOME"
+	// MCPRegistry overrides the official MCP Registry base URL that search,
+	// publish, and reverse-DNS resolution talk to.
+	MCPRegistry = Prefix + "MCP_REGISTRY"
+	// GitHubClientID is the OAuth app client id 'login mcp-registry' runs the
+	// device flow against. It has no default: publishing to the MCP Registry
+	// needs a GitHub OAuth app registered to agentcage's namespace, and
+	// fabricating one would be a login that cannot work. Set it, or the
+	// command fails closed with instructions.
+	GitHubClientID = Prefix + "GITHUB_CLIENT_ID"
 )
 
 // MCP gateway variables the runtime injects into the MCP gateway container.

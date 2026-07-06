@@ -21,6 +21,8 @@ func newPushCmd() *cobra.Command {
 	var jsonOut bool
 	var withEvals bool
 	var judgeModel string
+	var forcePublic, forcePrivate bool
+	var registryName string
 	cmd := &cobra.Command{
 		Use:   "push REF [BUNDLE]",
 		Short: "Push an agent bundle to an OCI registry",
@@ -59,6 +61,14 @@ path (positional or -b) to push a file built elsewhere or with -o.`,
 				}
 			}
 
+			// Decide (and interactively log in) before the upload, so an
+			// unpublishable push is caught early and the short-lived registry
+			// token is minted just before the publish step uses it.
+			doPublish, err := preparePublish(cmd, ref, forcePublic, forcePrivate)
+			if err != nil {
+				return err
+			}
+
 			client, err := registry.New()
 			if err != nil {
 				return err
@@ -78,6 +88,25 @@ path (positional or -b) to push a file built elsewhere or with -o.`,
 			if err != nil {
 				return err
 			}
+
+			// MCP Registry publication runs only after the OCI artifact is up,
+			// so a failed publish never leaves a dangling registry entry with no
+			// bundle behind it. A publish failure does not fail the push (the
+			// bytes are already pushed) unless the operator explicitly asked to
+			// publish with --public.
+			noteW := w
+			if jsonOut {
+				noteW = cmd.ErrOrStderr()
+			}
+			if doPublish {
+				if err := publishToRegistry(cmd.Context(), noteW, ref, path, registryName); err != nil {
+					if forcePublic {
+						return err
+					}
+					_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: pushed to OCI but MCP Registry publish failed: %v\n", err)
+				}
+			}
+
 			if jsonOut {
 				return json.NewEncoder(w).Encode(map[string]string{
 					"ref":    ref.OCIRef(),
@@ -93,6 +122,9 @@ path (positional or -b) to push a file built elsewhere or with -o.`,
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit machine-readable JSON")
 	cmd.Flags().BoolVar(&withEvals, "with-evals", false, "run the eval suite and record the results into the manifest before pushing")
 	cmd.Flags().StringVar(&judgeModel, "judge-model", "", "provider/model to grade judged cases (default: your default provider)")
+	cmd.Flags().BoolVar(&forcePublic, "public", false, "publish to the MCP Registry even when the host is not auto-detected as public")
+	cmd.Flags().BoolVar(&forcePrivate, "private", false, "skip MCP Registry publication even on a public host")
+	cmd.Flags().StringVar(&registryName, "name", "", "MCP Registry name to publish under (default: io.github.<owner>/<name> from a GHCR ref)")
 	return cmd
 }
 

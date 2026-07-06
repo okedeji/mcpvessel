@@ -3,6 +3,7 @@ package registry
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -40,7 +41,7 @@ func TestPackBundle_RoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	desc, err := packBundle(ctx, store, "0.1", bundlePath)
+	desc, err := packBundle(ctx, store, "0.1", bundlePath, nil)
 	if err != nil {
 		t.Fatalf("packBundle: %v", err)
 	}
@@ -79,12 +80,53 @@ func TestBundleDigest_DeterministicAndMatchesPush(t *testing.T) {
 
 	// The locally computed digest must equal what a push produces, so a USES
 	// lock made locally stays valid once the dependency is pushed.
-	desc, err := packBundle(context.Background(), memory.New(), "0.1", bundlePath)
+	desc, err := packBundle(context.Background(), memory.New(), "0.1", bundlePath, nil)
 	if err != nil {
 		t.Fatalf("packBundle: %v", err)
 	}
 	if d1 != desc.Digest.String() {
 		t.Errorf("BundleDigest %s != push digest %s", d1, desc.Digest.String())
+	}
+}
+
+func TestPackBundle_StampsOwnershipForPublish(t *testing.T) {
+	ctx := context.Background()
+	store := memory.New()
+	name := "io.github.me/x"
+
+	desc, err := packBundle(ctx, store, "0.1", realBundle(t), map[string]string{mcpServerNameAnnotation: name})
+	if err != nil {
+		t.Fatalf("packBundle: %v", err)
+	}
+
+	mb, err := content.FetchAll(ctx, store, desc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var man ocispec.Manifest
+	if err := json.Unmarshal(mb, &man); err != nil {
+		t.Fatal(err)
+	}
+	if man.Annotations[mcpServerNameAnnotation] != name {
+		t.Errorf("manifest annotation = %q, want %q", man.Annotations[mcpServerNameAnnotation], name)
+	}
+
+	// The registry reads the marker from the config's Labels, so that is what
+	// must carry it, not only the manifest annotation.
+	cb, err := content.FetchAll(ctx, store, man.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg struct {
+		Config struct {
+			Labels map[string]string `json:"Labels"`
+		} `json:"config"`
+	}
+	if err := json.Unmarshal(cb, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Config.Labels[mcpServerNameAnnotation] != name {
+		t.Errorf("config label = %q, want %q", cfg.Config.Labels[mcpServerNameAnnotation], name)
 	}
 }
 

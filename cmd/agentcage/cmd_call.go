@@ -114,16 +114,35 @@ func parseArgPairs(pairs []string) (map[string]any, error) {
 	return out, nil
 }
 
-// assertToolIsPublic rejects external calls to private tools so the
-// operator sees a clear error before the platform tries to spin up
-// the cage. The Agentfile is the contract: a tool is public when it
-// is the bundle's MAIN or appears in EXPOSE.
+// assertToolIsPublic rejects external calls to private tools so the operator
+// sees a clear error before the platform tries to spin up the cage. It reads the
+// tool catalog, the authoritative visibility after introspection: it already has
+// EXPOSE * expanded to per-tool public, which the raw EXPOSE directive does not.
+// A declared-only bundle (built --no-introspect) has no catalog, so it falls back
+// to the Agentfile's MAIN and EXPOSE names.
 func assertToolIsPublic(manifest *bundle.Manifest, toolName string) error {
+	if len(manifest.Tools) > 0 {
+		publicNames := make([]string, 0, len(manifest.Tools))
+		for _, t := range manifest.Tools {
+			if t.Visibility != bundle.VisibilityPublic && t.Visibility != bundle.VisibilityMain {
+				continue
+			}
+			if t.Name == toolName {
+				return nil
+			}
+			publicNames = append(publicNames, t.Name)
+		}
+		if len(publicNames) == 0 {
+			return fmt.Errorf("bundle exposes no public tools")
+		}
+		return fmt.Errorf("tool %q is not public on this bundle (public tools: %s)", toolName, strings.Join(publicNames, ", "))
+	}
+
 	if manifest.Agentfile.Main == toolName {
 		return nil
 	}
 	for _, name := range manifest.Agentfile.Expose {
-		if name == toolName {
+		if name == toolName || name == "*" {
 			return nil
 		}
 	}

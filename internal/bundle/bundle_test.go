@@ -281,6 +281,30 @@ ENTRYPOINT python3 agent.py
 	}
 }
 
+func TestBuild_ExposeWildcardMakesEveryToolPublic(t *testing.T) {
+	src := t.TempDir()
+	writeFile(t, filepath.Join(src, "Agentfile"), `FROM node:22-slim
+EXPOSE *
+ENTRYPOINT run
+`)
+	writeFile(t, filepath.Join(src, "run"), "x\n")
+
+	introspected := []IntrospectedTool{{Name: "echo"}, {Name: "get-sum"}, {Name: "get-env"}}
+	out := filepath.Join(t.TempDir(), "a.agent")
+	if err := Build(src, out, WithIntrospectedTools(introspected)); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	manifest, _ := extract(t, out)
+	for _, tool := range manifest.Tools {
+		if tool.Visibility != VisibilityPublic {
+			t.Errorf("%s visibility = %q, want public under EXPOSE *", tool.Name, tool.Visibility)
+		}
+	}
+	if len(manifest.Tools) != 3 {
+		t.Errorf("catalog has %d tools, want 3", len(manifest.Tools))
+	}
+}
+
 func TestBuild_IntrospectionRejectsDeclaredToolTheAgentDoesNotServe(t *testing.T) {
 	src := t.TempDir()
 	writeFile(t, filepath.Join(src, "Agentfile"), `FROM python:3.12-slim

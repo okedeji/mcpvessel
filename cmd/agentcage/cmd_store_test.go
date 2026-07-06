@@ -79,7 +79,7 @@ func TestStoreFirstResolver_MissWithNoRegistryErrors(t *testing.T) {
 	}
 }
 
-func TestImportBundle_RoundTrip(t *testing.T) {
+func TestLoadBundle_RoundTrip(t *testing.T) {
 	t.Setenv("AGENTCAGE_HOME", t.TempDir())
 
 	// A bundle handed to us as a loose file, built elsewhere.
@@ -93,11 +93,11 @@ func TestImportBundle_RoundTrip(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	if err := importBundle(&out, file, "@me/child:1.0"); err != nil {
-		t.Fatalf("importBundle: %v", err)
+	if err := loadBundle(&out, file, "@me/child:1.0"); err != nil {
+		t.Fatalf("loadBundle: %v", err)
 	}
-	if !strings.Contains(out.String(), "Imported") {
-		t.Errorf("output = %q, want an import confirmation", out.String())
+	if !strings.Contains(out.String(), "Loaded") {
+		t.Errorf("output = %q, want a load confirmation", out.String())
 	}
 
 	// The imported ref now resolves from the store, with no registry.

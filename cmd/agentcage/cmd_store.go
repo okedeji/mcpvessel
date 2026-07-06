@@ -25,12 +25,12 @@ func newStoreCmd() *cobra.Command {
 
 The store is where 'agentcage build' writes and where run, call, and push read
 back by reference, with no daemon and no network. 'store ls' shows what resolves
-locally; 'store import' adds a .agent file someone handed you, so you can run it
+locally; 'store load' adds a .agent file someone handed you, so you can run it
 or depend on it via USES without pulling it from a registry.`,
 		Example: `  agentcage store ls
-  agentcage store import researcher.agent -t @okedeji/researcher:0.1`,
+  agentcage store load researcher.agent -t @okedeji/researcher:0.1`,
 	}
-	cmd.AddCommand(newStoreLsCmd(), newStoreImportCmd())
+	cmd.AddCommand(newStoreLsCmd(), newStoreLoadCmd())
 	return cmd
 }
 
@@ -84,10 +84,10 @@ func shortStoreHash(hash string) string {
 	return h
 }
 
-func newStoreImportCmd() *cobra.Command {
+func newStoreLoadCmd() *cobra.Command {
 	var tag string
 	cmd := &cobra.Command{
-		Use:   "import FILE",
+		Use:   "load FILE",
 		Short: "Add a .agent bundle to the local store",
 		Long: `Verify a .agent file and add it to the local store, so you can run it or depend
 on it via USES without pulling it from a registry.
@@ -97,18 +97,18 @@ integrity check a registry pull runs. With -t it is indexed under a reference so
 'agentcage run @org/name:tag' and a parent's USES find it by name; without -t it
 is addressable only by its content hash. Either way its digest is seeded into
 the local cache, so a parent built against it resolves it with no network.`,
-		Example: `  agentcage store import researcher.agent
-  agentcage store import researcher.agent -t @okedeji/researcher:0.1`,
+		Example: `  agentcage store load researcher.agent
+  agentcage store load researcher.agent -t @okedeji/researcher:0.1`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return importBundle(cmd.OutOrStdout(), args[0], tag)
+			return loadBundle(cmd.OutOrStdout(), args[0], tag)
 		},
 	}
-	cmd.Flags().StringVarP(&tag, "tag", "t", "", "index the imported bundle under this reference")
+	cmd.Flags().StringVarP(&tag, "tag", "t", "", "index the loaded bundle under this reference")
 	return cmd
 }
 
-func importBundle(w io.Writer, file, tag string) error {
+func loadBundle(w io.Writer, file, tag string) error {
 	var ref reference.Reference
 	if tag != "" {
 		parsed, err := reference.Parse(tag)
@@ -160,6 +160,6 @@ func importBundle(w io.Writer, file, tag string) error {
 	if ref.Tag != "" {
 		name = ref.Display()
 	}
-	_, _ = fmt.Fprintf(w, "Imported %s as %s\n", filepath.Base(file), name)
+	_, _ = fmt.Fprintf(w, "Loaded %s as %s\n", filepath.Base(file), name)
 	return nil
 }
