@@ -18,35 +18,24 @@ func newInitCmd() *cobra.Command {
 		Short: "Prepare the agentcage runtime (one-time setup)",
 		Long: `Prepare the agentcage runtime on this host.
 
-On macOS, agentcage runs agents inside a small Linux VM provisioned
-by the bundled Lima driver. The first time you do anything that
-needs the runtime, that VM gets created, a Linux image is
-downloaded, and a rootless container daemon is started. The whole
-process takes 2-5 minutes depending on your connection. After it
-completes, every later run is just a few seconds; the VM stays
-around and the daemon keeps the cached images warm.
+On macOS, agents run inside a small Linux VM provisioned by the bundled Lima
+driver. The first run that needs the runtime creates the VM, downloads a Linux
+image, and starts a rootless container daemon: 2-5 minutes depending on your
+connection. After that every run is a few seconds; the VM stays up and the
+daemon keeps cached images warm.
 
-'agentcage init' runs that setup explicitly so you can do it on your
-own time, not as a surprise mid-demo. If you skip 'init' and run
-'agentcage run' directly, the same setup happens inline with the
-same progress UI; 'init' is the polite version.
+init runs that setup up front instead of inline. Skip it and the same setup
+happens the first time you 'agentcage run', with the same progress UI.
 
-On Linux, this is a no-op: the host's containerd and buildkitd are
-used directly and no VM is involved.
+On Linux this is a no-op: the host's containerd and buildkitd are used directly,
+no VM.
 
-Pass --verbose to see the underlying Lima output instead of the
-phase-by-phase UI. Useful when something is going wrong and the
-clean view does not have enough detail.
-
-Pass --recreate after changing machine settings (for example
-raising machine.memory_gib in config.json) to rebuild the VM with
-the new size. It stops the daemon, deletes the VM, and provisions a
-fresh one, so every cached image is lost and rebuilt on next use.
-On Linux there is no VM, so --recreate just restarts the daemon.
-
-Examples:
-
-  agentcage init
+--verbose streams the raw Lima output instead of the phase UI, for when setup is
+going wrong. --recreate rebuilds the VM after a machine settings change (for
+example raising machine.memory_gib): it stops the daemon, deletes the VM, and
+provisions a fresh one, losing every cached image. On Linux --recreate just
+restarts the daemon.`,
+		Example: `  agentcage init
   agentcage init --verbose
   agentcage init --recreate`,
 		Args: cobra.NoArgs,

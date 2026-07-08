@@ -20,32 +20,15 @@ func newCallCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "call BUNDLE TOOL",
 		Short: "Call a specific tool on an agent by name",
-		Long: `Call a specific tool on an agent or tool collection by name.
-
-Unlike 'agentcage run' (which routes a prompt to the bundle's MAIN
-tool), 'agentcage call' invokes the tool the operator names. What
-that tool does (reason with an LLM, call sub-agents, just fetch
-data, or anything else) is whatever its author wrote. The platform
-just routes the call.
+		Long: `Call a named tool on an agent, instead of routing a prompt to MAIN the way
+'agentcage run' does. Use it for tool collections (no MAIN) or to hit a specific
+tool on an agent directly.
 
 BUNDLE is a reference (resolved store-first, then pulled), a content hash from
 an untagged build, or a path to a .agent file, the same as 'agentcage run'.
 
-Use 'call' when:
-
-  - The bundle is a tool collection (no MAIN declared).
-  - You want to address a specific exposed tool on an agent without
-    going through its MAIN.
-
-A tool is callable from outside the cage when the Agentfile declares
-it via EXPOSE. The MAIN tool is implicitly public. Any other tool the
-agent exposes via MCP is private and not reachable through 'call'.
-
-Examples:
-
-  agentcage call web-search.agent search --arg query="agentic memory"
-  agentcage call researcher.agent fetch_paper --arg doi=10.1234/x.2026
-  agentcage call github-mcp.agent create_pr --arg title="..." --arg body="..."`,
+A tool is callable only if the Agentfile EXPOSEs it; MAIN is implicitly public.
+Tools the agent serves over MCP but does not EXPOSE stay private.`,
 		Example: `  agentcage call @okedeji/web-search:0.1 search --arg query="agentic memory"
   agentcage call researcher.agent fetch_paper --arg doi=10.1234/x.2026`,
 		Args: cobra.ExactArgs(2),

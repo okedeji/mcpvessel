@@ -28,27 +28,15 @@ func newRunCmd() *cobra.Command {
 
 BUNDLE is a reference ('agentcage build -t' put it in the store), the content
 hash an untagged build printed, or a path to a .agent file. A reference resolves
-store-first and is pulled from the registry only when the store does not hold
-it. agentcage builds the agent's image on first use, starts a container, and
-routes the prompt to the tool the Agentfile declared as MAIN.
+store-first and is pulled from the registry only when the store does not hold it.
+agentcage builds the image on first use, starts a container, and routes the
+prompt to the tool the Agentfile declared as MAIN.
 
-run talks to the daemon, so one must be running; 'agentcage init' starts it (and
-provisions the Linux VM on macOS the first time).
+run needs the daemon; 'agentcage init' starts it (and provisions the Linux VM on
+macOS the first time).
 
-What MAIN does inside its function body is the author's call: typically
-its LLM reasons about the prompt, calls sub-agents, calls its own
-tools, and returns a synthesized response, but any other shape is
-fine. The platform just routes the prompt to MAIN and prints whatever
-comes back.
-
-For bundles without MAIN (tool collections that expose named tools
-without designating one as the bundle's "talk to me" entry), use
-'agentcage call BUNDLE TOOL' to invoke a tool by name.
-
-Examples:
-
-  agentcage run @okedeji/hello:0.1
-  agentcage run researcher.agent "summarize Q3 earnings"`,
+A bundle with no MAIN is a tool collection. Call one of its tools by name with
+'agentcage call BUNDLE TOOL' instead.`,
 		Example: `  agentcage run @okedeji/hello:0.1
   agentcage run researcher.agent "summarize Q3 earnings"`,
 		Args: cobra.RangeArgs(1, 2),

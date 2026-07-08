@@ -39,7 +39,7 @@ and point an endpoint at it with --key-ref. The config file never holds a secret
 func newConfigEnvCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "env",
-		Short: "Persist an AGENTCAGE_* setting so you need not export it each shell",
+		Short: "Persist an AGENTCAGE_* setting instead of exporting it each shell",
 		Long: `Persist an agentcage environment knob in config.json so it survives across
 shells without an export, for example the MCP Registry login's GitHub client id.
 
@@ -384,8 +384,9 @@ func isLoopbackHost(host string) bool {
 func newConfigModelsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "models",
-		Short: "Override an agent's model by ref, e.g. to pin an expensive agent cheaper",
-		Long: `Override an agent's model by ref, e.g. to pin an expensive agent cheaper.
+		Short: "Override an agent's model by ref",
+		Long: `Override an agent's model by ref, for example to pin an expensive agent to a
+cheaper model.
 
 An override keys on the agent's @org/name registry ref, so it targets a pulled
 USES dependency. An agent you run directly from a .agent file has no registry
