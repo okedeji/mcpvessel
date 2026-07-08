@@ -10,20 +10,16 @@ import (
 )
 
 // Exposure is serve's access-control list for one served run: the agents an
-// external caller may reach, keyed by their run-unique tree key, and for each
-// the tools it may invoke. The served root is always present; sub-agents are
-// reachable only when a USES PUBLIC edge (or an operator override) puts them
-// there. serve computes it once from the resolved tree and consults it per
-// external call, so a denied or private agent never reaches a held run.
+// external caller may reach, keyed by tree key, and the tools each may invoke.
+// The served root is always present; a sub-agent only via a USES PUBLIC edge
+// or an operator override.
 type Exposure struct {
 	Agents map[string]ExposedAgent
 }
 
-// ExposedAgent is one externally reachable agent: its tree key, the
-// digest-pinned reference it was pulled by (the zero value for the served
-// root, which carries no pull reference), the bundle serve boots it from as its
-// own run, the URL segment a caller addresses it by, and the tools that caller
-// may invoke, the agent's MAIN plus its EXPOSE'd tools and never a private one.
+// ExposedAgent is one externally reachable agent. Ref is zero for the served
+// root, which carries no pull reference. Tools is the agent's MAIN plus its
+// EXPOSE'd tools, never a private one.
 type ExposedAgent struct {
 	Key     string
 	Ref     reference.Reference
@@ -32,23 +28,18 @@ type ExposedAgent struct {
 	Tools   []string
 }
 
-// ExposureOverrides is the operator's serve-time exposure flags. Each entry is
-// a reference matched to tree nodes by registry and repository, the same way a
-// BAN matches, so a version-less @org/name catches every pin of that agent.
+// ExposureOverrides is the operator's serve-time exposure flags. Entries match
+// tree nodes by registry and repository, like a BAN, so a version-less
+// @org/name catches every pin of that agent.
 type ExposureOverrides struct {
 	Expose   []string
 	NoExpose []string
 }
 
-// computeExposure resolves which agents serve exposes for a run and which of
-// each agent's tools an external caller may invoke.
-//
-// The set starts at the served root plus any agent the operator force-exposed,
-// then grows along USES PUBLIC edges: an agent a parent marked PUBLIC is
-// callable alongside that parent, and the walk repeats so exposure propagates
-// down a chain that stays public. The operator's --no-expose is applied last
-// and wins, hiding exactly the agents it names even when a PUBLIC edge reached
-// them. The root is never hidden; serving a run you cannot reach is pointless.
+// computeExposure resolves which agents serve exposes. The set starts at the
+// served root plus any force-exposed agent, then grows along USES PUBLIC
+// edges; exposure propagates down a chain only while it stays public.
+// --no-expose is applied last and wins. The root is never hidden.
 func computeExposure(tree *runTree, ov ExposureOverrides) (Exposure, error) {
 	expose, err := refMatchers(ov.Expose)
 	if err != nil {
@@ -95,18 +86,15 @@ func computeExposure(tree *runTree, ov ExposureOverrides) (Exposure, error) {
 	return out, nil
 }
 
-// exposureRootKey names the served root in the tree exposure resolves. The run
-// id does not matter here (exposure pulls no containers up), so a fixed key
-// keeps ResolveExposure pure of run identity.
+// exposureRootKey names the served root. Exposure boots no containers, so a
+// fixed key keeps ResolveExposure pure of run identity.
 const exposureRootKey = "root"
 
-// ResolveExposure resolves the served bundle's USES tree and returns the agents
-// serve exposes: the root plus every USES PUBLIC sub-agent the overrides leave
-// reachable. Each carries the bundle serve boots it from, a URL-safe address an
-// external caller reaches it at, and its public tool names. rootAddress names
-// the served root, which has no pull reference of its own; sub-agents take their
-// address from their repository. Two agents resolving to one address is an error
-// rather than a silent last-writer-wins over the front door's routing table.
+// ResolveExposure resolves the served bundle's USES tree and returns the
+// agents serve exposes, each with its bundle, URL-safe address, and public
+// tool names. The root takes rootAddress; a sub-agent's address comes from its
+// repository. Two agents resolving to one address is an error, not a silent
+// last-writer-wins over the front door's routing table.
 func ResolveExposure(ctx context.Context, bundlePath, rootAddress string, ov ExposureOverrides) ([]ExposedAgent, error) {
 	manifest, err := bundle.ReadManifest(bundlePath)
 	if err != nil {
@@ -145,9 +133,8 @@ func ResolveExposure(ctx context.Context, bundlePath, rootAddress string, ov Exp
 	return out, nil
 }
 
-// refMatcher is the registry-and-repository half of a reference, the part an
-// exposure override matches on so a pin's tag or digest does not have to be
-// named.
+// refMatcher is the registry-and-repository half of a reference; overrides
+// match on it so a pin's tag or digest need not be named.
 type refMatcher struct {
 	registry   string
 	repository string
@@ -174,9 +161,8 @@ func matchesAny(ref reference.Reference, ms []refMatcher) bool {
 	return false
 }
 
-// publicTools is an agent's externally callable tool names: its MAIN tool plus
-// its EXPOSE'd tools. It mirrors the cage-entry gate in cmd_call so the front
-// door and a direct call agree on what is public.
+// publicTools is an agent's externally callable tool names: MAIN plus its
+// EXPOSE'd tools. Mirrors the cage-entry gate in cmd_call.
 func publicTools(m *bundle.Manifest) []string {
 	if m == nil {
 		return nil

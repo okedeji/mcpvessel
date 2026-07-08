@@ -12,9 +12,7 @@ import (
 	"github.com/okedeji/agentcage/internal/mcp"
 )
 
-// staticAgent wraps a fixed call (and optional elicit binding) as an Agent whose
-// resolver returns the same target for every client session, the simple shape
-// the front-door tests need without a real instance manager.
+// staticAgent returns the same target for every session; no instance manager.
 func staticAgent(addr string, tools []mcp.Tool, call func(context.Context, string, map[string]any) (string, error), bind func(mcp.ElicitHandler) func()) Agent {
 	return Agent{
 		Address: addr,
@@ -83,17 +81,14 @@ func TestHandler_PrivateToolUnreachable(t *testing.T) {
 	}
 	defer func() { _ = client.Close() }()
 
-	// rerank was never registered (it is private), so the front door must reject
-	// the call rather than dispatch it into the run.
+	// rerank is private, never registered; the call must be rejected.
 	if _, err := client.CallTool(ctx, "rerank", nil); err == nil {
 		t.Fatal("front door dispatched a call to an unregistered private tool")
 	}
 }
 
-// askingAgent is an exposed agent whose tool asks the caller a question
-// mid-call through its bound answer channel, the way a real agent elicits
-// through the front door. bound mirrors what the daemon's session.BindElicit
-// does: it installs the answer channel for the call's duration.
+// askingAgent's tool asks the caller a question mid-call through its bound
+// answer channel, mirroring the daemon's session.BindElicit.
 func askingAgent() Agent {
 	var bound mcp.ElicitHandler
 	return staticAgent("asker",
@@ -112,9 +107,6 @@ func askingAgent() Agent {
 		})
 }
 
-// TestHandler_ElicitsThroughCaller is the serve-layer round trip: the agent asks
-// a question mid-call, it rides MCP's elicitation back to the calling client,
-// and the caller's answer folds into the same call's result.
 func TestHandler_ElicitsThroughCaller(t *testing.T) {
 	srv := httptest.NewServer(Handler([]Agent{askingAgent()}))
 	defer srv.Close()
@@ -142,9 +134,6 @@ func TestHandler_ElicitsThroughCaller(t *testing.T) {
 	}
 }
 
-// TestHandler_ElicitFailsClosedWithoutCallerSupport pins the fail-closed
-// contract: a caller that did not advertise elicitation cannot be asked, so the
-// asking call returns an error rather than hanging.
 func TestHandler_ElicitFailsClosedWithoutCallerSupport(t *testing.T) {
 	srv := httptest.NewServer(Handler([]Agent{askingAgent()}))
 	defer srv.Close()
@@ -162,11 +151,8 @@ func TestHandler_ElicitFailsClosedWithoutCallerSupport(t *testing.T) {
 	}
 }
 
-// TestHandler_ConcurrentClientsDoNotSerialize is the point of the per-session
-// instance model: two distinct clients calling the same served agent at once both
-// run concurrently rather than queueing. Each call blocks on a barrier that only
-// opens once both are in flight, so if the front door serialized them the barrier
-// would never open and the calls would time out.
+// Each call blocks on a barrier that opens only once both are in flight;
+// serialized dispatch would never open it and the calls would time out.
 func TestHandler_ConcurrentClientsDoNotSerialize(t *testing.T) {
 	const clients = 2
 	var inFlight int32
@@ -218,7 +204,6 @@ func TestHandler_ConcurrentClientsDoNotSerialize(t *testing.T) {
 			t.Fatalf("client %d failed (serialized?): %v", i, errs[i])
 		}
 	}
-	// Distinct clients get distinct session ids, so they routed to distinct instances.
 	if results[0] == results[1] {
 		t.Errorf("both clients resolved to the same session id %q, want distinct", results[0])
 	}

@@ -6,10 +6,9 @@ import (
 	"github.com/okedeji/agentcage/internal/runtime"
 )
 
-// handleRunSpend reports a live run's current LLM spend, the data behind
-// `agentcage spend`. It reads the run's gateway, so it answers only while the run
-// is up; a finished run's cost lives in the history (ps), not here. A run that
-// does not reason, or has stopped, is a 404.
+// handleRunSpend reports a live run's current LLM spend, read off the run's
+// gateway; a finished run's cost lives in the history. A run that does not
+// reason, or has stopped, is a 404.
 func (d *Daemon) handleRunSpend(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	report, ok := runtime.RunSpend(r.Context(), id)

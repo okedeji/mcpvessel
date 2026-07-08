@@ -7,9 +7,7 @@ import (
 	"testing"
 )
 
-// These tests exercise everything in lima.go that doesn't require
-// actually invoking limactl. Real-VM integration coverage lives in a
-// separate file gated by a build tag.
+// Unit coverage only; real-VM integration tests are gated by a build tag.
 
 func TestParseLimaStatus(t *testing.T) {
 	cases := []struct {
@@ -73,9 +71,6 @@ func TestLimaVM_SocketAddressesUseHostSocketDir(t *testing.T) {
 }
 
 func TestFindLimactl_PrefersBundledBinary(t *testing.T) {
-	// Build a fake "bundled" layout next to a fake executable: when
-	// the executable directory contains lima/limactl, FindLimactl
-	// should pick it over PATH.
 	dir := t.TempDir()
 	bundledDir := filepath.Join(dir, "lima")
 	if err := os.MkdirAll(bundledDir, 0o755); err != nil {
@@ -85,8 +80,7 @@ func TestFindLimactl_PrefersBundledBinary(t *testing.T) {
 	if err := os.WriteFile(bundled, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 		t.Fatalf("write bundled limactl: %v", err)
 	}
-	// We cannot easily override os.Executable, but isExecutable is a
-	// pure helper. Exercise that directly.
+	// os.Executable cannot be overridden here, so exercise the pure helper.
 	if !isExecutable(bundled) {
 		t.Errorf("isExecutable(%s) = false, want true", bundled)
 	}
@@ -125,10 +119,8 @@ func TestIsExecutable_AcceptsExecutableFile(t *testing.T) {
 }
 
 func TestFindLimactl_ErrorMessageNamesPaths(t *testing.T) {
-	// Force a miss: temporarily clear PATH so the PATH lookup fails,
-	// and bet that the test's working dir does not contain a bundled
-	// limactl either. Even if both succeed, this test still passes,
-	// it just becomes a no-op assertion.
+	// Clear PATH to force a miss; if the environment still finds a bundled
+	// limactl the test skips.
 	origPath := os.Getenv("PATH")
 	t.Cleanup(func() { _ = os.Setenv("PATH", origPath) })
 	_ = os.Setenv("PATH", "")

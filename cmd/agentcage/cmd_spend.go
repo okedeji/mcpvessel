@@ -13,9 +13,7 @@ import (
 	"github.com/okedeji/agentcage/internal/llmgateway"
 )
 
-// spendWatchInterval is how often --watch refreshes a live run's spend. Each
-// refresh reads the run's gateway, so a couple of seconds keeps the readout live
-// without hammering the gateway.
+// spendWatchInterval paces --watch; each refresh reads the run's gateway.
 const spendWatchInterval = 2 * time.Second
 
 func newSpendCmd() *cobra.Command {
@@ -54,8 +52,7 @@ The run id is the one 'agentcage ps' lists.`,
 	return cmd
 }
 
-// watchSpend reprints the run's total in place on a ticker until the run ends
-// (the spend read starts failing) or the caller interrupts. The first failed
+// watchSpend reprints the total in place until interrupted. The first failed
 // read is the run going away, a clean stop rather than an error.
 func watchSpend(ctx context.Context, c *daemon.Client, id string, w io.Writer) error {
 	t := time.NewTicker(spendWatchInterval)
@@ -76,7 +73,6 @@ func watchSpend(ctx context.Context, c *daemon.Client, id string, w io.Writer) e
 	}
 }
 
-// spendTotalLine is the one-line total, with the budget when there is one.
 func spendTotalLine(r llmgateway.SpendReport) string {
 	if r.BudgetMicroUSD > 0 {
 		return fmt.Sprintf("LLM spend: $%s of $%s budget", formatUSDMicros(r.TotalMicroUSD), formatUSDMicros(r.BudgetMicroUSD))
@@ -84,8 +80,7 @@ func spendTotalLine(r llmgateway.SpendReport) string {
 	return fmt.Sprintf("LLM spend: $%s (no budget set)", formatUSDMicros(r.TotalMicroUSD))
 }
 
-// printSpend writes the total and a per-agent breakdown, agents in a stable
-// order so the output does not reshuffle between runs.
+// printSpend writes the total and a per-agent breakdown in stable order.
 func printSpend(w io.Writer, r llmgateway.SpendReport) {
 	_, _ = fmt.Fprintln(w, spendTotalLine(r))
 	keys := make([]string, 0, len(r.Agents))

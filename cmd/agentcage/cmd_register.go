@@ -51,8 +51,7 @@ ref; pass --name to publish under a different namespace. Requires a prior
 					return err
 				}
 			}
-			// register exists to publish, so a missing login is an offer to log
-			// in (interactively) rather than a silent skip.
+			// A missing login is an offer to log in, not a silent skip.
 			if _, err := confirmLoginIfNeeded(cmd, true); err != nil {
 				return err
 			}
@@ -64,17 +63,14 @@ ref; pass --name to publish under a different namespace. Requires a prior
 	return cmd
 }
 
-// publishToRegistry builds the server.json from a pushed bundle's manifest and
-// records it in the MCP Registry, gated on the OCI artifact being publicly
-// pullable so a discovery pointer never outruns the bundle it names.
+// publishToRegistry records a pushed bundle's server.json in the MCP Registry,
+// gated on the OCI artifact being publicly pullable.
 func publishToRegistry(ctx context.Context, w io.Writer, ref reference.Reference, bundlePath, nameOverride string) error {
 	return publishToRegistryWith(ctx, w, ref, bundlePath, nameOverride, registry.ResolvePublic)
 }
 
 // publishToRegistryWith is publishToRegistry with the public-artifact check
-// injected, so a test drives the publish path without a live OCI registry.
-// nameOverride wins when set; otherwise the name is derived from the ref, and a
-// ref with no derivable name is an error so the operator supplies one rather
+// injected for tests. A ref with no derivable reverse-DNS name errors rather
 // than publishing under a guessed namespace.
 func publishToRegistryWith(ctx context.Context, w io.Writer, ref reference.Reference, bundlePath, nameOverride string, verifyPublic func(context.Context, reference.Reference) (string, error)) error {
 	name := nameOverride
@@ -94,10 +90,8 @@ func publishToRegistryWith(ctx context.Context, w io.Writer, ref reference.Refer
 		return fmt.Errorf("not logged in to the MCP Registry; run 'agentcage login mcp-registry' first")
 	}
 
-	// The registry only indexes metadata, so an entry is worthless without a
-	// public bundle behind it. Confirm the artifact is pushed and anonymously
-	// pullable before advertising it; a missing or private one is refused, not
-	// published into a dangling pointer.
+	// The registry indexes metadata only; refuse to advertise a bundle that is
+	// not pushed and anonymously pullable, rather than publish a dangling pointer.
 	if _, err := verifyPublic(ctx, ref); err != nil {
 		return fmt.Errorf("cannot publish %s: its bundle is not pushed to a public OCI host (run 'agentcage push' first, and make the package public): %w", name, err)
 	}
@@ -114,13 +108,10 @@ func publishToRegistryWith(ctx context.Context, w io.Writer, ref reference.Refer
 	return nil
 }
 
-// publishDecision decides whether a successful push also attempts to publish: a
-// public host attempts, a private host is skipped, and the operator's flags win.
-// It does not confirm visibility here, because publishToRegistry resolves the
-// artifact anonymously before advertising it and refuses a private or missing
-// one, so a public host can attempt freely and the real gate catches the rest.
-// The reason string explains a skip; an empty reason with publish=false means the
-// operator asked for --private.
+// publishDecision decides whether a push also attempts to publish: operator
+// flags win, else a public host attempts and a private host skips. Visibility
+// is not confirmed here; publishToRegistry is the real gate. An empty reason
+// with publish=false means the operator asked for --private.
 func publishDecision(host string, forcePublic, forcePrivate bool) (publish bool, reason string) {
 	switch {
 	case forcePrivate:
@@ -134,12 +125,9 @@ func publishDecision(host string, forcePublic, forcePrivate bool) (publish bool,
 	}
 }
 
-// preparePublish is push's pre-flight: it decides, before the OCI upload,
-// whether this push will publish, and gets the operator logged in when they
-// want to. Running first means an unpublishable push is caught before the
-// expensive upload, and the short-lived registry token is minted right before
-// the publish step uses it. False means push-only; an error means the operator
-// aborted.
+// preparePublish is push's pre-flight: it decides before the OCI upload whether
+// this push will publish, and gets the operator logged in when they want to.
+// False means push-only; an error means the operator aborted.
 func preparePublish(cmd *cobra.Command, ref reference.Reference, forcePublic, forcePrivate bool) (bool, error) {
 	publish, reason := publishDecision(ref.Registry, forcePublic, forcePrivate)
 	if !publish {
@@ -151,12 +139,11 @@ func preparePublish(cmd *cobra.Command, ref reference.Reference, forcePublic, fo
 	return confirmLoginIfNeeded(cmd, forcePublic)
 }
 
-// confirmLoginIfNeeded ensures a live registry token exists, offering an
-// interactive operator the login (a short-lived token is best minted right
-// before use). mustPublish is set when the operator explicitly asked to publish
-// (register, or push --public); it turns a missing app or a non-interactive
-// session into an error rather than a silent skip. A non-interactive session
-// never prompts: it publishes if already logged in, else skips with a note.
+// confirmLoginIfNeeded ensures a live registry token, offering an interactive
+// operator the login. mustPublish (register, or push --public) turns a missing
+// app or a non-interactive session into an error rather than a silent skip. A
+// non-interactive session never prompts: publish if logged in, else skip with
+// a note.
 func confirmLoginIfNeeded(cmd *cobra.Command, mustPublish bool) (bool, error) {
 	if tok, found, err := mcpregistry.LoadToken(); err == nil && found && !tok.Expired() {
 		return true, nil

@@ -38,18 +38,16 @@ func TestSetupPlain_StartCompletesPrevious(t *testing.T) {
 	ui.Done()
 
 	out := buf.String()
-	// Expect a "done in" line emitted when transitioning a -> b,
-	// and another when Done is called for b.
+	// One "done in" line for the a -> b transition, one at Done for b.
 	if got := strings.Count(out, "done in"); got != 2 {
 		t.Errorf("got %d 'done in' lines, want 2:\n%s", got, out)
 	}
 }
 
 func TestSetupPlain_SkippedPhasesAreAutoCompleted(t *testing.T) {
-	// Lima's Ubuntu-image-already-cached path skips the "Preparing"
-	// phase: our tap sees Booting markers but no Pulling markers.
-	// The renderer must still mark Preparing done so it doesn't sit
-	// as a dot forever in the final output.
+	// Regression: with Lima's Ubuntu image cached, the tap sees Booting
+	// markers but no Pulling markers, and "Preparing" used to sit as a dot
+	// forever.
 	var buf bytes.Buffer
 	ui := NewSetupPlain(&buf, "", "", []string{"alpha", "beta", "gamma"})
 	ui.Start("alpha")
@@ -70,17 +68,14 @@ func TestSetupPlain_UnknownPhaseIsNoop(t *testing.T) {
 	ui := NewSetupPlain(&buf, "", "", []string{"a"})
 	ui.Start("not-in-list")
 	ui.Done()
-	// Should not have started anything; no "-> not-in-list" line.
 	if strings.Contains(buf.String(), "not-in-list") {
 		t.Errorf("plain output should ignore unknown phase names:\n%s", buf.String())
 	}
 }
 
 func TestSetupPlain_StartIsIdempotentForActivePhase(t *testing.T) {
-	// The Lima tap fires many "downloading" / "[hostagent]" lines
-	// per phase. Each call to Start for the already-active phase
-	// must NOT print a duplicate "-> name" header or otherwise
-	// disturb the active state.
+	// The Lima tap fires many markers per phase; Start on the active phase
+	// must not print a duplicate "-> name" header.
 	var buf bytes.Buffer
 	ui := NewSetupPlain(&buf, "", "", []string{"alpha"})
 	ui.Start("alpha")
@@ -125,8 +120,6 @@ func TestHumanDuration(t *testing.T) {
 }
 
 func TestDisplayLen_CountsRunes(t *testing.T) {
-	// The spinner glyphs and checkmark are multi-byte; alignment
-	// would break if we counted bytes.
 	cases := map[string]int{
 		"":      0,
 		"abc":   3,
@@ -145,8 +138,6 @@ func TestFormatTwoColumn_PadsAndTruncates(t *testing.T) {
 	if !strings.HasPrefix(short, "left") || !strings.HasSuffix(short, "right") {
 		t.Errorf("two-column output should keep both ends: %q", short)
 	}
-	// When left+right exceeds width, left gets truncated and right
-	// is preserved.
 	wide := strings.Repeat("x", 100)
 	got := formatTwoColumn(wide, "right")
 	if !strings.HasSuffix(got, "right") {
@@ -154,8 +145,6 @@ func TestFormatTwoColumn_PadsAndTruncates(t *testing.T) {
 	}
 }
 
-// errTest is a small string-error type so we do not import "errors"
-// just for this file.
 type errTest string
 
 func (e errTest) Error() string { return string(e) }

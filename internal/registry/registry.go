@@ -1,15 +1,7 @@
-// Package registry pushes and pulls .agent bundles as OCI artifacts and
-// resolves reference tags to the digests the manifest lockfile records.
-//
-// A bundle ships as a single OCI layer (the gzip-tar .agent file) under
-// an image manifest whose artifactType marks it as agentcage's. Any OCI
-// registry can store, dedupe, and serve it without understanding what a
-// bundle is. Authentication reuses the operator's stored OCI registry
-// credentials, so there is no agentcage-specific login.
-//
-// Pulls are content-addressed: a bundle fetched once lands in the local
-// cache keyed by its manifest digest, and a later pull of the same digest
-// never touches the network.
+// Package registry pushes and pulls .agent bundles as OCI artifacts: one
+// gzip-tar layer under a manifest whose artifactType marks it agentcage's.
+// Auth reuses the operator's stored OCI credentials. Pulls are cached by
+// manifest digest; a repeated digest pull never touches the network.
 package registry
 
 import (
@@ -37,36 +29,29 @@ import (
 )
 
 const (
-	// BundleMediaType is the OCI layer media type for a packed .agent
-	// bundle. Changing this string strands every bundle already pushed
-	// under the old type.
+	// BundleMediaType is the OCI layer media type for a packed .agent bundle.
+	// Changing it strands every bundle already pushed under the old type.
 	BundleMediaType = "application/vnd.agentcage.bundle.v1+tar+gzip"
 
-	// ArtifactType marks the bundle's OCI manifest so a registry browser
-	// can tell an agentcage bundle from an ordinary container image.
+	// ArtifactType marks the bundle's OCI manifest as an agentcage bundle.
 	ArtifactType = "application/vnd.agentcage.bundle.v1"
 
 	// mcpServerNameAnnotation is the ownership annotation the MCP Registry
-	// requires on a published OCI artifact: it must name the reverse-DNS
-	// server the artifact belongs to, so a registry entry cannot point at an
-	// image whose author did not opt into being that server. Push stamps it
-	// on a GHCR ref, whose reverse-DNS name is derivable.
+	// requires: the artifact must name the reverse-DNS server it belongs to.
+	// Push stamps it on GHCR refs, whose reverse-DNS name is derivable.
 	mcpServerNameAnnotation = "io.modelcontextprotocol.server.name"
 )
 
-// Client talks to remote OCI registries on the operator's behalf. The
-// auth client is built once from the stored OCI credentials and reused
-// across repositories so a multi-pull resolve does not re-read config per call.
+// Client talks to remote OCI registries. The auth client is built once and
+// reused across repositories.
 type Client struct {
 	cacheDir string
 	auth     remote.Client
 }
 
-// New builds a Client with credential-store authentication and the default
-// on-disk cache (~/.agentcage/cache). It fails closed: an unreadable
-// credential store is an error, not a silent fall-through to anonymous
-// access, so a private pull does not surprise the operator with a 401 three
-// layers down.
+// New builds a Client with credential-store auth and the default cache
+// (~/.agentcage/cache). An unreadable credential store is an error, not a
+// silent fall-through to anonymous access.
 func New() (*Client, error) {
 	store, err := credentials.NewStoreFromDocker(credentials.StoreOptions{})
 	if err != nil {
@@ -86,9 +71,8 @@ func New() (*Client, error) {
 	}, nil
 }
 
-// Push uploads the bundle at bundlePath to ref and returns the digest of
-// the pushed manifest. The digest is what callers lock into a parent's
-// manifest so later pulls fetch exactly this artifact.
+// Push uploads the bundle at bundlePath to ref and returns the pushed
+// manifest's digest.
 func (c *Client) Push(ctx context.Context, ref reference.Reference, bundlePath string) (string, error) {
 	if ref.Tag == "" {
 		return "", fmt.Errorf("push %s: a tag is required", ref.Original)
@@ -98,8 +82,8 @@ func (c *Client) Push(ctx context.Context, ref reference.Reference, bundlePath s
 		return "", err
 	}
 
-	// A GHCR ref maps to a reverse-DNS server name, so a push to one is
-	// publish-bound: stamp the ownership annotation the MCP Registry checks.
+	// A GHCR ref is publish-bound: stamp the ownership annotation the MCP
+	// Registry checks.
 	var annotations map[string]string
 	if name, ok := ref.ReverseDNSName(); ok {
 		annotations = map[string]string{mcpServerNameAnnotation: name}
@@ -113,8 +97,7 @@ func (c *Client) Push(ctx context.Context, ref reference.Reference, bundlePath s
 }
 
 // Resolve reports the digest a reference currently points at without
-// downloading the bundle. The build-time USES resolver uses this to lock
-// a tag into the manifest.
+// downloading the bundle.
 func (c *Client) Resolve(ctx context.Context, ref reference.Reference) (string, error) {
 	repo, err := c.repository(ref)
 	if err != nil {
@@ -127,10 +110,9 @@ func (c *Client) Resolve(ctx context.Context, ref reference.Reference) (string, 
 	return desc.Digest.String(), nil
 }
 
-// Pull fetches the bundle ref names into the local cache and returns its
-// path plus the resolved manifest digest. A reference already pinned to a
-// digest that is present in the cache returns immediately with no network
-// access at all.
+// Pull fetches the bundle into the local cache and returns its path plus the
+// resolved manifest digest. A digest-pinned reference already in the cache
+// returns with no network access.
 func (c *Client) Pull(ctx context.Context, ref reference.Reference) (bundlePath, digest string, err error) {
 	if ref.Digest != "" {
 		if path := c.cachePath(ref.Digest); fileExists(path) {
@@ -156,19 +138,16 @@ func (c *Client) Pull(ctx context.Context, ref reference.Reference) (bundlePath,
 	return path, digest, nil
 }
 
-// ResolvePublic reports the digest a reference points at using no credentials.
-// It succeeds only for an artifact that is actually pushed and publicly
-// pullable: a public repo grants an anonymous pull token, a private or missing
-// one fails auth. Publish uses it as the gate before advertising a bundle on the
-// MCP Registry, so a metadata pointer never outruns the public artifact it names.
+// ResolvePublic reports the digest a reference points at using no
+// credentials. It succeeds only for an artifact that is pushed and publicly
+// pullable; publish gates MCP Registry advertising on it.
 func ResolvePublic(ctx context.Context, ref reference.Reference) (string, error) {
 	repo, err := remote.NewRepository(ref.Registry + "/" + ref.Repository)
 	if err != nil {
 		return "", fmt.Errorf("addressing %s/%s: %w", ref.Registry, ref.Repository, err)
 	}
-	// No Credential func: the auth client negotiates an anonymous pull token,
-	// which a public repo grants and a private one refuses. That refusal is the
-	// signal, so this deliberately does not fall back to stored credentials.
+	// No Credential func: an anonymous pull token succeeds only on a public
+	// repo. The refusal is the signal; no fallback to stored credentials.
 	repo.Client = &auth.Client{Client: retry.DefaultClient, Cache: auth.NewCache()}
 	desc, err := repo.Resolve(ctx, resolveTarget(ref))
 	if err != nil {
@@ -177,10 +156,9 @@ func ResolvePublic(ctx context.Context, ref reference.Reference) (string, error)
 	return desc.Digest.String(), nil
 }
 
-// Login validates username/password against the registry host and stores
-// the credential in the shared OCI credential store, so later push and pull
-// authenticate without re-entering it. A credential the registry rejects
-// is an error: a login that silently failed is worse than no login.
+// Login validates username/password against the registry host and stores the
+// credential in the shared OCI credential store. A rejected credential is an
+// error, never stored.
 func Login(ctx context.Context, host, username, password string) error {
 	if host == "" {
 		return fmt.Errorf("login: a registry host is required")
@@ -193,9 +171,8 @@ func Login(ctx context.Context, host, username, password string) error {
 	if err != nil {
 		return fmt.Errorf("addressing registry %s: %w", host, err)
 	}
-	// credentials.Login validates the credential against the registry and
-	// stores it. It uses its own client internally, so reg.Client stays
-	// nil; the credential we pass is applied to the validating request.
+	// credentials.Login validates then stores; it uses its own client, so
+	// reg.Client stays nil.
 	cred := auth.Credential{Username: username, Password: password}
 	if err := credentials.Login(ctx, store, reg, cred); err != nil {
 		return fmt.Errorf("logging in to %s: %w", host, err)
@@ -213,8 +190,8 @@ func (c *Client) repository(ref reference.Reference) (*remote.Repository, error)
 	return repo, nil
 }
 
-// resolveTarget is the tag-or-digest fragment registry operations take.
-// Digest wins so a locked reference fetches exactly what it pinned.
+// resolveTarget is the tag-or-digest fragment registry operations take;
+// digest wins.
 func resolveTarget(ref reference.Reference) string {
 	if ref.Digest != "" {
 		return ref.Digest
@@ -222,16 +199,13 @@ func resolveTarget(ref reference.Reference) string {
 	return ref.Tag
 }
 
-// packBundle uploads the bundle blob to dst, packs an OCI image manifest that
-// references it, and (when tag is non-empty) tags the manifest, returning the
-// manifest descriptor. dst is an oras.Target so the body runs against a remote
-// repository (Push), an in-memory store (BundleDigest), or a test store.
+// packBundle uploads the bundle blob to dst, packs an OCI manifest over it,
+// and tags it when tag is non-empty.
 //
-// The manifest's created annotation is pinned to the bundle's own build time,
-// not the current wall clock, so the manifest digest is a deterministic
-// function of the bundle bytes. That is what lets BundleDigest compute, before
-// any push, the exact digest a later push will produce: a locally locked USES
-// digest stays valid once its dependency is pushed.
+// The created annotation is pinned to the bundle's built_at, not wall clock,
+// making the manifest digest a deterministic function of the bundle bytes.
+// That lets BundleDigest compute, before any push, the exact digest a later
+// push produces, so a locally locked USES digest stays valid.
 func packBundle(ctx context.Context, dst oras.Target, tag, bundlePath string, annotations map[string]string) (ocispec.Descriptor, error) {
 	data, err := os.ReadFile(bundlePath)
 	if err != nil {
@@ -264,9 +238,9 @@ func packBundle(ctx context.Context, dst oras.Target, tag, bundlePath string, an
 		Layers:              []ocispec.Descriptor{blob},
 		ManifestAnnotations: manifestAnnotations,
 	}
-	// The MCP Registry reads its ownership marker from the image config's
+	// The MCP Registry reads the ownership marker from the image config's
 	// Labels, not the manifest annotations, so a publish-bound push carries a
-	// config blob with those labels in place of the empty artifact config.
+	// labeled config blob instead of the empty artifact config.
 	if len(annotations) > 0 {
 		cfgDesc, err := pushConfigWithLabels(ctx, dst, annotations)
 		if err != nil {
@@ -286,9 +260,8 @@ func packBundle(ctx context.Context, dst oras.Target, tag, bundlePath string, an
 	return manifestDesc, nil
 }
 
-// pushConfigWithLabels uploads an OCI image config whose Labels carry the given
-// markers, and returns its descriptor. The MCP Registry's ownership check reads
-// the server-name label from here, the same place a Dockerfile LABEL lands.
+// pushConfigWithLabels uploads an OCI image config carrying the given Labels,
+// the same place a Dockerfile LABEL lands.
 func pushConfigWithLabels(ctx context.Context, dst oras.Target, labels map[string]string) (ocispec.Descriptor, error) {
 	cfg := struct {
 		Config struct {
@@ -313,12 +286,8 @@ func pushConfigWithLabels(ctx context.Context, dst oras.Target, labels map[strin
 	return desc, nil
 }
 
-// BundleDigest computes the OCI manifest digest the bundle would be pushed
-// under, without any network access, by packing its manifest against an
-// in-memory store. It is deterministic and equals the digest Push returns, so a
-// locally built bundle can be locked into a parent's USES and later pulled back
-// by that same digest. The build seeds the pull cache under it (SeedCache) so
-// the runtime resolves a local dependency without a registry.
+// BundleDigest computes, with no network access, the OCI manifest digest the
+// bundle would be pushed under. Deterministic and equal to what Push returns.
 func BundleDigest(bundlePath string) (string, error) {
 	desc, err := packBundle(context.Background(), memory.New(), "", bundlePath, nil)
 	if err != nil {
@@ -327,16 +296,10 @@ func BundleDigest(bundlePath string) (string, error) {
 	return desc.Digest.String(), nil
 }
 
-// SeedCache writes the bundle at bundlePath into the local pull cache under
-// digest, so a later Pull of that digest is a local hit with no network. The
-// build uses it to make a locally built dependency reachable by the runtime,
-// which pulls sub-agents by their locked digest. digest must be the bundle's
-// own BundleDigest; seeding a mismatched digest would hand the runtime the
-// wrong bytes for a lock.
-//
-// It is a package function, not a Client method, because seeding is a local
-// filesystem write that a purely local build must do without registry
-// credentials.
+// SeedCache writes the bundle into the local pull cache under digest, which
+// must be the bundle's own BundleDigest; a mismatched digest hands out the
+// wrong bytes for a lock. Package function, not a Client method: seeding is a
+// local write that must work without registry credentials.
 func SeedCache(digest, bundlePath string) error {
 	dir, err := cacheDir()
 	if err != nil {
@@ -352,10 +315,9 @@ func SeedCache(digest, bundlePath string) error {
 	return nil
 }
 
-// fetchBundle resolves a reference to its manifest, finds the single
-// bundle layer, and returns the verified bundle bytes. content.ReadAll
-// checks the digest and size, so a registry that serves corrupted or
-// truncated content is caught before the bytes reach the cache.
+// fetchBundle resolves a reference to its manifest and returns the verified
+// bundle layer bytes. content.ReadAll checks digest and size, catching
+// corrupted or truncated content before it reaches the cache.
 func fetchBundle(ctx context.Context, src oras.ReadOnlyTarget, ref string) ([]byte, ocispec.Descriptor, error) {
 	manifestDesc, err := src.Resolve(ctx, ref)
 	if err != nil {
@@ -402,14 +364,12 @@ func bundleLayer(layers []ocispec.Descriptor) (ocispec.Descriptor, bool) {
 	return ocispec.Descriptor{}, false
 }
 
-// cachePath is where a bundle of the given digest lives on disk.
 func (c *Client) cachePath(digest string) string {
 	return bundleCachePath(c.cacheDir, digest)
 }
 
-// bundleCachePath is where a bundle of the given digest lives under cacheDir.
-// The ':' in a digest is not portable in a filename, so sha256:abc becomes
-// sha256-abc.
+// bundleCachePath maps a digest to its cache path; ':' becomes '-' for
+// filename portability.
 func bundleCachePath(cacheDir, digest string) string {
 	return filepath.Join(cacheDir, "bundles", strings.ReplaceAll(digest, ":", "-")+".agent")
 }
@@ -422,8 +382,8 @@ func writeCache(path string, data []byte) error {
 	if err := os.WriteFile(tmp, data, 0o644); err != nil {
 		return err
 	}
-	// Rename-on-success so an interrupted pull never leaves a partial
-	// bundle masquerading as a complete cache hit.
+	// Write-then-rename so an interrupted pull never leaves a partial bundle
+	// masquerading as a cache hit.
 	return os.Rename(tmp, path)
 }
 
@@ -432,8 +392,7 @@ func fileExists(path string) bool {
 	return err == nil && !info.IsDir()
 }
 
-// cacheDir is the root of agentcage's on-disk cache, ~/.agentcage/cache,
-// overridable via AGENTCAGE_HOME for operators who keep state elsewhere.
+// cacheDir resolves ~/.agentcage/cache, honoring AGENTCAGE_HOME.
 func cacheDir() (string, error) {
 	if home := strings.TrimSpace(os.Getenv(env.Home)); home != "" {
 		return filepath.Join(home, "cache"), nil

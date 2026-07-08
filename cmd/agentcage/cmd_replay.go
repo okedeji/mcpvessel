@@ -85,8 +85,7 @@ it attaches the provider key, so a recording never contains a key.`,
 	return cmd
 }
 
-// saveReplay fetches the run's artifact from the daemon and writes a host copy,
-// then prints a one-line confirmation with the path and event count.
+// saveReplay fetches the run's artifact from the daemon and writes a host copy.
 func saveReplay(cmd *cobra.Command, socket, runID string) error {
 	data, err := daemon.Dial(socket).FetchReplay(cmd.Context(), runID)
 	if err != nil {

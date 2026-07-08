@@ -7,12 +7,10 @@ import (
 )
 
 func TestRawOrString(t *testing.T) {
-	// Valid JSON passes through unchanged so the artifact renders it as an object.
 	if got := RawOrString([]byte(`{"a":1}`)); string(got) != `{"a":1}` {
 		t.Errorf("valid JSON = %s, want passthrough", got)
 	}
-	// A non-JSON body (a streamed SSE response) becomes a JSON string so the
-	// surrounding artifact stays valid JSON.
+	// A non-JSON body (streamed SSE) must become a JSON string.
 	got := RawOrString([]byte("data: hi\n\n"))
 	var s string
 	if err := json.Unmarshal(got, &s); err != nil || s != "data: hi\n\n" {

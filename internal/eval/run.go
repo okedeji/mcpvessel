@@ -16,9 +16,9 @@ import (
 // nowFunc is overridable so tests can pin the suite's elapsed time.
 var nowFunc = time.Now
 
-// runner is the daemon seam: the eval runner sends each case through the same
-// one-shot path as `agentcage run`. It is defined here, at the point of
-// consumption, so a test drives a whole suite with a fake and no daemon.
+// runner is the daemon seam: each case goes through the same one-shot path as
+// `agentcage run`. Defined at the point of consumption so a test drives a
+// whole suite with a fake.
 type runner interface {
 	RunOnceUsage(ctx context.Context, req daemon.RunRequest, logs io.Writer) (string, daemon.RunUsage, error)
 }
@@ -29,8 +29,8 @@ type scorer interface {
 	Score(ctx context.Context, rubric, input, output string) (Verdict, error)
 }
 
-// Verdict is a judge's grade of one output: a score in [0, 1], a one-line
-// reason, and what the grading call itself cost.
+// Verdict is a judge's grade: a score in [0, 1], a one-line reason, and the
+// grading call's own cost.
 type Verdict struct {
 	Score        float64
 	Reason       string
@@ -51,10 +51,9 @@ type Options struct {
 }
 
 // Run executes a suite (or one case of it) and returns the report. It errors
-// only on a harness fault the operator must fix before anything runs: an
-// unknown --case, or a judged case with no judge configured. A case that
-// fails its expectations, errors, times out, or overspends is a failed case in
-// the report, not a returned error; the suite always runs to completion.
+// only on a harness fault: an unknown --case, or a judged case with no judge
+// configured. A case that fails, errors, times out, or overspends is a failed
+// case in the report; the suite always runs to completion.
 func Run(ctx context.Context, d runner, j scorer, opts Options) (*Report, error) {
 	cases := opts.Suite.Cases
 	if opts.CaseName != "" {
@@ -105,8 +104,8 @@ func Run(ctx context.Context, d runner, j scorer, opts Options) (*Report, error)
 func runCase(ctx context.Context, d runner, j scorer, opts Options, c Case) CaseResult {
 	res := CaseResult{Name: c.Name}
 
-	// The public-tool check happens before any boot: a case that names a private
-	// or nonexistent tool fails cheaply, with the same contract call/run enforce.
+	// Checked before any boot so a case naming a private or nonexistent tool
+	// fails cheaply.
 	if err := toolIsPublic(opts.Manifest, c.Input.Tool); err != nil {
 		res.Failures = []string{err.Error()}
 		return res
@@ -124,8 +123,8 @@ func runCase(ctx context.Context, d runner, j scorer, opts Options, c Case) Case
 	res.CostMicroUSD = usage.CostMicroUSD
 	res.DurationMS = usage.CallDuration.Milliseconds()
 
-	// A run error (a crash, an over-budget refusal, or the timeout firing) is a
-	// case failure. There is no output to check or judge, so the case ends here.
+	// A run error (crash, over-budget refusal, fired timeout) fails the case;
+	// there is no output to check or judge.
 	if err != nil {
 		res.Failures = []string{runFailureReason(err, c)}
 		return res
@@ -152,8 +151,8 @@ func runCase(ctx context.Context, d runner, j scorer, opts Options, c Case) Case
 	return res
 }
 
-// runFailureReason phrases a run error for the report. A fired timeout reads as
-// the ceiling it broke, not the raw context error the daemon surfaced.
+// runFailureReason phrases a run error for the report: a fired timeout reads
+// as the ceiling it broke, not the raw context error.
 func runFailureReason(err error, c Case) string {
 	if c.Expect.MaxDurationSeconds > 0 && strings.Contains(err.Error(), "context deadline exceeded") {
 		return fmt.Sprintf("exceeded max_duration_seconds (%ds)", c.Expect.MaxDurationSeconds)
@@ -177,8 +176,8 @@ func checkExpectations(e Expect, output string, usage daemon.RunUsage) []string 
 		fails = append(fails, fmt.Sprintf("output does not equal %q", *e.OutputEquals))
 	}
 	for _, pat := range e.OutputMatches {
-		// The pattern compiled at suite load, so a compile error here cannot
-		// happen; handle it as a failure rather than a panic all the same.
+		// Compiled at suite load, so an error here should be impossible;
+		// fail rather than panic all the same.
 		re, err := regexp.Compile(pat)
 		if err != nil {
 			fails = append(fails, fmt.Sprintf("output_matches %q is not a valid regexp: %v", pat, err))
@@ -188,8 +187,8 @@ func checkExpectations(e Expect, output string, usage daemon.RunUsage) []string 
 			fails = append(fails, fmt.Sprintf("output does not match /%s/", pat))
 		}
 	}
-	// The gateway budget is a soft cap: a call already in flight can push spend
-	// past it and still complete, so a passing run is post-checked against the
+	// The gateway budget is a soft cap: an in-flight call can push spend past
+	// it and still complete, so a passing run is post-checked against the
 	// recorded cost too.
 	if e.MaxCostUSD > 0 && usage.CostMicroUSD > e.MaxCostMicroUSD() {
 		fails = append(fails, fmt.Sprintf("cost %s exceeds max_cost_usd %s", FormatUSD(usage.CostMicroUSD), FormatUSD(e.MaxCostMicroUSD())))
@@ -200,8 +199,7 @@ func checkExpectations(e Expect, output string, usage daemon.RunUsage) []string 
 	return fails
 }
 
-// toolIsPublic mirrors the MAIN-or-EXPOSE contract call and run enforce: an
-// eval case may only invoke a tool the agent exposes.
+// toolIsPublic mirrors the MAIN-or-EXPOSE contract that call and run enforce.
 func toolIsPublic(m *bundle.Manifest, tool string) error {
 	if m.Agentfile.Main == tool {
 		return nil
@@ -214,8 +212,8 @@ func toolIsPublic(m *bundle.Manifest, tool string) error {
 	return fmt.Errorf("tool %q is not public on this bundle (declare it via MAIN or EXPOSE)", tool)
 }
 
-// describeInput renders a case's input for the judge so the model sees what was
-// asked, not just the answer.
+// describeInput renders the case's input so the judge sees what was asked,
+// not just the answer.
 func describeInput(c Case) string {
 	if len(c.Input.Args) == 0 {
 		return c.Input.Tool

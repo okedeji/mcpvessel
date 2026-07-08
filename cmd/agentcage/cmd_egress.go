@@ -12,9 +12,9 @@ import (
 	"github.com/okedeji/agentcage/internal/env"
 )
 
-// newEgressCmd runs the in-run egress proxy. It is hidden: the runtime starts
-// it inside the egress container, not operators. Its per-source host allow
-// lists arrive as environment the runtime injects.
+// newEgressCmd runs the in-run egress proxy. Hidden: the runtime starts it
+// inside the egress container; its per-source allow lists arrive as injected
+// environment.
 func newEgressCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:    "egress",

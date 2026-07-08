@@ -1,7 +1,6 @@
-// Package secrets stores and reads the operator's named secret values in a
-// 0600 file under ~/.agentcage, so a secret is provided once and reused
-// across runs instead of re-passed every time. A provider endpoint's key and
-// an agent's SECRETS entry both resolve against this store by name.
+// Package secrets stores the operator's named secret values in a 0600 file
+// under ~/.agentcage. Provider endpoint keys and an agent's SECRETS entries
+// both resolve against it by name.
 package secrets
 
 import (
@@ -16,10 +15,9 @@ import (
 	"github.com/okedeji/agentcage/internal/env"
 )
 
-// Store holds the operator's named secret values. The map is unexported and
-// the three redacting methods below keep a value from leaking through %v,
-// %#v, or a stray json.Marshal of the Store. Persistence goes through the
-// inner map directly, not these methods.
+// Store holds named secret values. The redacting methods below keep values
+// from leaking through %v, %#v, or a stray json.Marshal; persistence goes
+// through the inner map directly.
 type Store struct {
 	values map[string]string
 }
@@ -29,8 +27,7 @@ func (s Store) GoString() string             { return s.String() }
 func (s Store) MarshalJSON() ([]byte, error) { return []byte(`"[redacted]"`), nil }
 
 // Load reads the secret store. A missing file is an empty store; a malformed
-// file is an error, fail-closed, so a corrupt store does not silently drop
-// every secret an agent depends on.
+// file fails closed rather than silently dropping every secret.
 func Load() (*Store, error) {
 	path, err := secretsPath()
 	if err != nil {
@@ -51,7 +48,7 @@ func Load() (*Store, error) {
 }
 
 // Save writes the store back with 0600 permissions. It marshals the inner
-// map, so the redacting MarshalJSON above does not blank the real values.
+// map to bypass the redacting MarshalJSON.
 func (s *Store) Save() error {
 	path, err := secretsPath()
 	if err != nil {
@@ -84,7 +81,7 @@ func (s *Store) Get(name string) (string, bool) {
 	return v, ok
 }
 
-// Names returns the stored names sorted. Values are never returned here.
+// Names returns the stored names, sorted. Never values.
 func (s *Store) Names() []string {
 	names := make([]string, 0, len(s.values))
 	for n := range s.values {

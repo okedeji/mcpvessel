@@ -9,8 +9,8 @@ import (
 	"testing"
 )
 
-// stubGitHub answers the two device-flow endpoints. polls counts access-token
-// requests so a test can make the first poll pending and the second succeed.
+// stubGitHub answers the two device-flow endpoints; pendingFirst makes the
+// first poll return authorization_pending.
 func stubGitHub(t *testing.T, accessToken string, pendingFirst bool) string {
 	t.Helper()
 	polls := 0

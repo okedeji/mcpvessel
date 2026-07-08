@@ -1,13 +1,7 @@
-// Package resolve turns the tags in a USES dependency graph into the
-// digests the manifest lockfile records, and refuses graphs that loop
-// back on themselves.
-//
-// Digest resolution is the cheap, always-run half: each direct
-// dependency's tag is resolved against the registry to a digest. Cycle
-// detection is the expensive half: it walks the transitive graph, pulling
-// each sub-agent's manifest to read its own USES, and reports the first
-// cycle it finds. A build can skip the walk for a large graph it trusts,
-// at the cost of shifting that failure to first run.
+// Package resolve locks USES tags to the digests the manifest lockfile
+// records and rejects cyclic graphs. Digest resolution always runs; cycle
+// detection walks the transitive graph (pulling each sub-agent's manifest)
+// and can be skipped, shifting a cycle failure to first run.
 package resolve
 
 import (
@@ -20,9 +14,8 @@ import (
 	"github.com/okedeji/agentcage/internal/reference"
 )
 
-// registryClient is the slice of the registry the resolver needs. It is
-// declared here, at the point of consumption, so tests can stand in a
-// fake without a network or credentials. *registry.Client satisfies it.
+// registryClient is the slice of the registry the resolver needs.
+// *registry.Client satisfies it.
 type registryClient interface {
 	Resolve(ctx context.Context, ref reference.Reference) (string, error)
 	Pull(ctx context.Context, ref reference.Reference) (bundlePath, digest string, err error)
@@ -40,24 +33,18 @@ func New(reg registryClient) *Resolver {
 
 // Options tune one Resolve call.
 type Options struct {
-	// ParentKey is the @org/name:version of the agent being built, taken
-	// from `agentcage build -t`. When set, a transitive USES that points
-	// back at it is reported as a cycle. Empty means the build was given
-	// no tag, so a loop back to the parent cannot be named; dependency
-	// internal cycles are still caught.
+	// ParentKey is the @org/name:version being built. When set, a transitive
+	// USES pointing back at it is a cycle. Empty (untagged build) means a loop
+	// to the parent cannot be named; internal cycles are still caught.
 	ParentKey string
 
-	// SkipCycleCheck skips the transitive walk. Digests are still
-	// resolved. The escape hatch for graphs too large to walk on every
-	// build, accepting that a cycle then surfaces at first run instead.
+	// SkipCycleCheck skips the transitive walk; digests are still resolved.
 	SkipCycleCheck bool
 }
 
 // Result is what a successful Resolve returns.
 type Result struct {
-	// Digests maps each direct dependency's "@org/name:version" to the
-	// digest its tag resolved to. The build looks each USES up here to
-	// fill the manifest lockfile.
+	// Digests maps each direct dependency's "@org/name:version" to its digest.
 	Digests map[string]string
 }
 
@@ -85,9 +72,8 @@ func (r *Resolver) Resolve(ctx context.Context, uses []agentfile.Use, opts Optio
 	return Result{Digests: digests}, nil
 }
 
-// checkCycles walks the dependency graph depth-first. A node already on
-// the current path is a cycle; a node fully explored without one is cached
-// so a diamond-shaped graph is not re-walked (and not re-pulled).
+// checkCycles walks the graph depth-first. A node on the current path is a
+// cycle; fully explored nodes are cached so diamonds are not re-walked.
 func (r *Resolver) checkCycles(ctx context.Context, parentKey string, uses []agentfile.Use) error {
 	onPath := map[string]bool{}
 	var path []string
@@ -127,9 +113,8 @@ func (r *Resolver) checkCycles(ctx context.Context, parentKey string, uses []age
 	return visit(uses)
 }
 
-// subAgentUses pulls a sub-agent's bundle and returns the USES it
-// declares. Results are cached by key so each node is pulled at most once
-// per resolution.
+// subAgentUses pulls a sub-agent's bundle and returns its declared USES,
+// cached so each node is pulled at most once per resolution.
 func (r *Resolver) subAgentUses(ctx context.Context, u agentfile.Use, cache map[string][]agentfile.Use) ([]agentfile.Use, error) {
 	k := key(u)
 	if cached, ok := cache[k]; ok {
@@ -152,21 +137,18 @@ func (r *Resolver) subAgentUses(ctx context.Context, u agentfile.Use, cache map[
 	return children, nil
 }
 
-// refOf reconstructs the OCI reference for a USES entry. The Agentfile
-// parser splits the tag off into Version, so they are rejoined here.
+// refOf rejoins the Ref and Version the Agentfile parser split apart.
 func refOf(u agentfile.Use) (reference.Reference, error) {
 	return reference.Parse(u.Ref + ":" + u.Version)
 }
 
-// key is a node's identity in the graph: its ref plus version, the same
-// string the Agentfile author wrote.
+// key is a node's graph identity: ref plus version, as the author wrote it.
 func key(u agentfile.Use) string {
 	return u.Ref + ":" + u.Version
 }
 
-// usesFromSpec narrows a manifest's USES entries to the ref and version
-// the cycle walk needs. Digest, public, and deny do not affect graph
-// shape.
+// usesFromSpec narrows manifest USES entries to ref and version; digest,
+// public, and deny do not affect graph shape.
 func usesFromSpec(specs []bundle.UseSpec) []agentfile.Use {
 	if len(specs) == 0 {
 		return nil

@@ -129,12 +129,9 @@ func parseModel(af *Agentfile, rest string, lineNo int) error {
 	return nil
 }
 
-// parseMain handles the MAIN directive, which names the tool that
-// runs when the agent is invoked as an agent (`agentcage run BUNDLE
-// "..."`). The validator does NOT confirm the tool actually exists in
-// the agent's MCP server. That check belongs to the build-time
-// introspection pass (M2 work). Here we only validate the surface
-// shape: one token, declared at most once.
+// parseMain validates surface shape only: one token, declared at most
+// once. Whether the tool exists in the agent's MCP server is a build-time
+// introspection check, not a parse-time one.
 func parseMain(af *Agentfile, rest string, lineNo int) error {
 	if af.Main != "" {
 		return fmt.Errorf("line %d: MAIN declared twice", lineNo)
@@ -150,11 +147,8 @@ func parseMain(af *Agentfile, rest string, lineNo int) error {
 	return nil
 }
 
-// parseExpose handles the EXPOSE directive. Repeatable. Each invocation
-// adds one or more tool names to the agent's public surface. Tools
-// not in Expose (and not equal to Main) stay private. Duplicate names
-// are silently deduplicated so authors can be redundant across lines
-// without breaking the build.
+// parseExpose handles the repeatable EXPOSE directive. Duplicates across
+// lines are deduped rather than rejected.
 func parseExpose(af *Agentfile, rest string, lineNo int) error {
 	if rest == "" {
 		return fmt.Errorf("line %d: EXPOSE requires at least one tool name", lineNo)
@@ -185,8 +179,6 @@ func parseUses(af *Agentfile, rest string, lineNo int) error {
 	}
 
 	// USES <ref> [DENY tool1,tool2 ...]
-	// Split on whitespace: first token is the ref, remaining tokens are
-	// the optional DENY clause.
 	parts := strings.Fields(rest)
 	if len(parts) == 0 {
 		return fmt.Errorf("line %d: USES requires a reference", lineNo)
@@ -215,10 +207,8 @@ func parseUses(af *Agentfile, rest string, lineNo int) error {
 	return nil
 }
 
-// parseDenyList splits a DENY clause's tail into a deduped list of
-// tool names. Accepts commas, spaces, or tabs as separators so an
-// author can write `DENY a,b,c` or `DENY a b c` and get the same
-// result. Empty entries (from `a,,b`) are dropped.
+// parseDenyList splits on commas or whitespace, deduping and dropping
+// empty entries.
 func parseDenyList(s string) []string {
 	seen := make(map[string]bool)
 	var out []string
@@ -249,8 +239,7 @@ func parseUseRef(ref string, lineNo int) (Use, error) {
 		return Use{}, fmt.Errorf("line %d: USES reference has an empty version tag", lineNo)
 	}
 	if version == "latest" {
-		// latest is too ambiguous for shippable bundles: the tag points
-		// at different content over time, breaking reproducibility.
+		// latest points at different content over time, breaking reproducibility.
 		return Use{}, fmt.Errorf("line %d: USES reference cannot use the latest tag", lineNo)
 	}
 	if !strings.Contains(name[1:], "/") {
@@ -259,14 +248,13 @@ func parseUseRef(ref string, lineNo int) (Use, error) {
 	return Use{Ref: name, Version: version}, nil
 }
 
-// parseBan records an agent the root forbids anywhere in its subtree. An
-// ONLY clause narrows the ban to specific tools; without it, the whole agent
-// is banned. The ref is by name only, no version: a BAN takes out the agent
-// however deep it appears and whatever version a dependency pinned, so a tag
-// would be a foot-gun (you would ban one version and miss the next).
+// parseBan records an agent the root forbids anywhere in its subtree:
 //
-// BAN @org/name              bans the whole agent
-// BAN @org/name ONLY t1,t2   bans those tools of that agent, subtree-wide
+//	BAN @org/name              bans the whole agent
+//	BAN @org/name ONLY t1,t2   bans those tools of that agent, subtree-wide
+//
+// By name only, no version: the ban must catch whatever version a
+// dependency pinned, so a tag would ban one version and miss the next.
 func parseBan(af *Agentfile, rest string, lineNo int) error {
 	fields := strings.Fields(rest)
 	if len(fields) == 0 {
@@ -320,9 +308,8 @@ func parseBudget(af *Agentfile, rest string, lineNo int) error {
 	return nil
 }
 
-// parseUSDMicros turns a USD amount like "5", "5.00", or "0.003" into
-// integer micro-USD (millionths of a dollar) so budgets accumulate without
-// float drift. More than six fractional digits is finer than we track and
+// parseUSDMicros parses "5", "5.00", or "0.003" into integer micro-USD so
+// budgets accumulate without float drift. More than six fractional digits
 // is rejected.
 func parseUSDMicros(s string) (int64, error) {
 	whole, frac, hasFrac := strings.Cut(s, ".")
@@ -351,9 +338,8 @@ func parseUSDMicros(s string) (int64, error) {
 	return micros, nil
 }
 
-// parseResources records the advisory RESOURCES hint. It captures
-// well-formed cpu/mem/pids values and rejects unknown keys; the operator,
-// not these numbers, sets the enforced cap.
+// parseResources records the advisory RESOURCES hint; the operator, not
+// these numbers, sets the enforced cap.
 func parseResources(af *Agentfile, rest string, lineNo int) error {
 	if af.Resources != nil {
 		return fmt.Errorf("line %d: RESOURCES declared twice", lineNo)
@@ -393,12 +379,10 @@ func parseResources(af *Agentfile, rest string, lineNo int) error {
 	return nil
 }
 
-// parseEnv records an ENV directive in two forms. ENV KEY=VALUE is an author
-// default the operator may override. ENV KEY (no value) is an operator-required
-// input with no default: nothing is baked into the image and the run fails
-// closed unless the operator supplies it, which is how an author asks for a
-// deployment system-prompt or base URL it cannot ship a value for. An empty
-// value is the marker for the required form, so the two share one map.
+// parseEnv records both ENV forms. ENV KEY=VALUE is an author default the
+// operator may override. ENV KEY (no value) is an operator-required input:
+// nothing is baked into the image and the run fails closed unless the
+// operator supplies it. The empty value marks the required form.
 func parseEnv(af *Agentfile, rest string, lineNo int) error {
 	key, value, _ := strings.Cut(rest, "=")
 	if key == "" {

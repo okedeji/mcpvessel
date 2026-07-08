@@ -4,8 +4,8 @@ package daemon
 
 import "syscall"
 
-// detachAttrs puts the spawned daemon in its own session, so a Ctrl-C on the
-// terminal that started it does not also kill the daemon it just launched.
+// detachAttrs puts the spawned daemon in its own session; a Ctrl-C on the
+// launching terminal must not kill it.
 func detachAttrs() *syscall.SysProcAttr {
 	return &syscall.SysProcAttr{Setsid: true}
 }

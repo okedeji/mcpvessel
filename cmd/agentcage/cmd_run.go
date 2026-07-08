@@ -70,12 +70,9 @@ Examples:
 				return fmt.Errorf("bundle %s has no MAIN; it is a tool collection. Use 'agentcage call %s TOOL --arg KEY=VALUE' to call one of its tools directly", b.Display, args[0])
 			}
 
-			// The positional prompt gets wrapped as a single-user-turn
-			// messages array, the same {role, content} shape OpenAI
-			// and Anthropic accept. Agents that want multi-turn
-			// continuity receive prior turns through this same arg
-			// when the caller sends them; the platform itself stores
-			// no conversation state.
+			// The prompt becomes a single-user-turn messages array, the
+			// {role, content} shape OpenAI and Anthropic accept. The platform
+			// stores no conversation state; prior turns are the caller's to send.
 			toolArgs := map[string]any{}
 			if prompt != "" {
 				toolArgs["messages"] = []map[string]string{
@@ -144,12 +141,10 @@ Examples:
 	return cmd
 }
 
-// buildInputPools resolves the operator's --env / --env-file / --secret /
-// --secret-file flags into the value pools the runtime injects per agent.
-// --secret values come from the environment or the agentcage store, never the
-// command line, so they stay out of the process table; --secret-file carries
-// NAME=VALUE pairs from a perms-restricted file for a batch. A --secret with no
-// value anywhere is a fail-closed error.
+// buildInputPools resolves the env and secret flags into the pools the runtime
+// injects per agent. --secret values come from the environment or the agentcage
+// store, never the command line, keeping them out of the process table; one
+// with no value anywhere fails closed.
 func buildInputPools(envFlags []string, envFile string, secretFlags []string, secretFile string) (envPool, secretPool map[string]string, err error) {
 	envPool = map[string]string{}
 	if envFile != "" {

@@ -19,9 +19,8 @@ import (
 	"github.com/okedeji/agentcage/internal/registry"
 )
 
-// mcpRegistryTarget is the reserved login argument that means the MCP Registry
-// rather than an OCI host: 'agentcage login mcp-registry' runs the GitHub
-// device flow instead of storing OCI credentials.
+// mcpRegistryTarget is the reserved login argument selecting the MCP Registry
+// (GitHub device flow) rather than an OCI host.
 const mcpRegistryTarget = "mcp-registry"
 
 func newLoginCmd() *cobra.Command {
@@ -85,11 +84,9 @@ Pass --password-stdin to feed a token without it landing in your shell history.`
 	return cmd
 }
 
-// loginMCPRegistry proves the operator's GitHub identity through the device
-// flow, exchanges it for a registry bearer, and caches that bearer so a later
-// push can publish. It fails closed when no OAuth app is configured: there is
-// no anonymous publish, so a login that cannot get a token should say why, not
-// pretend to succeed.
+// loginMCPRegistry runs the GitHub device flow, exchanges the token for a
+// registry bearer, and caches it for push. Fails closed when no OAuth app is
+// configured: there is no anonymous publish.
 func loginMCPRegistry(cmd *cobra.Command) error {
 	clientID := config.LookupEnv(env.GitHubClientID)
 	if clientID == "" {
@@ -117,18 +114,15 @@ func loginMCPRegistry(cmd *cobra.Command) error {
 	return nil
 }
 
-// isInteractive reports whether the command can prompt: its stdin is a real
-// terminal. A pipe or a test buffer is not, so a non-interactive run falls back
-// to defaults instead of blocking on a prompt no one will answer.
+// isInteractive reports whether stdin is a real terminal; a pipe or test
+// buffer must not block on a prompt no one will answer.
 func isInteractive(cmd *cobra.Command) bool {
 	f, ok := cmd.InOrStdin().(*os.File)
 	return ok && term.IsTerminal(int(f.Fd()))
 }
 
-// confirm asks a yes/no question and returns the answer, defaulting to yes on an
-// empty line. It writes the prompt to stderr so a --json command keeps stdout
-// clean. Callers gate it behind isInteractive; on a stray EOF it takes the
-// default rather than looping.
+// confirm asks a yes/no question, defaulting to yes on an empty line or a
+// stray EOF. The prompt goes to stderr so --json commands keep stdout clean.
 func confirm(cmd *cobra.Command, prompt string) bool {
 	_, _ = fmt.Fprint(cmd.ErrOrStderr(), prompt+" [Y/n] ")
 	line, err := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
@@ -143,10 +137,8 @@ func confirm(cmd *cobra.Command, prompt string) bool {
 	}
 }
 
-// nonInteractiveCredentials resolves credentials from flags and stdin
-// without prompting. ok is false when a piece is missing and the command
-// must prompt for it interactively. This split keeps the flag rules
-// testable without a terminal.
+// nonInteractiveCredentials resolves credentials from flags and stdin without
+// prompting; ok is false when a piece is missing and the command must prompt.
 func nonInteractiveCredentials(stdin io.Reader, username, password string, passwordStdin bool) (user, pass string, ok bool, err error) {
 	if passwordStdin {
 		if password != "" {
@@ -167,9 +159,7 @@ func nonInteractiveCredentials(stdin io.Reader, username, password string, passw
 	return username, password, false, nil
 }
 
-// promptCredentials fills whatever nonInteractiveCredentials left empty by
-// asking the operator. The password is read without echo on a real
-// terminal and as a plain line otherwise (a pipe, or a test).
+// promptCredentials fills whatever nonInteractiveCredentials left empty.
 func promptCredentials(cmd *cobra.Command, username, password string) (string, string, error) {
 	reader := bufio.NewReader(cmd.InOrStdin())
 	if username == "" {
@@ -192,8 +182,7 @@ func promptCredentials(cmd *cobra.Command, username, password string) (string, s
 	return username, password, nil
 }
 
-// readSecret reads a password without echo when stdin is a terminal, and
-// falls back to a buffered line read for pipes and tests.
+// readSecret reads without echo on a terminal, a plain line otherwise.
 func readSecret(stdin io.Reader, reader *bufio.Reader) (string, error) {
 	if f, ok := stdin.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
 		b, err := term.ReadPassword(int(f.Fd()))

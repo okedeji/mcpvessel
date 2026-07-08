@@ -58,11 +58,10 @@ Examples:
 			}
 			defer func() { _ = provisioner.Close() }()
 
-			// --recreate tears the VM down so the bootstrap below rebuilds it with
-			// the current machine config (the way a memory change is applied). The
-			// daemon is stopped first: recreating the VM under it would orphan every
-			// container it holds. On Linux there is no VM, so this is just a daemon
-			// restart.
+			// Tear the VM down so the bootstrap below rebuilds it with the
+			// current machine config. Stop the daemon first: recreating the
+			// VM under it would orphan every container it holds. On Linux
+			// there is no VM, so this is just a daemon restart.
 			if recreate {
 				stderr := cmd.ErrOrStderr()
 				_, _ = fmt.Fprintln(stderr, "Recreating the runtime...")
@@ -74,9 +73,8 @@ Examples:
 				}
 			}
 
-			// Bring the runtime (the Lima VM on macOS) up first, behind the
-			// phase UI, so the daemon we start next finds it ready instead of
-			// provisioning silently into its log.
+			// Bring the runtime up behind the phase UI first, so the daemon
+			// finds it ready instead of provisioning silently into its log.
 			if !runtime.SetupAlreadyReady(ctx, provisioner) {
 				stderr := cmd.ErrOrStderr()
 				ui := runtime.NewSetupUI(stderr)
@@ -87,9 +85,7 @@ Examples:
 				}
 			}
 
-			// Start the daemon so the first run, ps, or stop finds it already
-			// up. Doing it here is the point of init: get the surprise latency
-			// out of the way on the operator's own time.
+			// Taking the daemon start latency here is the point of init.
 			if _, err := daemon.Ensure(ctx); err != nil {
 				return err
 			}

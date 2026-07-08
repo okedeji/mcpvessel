@@ -12,9 +12,9 @@ import (
 	"github.com/okedeji/agentcage/internal/reference"
 )
 
-// edgeKeyFromURL pulls the gateway edge key out of an injected USES URL
-// (http://<gw>:9000/<key>/mcp). The key is an opaque capability token, so tests
-// derive it rather than assume a literal <alias>-<index>.
+// edgeKeyFromURL pulls the gateway edge key out of an injected USES URL. The
+// key is an opaque capability token, so tests derive it rather than assume a
+// literal.
 func edgeKeyFromURL(t *testing.T, url string) string {
 	t.Helper()
 	const suffix = "/mcp"
@@ -92,11 +92,9 @@ func TestBuildRunPlan_SingleEdge(t *testing.T) {
 		t.Fatalf("buildRunPlan: %v", err)
 	}
 
-	// The security property: the sub sits on its own network, distinct from the
-	// root's, so the root cannot reach it directly. The sub is a pooled cage (no
-	// MODEL), so it holds no dedicated network in the plan; it draws one from the
-	// plain pool at activation. The gateway joins the root net and the pool, so it
-	// is the sole path between them.
+	// The security property: the sub sits apart from the root's network. A
+	// pooled cage (no MODEL) holds no dedicated network; it draws from the
+	// plain pool at activation. The gateway is the sole path between them.
 	if plan.RootNet == "" {
 		t.Fatal("missing root net")
 	}
@@ -140,8 +138,7 @@ func TestBuildRunPlan_SingleEdge(t *testing.T) {
 	if got := sub.Spec.Env["AGENTCAGE_SERVE_HTTP"]; got != ":8000" {
 		t.Errorf("sub SERVE_HTTP = %q, want :8000", got)
 	}
-	// Every cage is capped. Sub-agents get the agent default, the gateway the
-	// tighter gateway default, so none runs uncapped.
+	// Every cage is capped: agent default for subs, tighter default for the gateway.
 	if sub.Spec.Memory != defaultAgentCap.Mem || sub.Spec.Pids != defaultAgentCap.Pids {
 		t.Errorf("sub cap = %q/%d, want %q/%d", sub.Spec.Memory, sub.Spec.Pids, defaultAgentCap.Mem, defaultAgentCap.Pids)
 	}
@@ -168,8 +165,7 @@ func TestBuildRunPlan_SingleEdge(t *testing.T) {
 	if plan.MCPGateway.Memory != defaultGatewayCap.Mem || plan.MCPGateway.Pids != defaultGatewayCap.Pids {
 		t.Errorf("gateway cap = %q/%d, want %q/%d", plan.MCPGateway.Memory, plan.MCPGateway.Pids, defaultGatewayCap.Mem, defaultGatewayCap.Pids)
 	}
-	// The routing table the gateway serves round-trips back to what we
-	// planned, so the container and the plan cannot disagree.
+	// The routing table round-trips, so the container and the plan cannot disagree.
 	var served mcpgateway.Config
 	if err := json.Unmarshal([]byte(plan.MCPGateway.Env["AGENTCAGE_MCP_CONFIG"]), &served); err != nil {
 		t.Fatalf("gateway config not valid json: %v", err)
@@ -246,10 +242,9 @@ func TestBuildRunPlan_EgressAllowAgentsGetProxyEnv(t *testing.T) {
 		t.Fatalf("buildRunPlan: %v", err)
 	}
 
-	// Only the allow: agents are recorded, keyed by container name, and a
-	// deny-default agent never appears, so the orchestrator never opens it a
-	// route out. Each carries the network the proxy joins to reach it, and those
-	// networks are distinct so the proxy keys each by its own address.
+	// Only allow: agents are recorded, keyed by container name; a deny-default
+	// agent never appears, so it never gets a route out. The networks are
+	// distinct so the proxy keys each agent by its own address.
 	root := plan.EgressAgents["run1"]
 	if len(root.Hosts) != 1 || root.Hosts[0] != "api.openai.com" {
 		t.Errorf("root egress hosts = %v, want [api.openai.com]", root.Hosts)
@@ -308,8 +303,8 @@ func TestBuildRunPlan_EdgeKeysAreUnguessableCapabilities(t *testing.T) {
 		t.Fatalf("edges = %d, want 2", len(p1.MCPGatewayCfg.Edges))
 	}
 	for k := range p1.MCPGatewayCfg.Edges {
-		// 32 hex chars, and never the old guessable alias-index form a caller
-		// could enumerate to reach an edge it was not granted.
+		// 32 hex chars, never the old guessable alias-index form a caller
+		// could enumerate.
 		if len(k) != 32 {
 			t.Errorf("edge key %q is not a 32-hex capability token", k)
 		}
@@ -349,9 +344,8 @@ func TestBuildRunPlan_PerAgentNetworkIsolation(t *testing.T) {
 		t.Fatalf("buildRunPlan: %v", err)
 	}
 
-	// Every network in the run is distinct, dedicated and pooled alike, so no two
-	// cages ever share one (the pool is reused only sequentially, one cage at a
-	// time). This is the property that stops a hostile cage reaching a sibling.
+	// Every network in the run is distinct; the pool is reused only
+	// sequentially. This is what stops a hostile cage reaching a sibling.
 	seen := map[string]bool{}
 	allNets := append([]string{}, plan.ReasonPool...)
 	allNets = append(allNets, plan.PlainPool...)
@@ -364,16 +358,15 @@ func TestBuildRunPlan_PerAgentNetworkIsolation(t *testing.T) {
 		}
 		seen[net] = true
 	}
-	// web-1 is a pooled cage: no dedicated network, but a plain pool network exists
-	// for it to draw. The banned bad-2 never starts, so it gets no network anywhere.
+	// web-1 is pooled: no dedicated network, one plain pool network to draw.
+	// The banned bad-2 never starts, so it gets no network anywhere.
 	if _, ok := plan.AgentNets["web-1"]; ok {
 		t.Error("pooled agent web-1 must hold no dedicated network")
 	}
 	if len(plan.PlainPool) != 1 {
 		t.Errorf("plain pool = %v, want one network for the single pooled cage", plan.PlainPool)
 	}
-	// The gateway joins every network, dedicated and both pools, so it is the sole
-	// host that can reach every cage.
+	// The gateway joins every network, so it alone reaches every cage.
 	for _, net := range allNets {
 		if !slices.Contains(plan.MCPGateway.Networks, net) {
 			t.Errorf("gateway missing net %s", net)
@@ -480,8 +473,8 @@ func TestBuildRunPlan_PrewarmsDirectChildrenDefersDeeper(t *testing.T) {
 		}
 	}
 
-	// The root's edge to its direct child is live from boot; the deeper edge is
-	// inactive so the gateway holds the first call to it.
+	// The direct child's edge is live from boot; the deeper edge is inactive
+	// so the gateway holds its first call.
 	rootEdge := plan.MCPGatewayCfg.Edges[edgeKeyFromURL(t, plan.RootEnv["AGENTCAGE_USES_A_URL"])]
 	if rootEdge.Inactive {
 		t.Error("edge to a prewarmed direct child must be active")
@@ -535,8 +528,8 @@ func TestBuildRunPlan_TwoNetworkPoolsKeepKeyHolderOffPlainCages(t *testing.T) {
 			t.Errorf("pooled cage %s has a baked network %v", a.Node.Key, a.Spec.Networks)
 		}
 	}
-	// The LLM gateway joins the reasoning pool but never the plain pool, so a
-	// non-reasoning cage can never share a network with the key holder.
+	// The LLM gateway joins the reasoning pool, never the plain pool: a
+	// non-reasoning cage must not share a network with the key holder.
 	if !slices.Contains(plan.LLMNets, plan.ReasonPool[0]) {
 		t.Errorf("LLM gateway must join the reasoning pool, got %v", plan.LLMNets)
 	}
@@ -550,9 +543,9 @@ func TestBuildRunPlan_TwoNetworkPoolsKeepKeyHolderOffPlainCages(t *testing.T) {
 }
 
 func TestBuildRunPlan_PinsEgressAndConfiguredAgentsWarm(t *testing.T) {
-	// root -> a -> deep. deep declares EGRESS allow: (so its proxy keying needs
-	// it warm), and the operator pins @o/a keep_warm. Both must prewarm and be
-	// flagged AlwaysWarm even though deep is not a direct child.
+	// root -> a -> deep. deep declares EGRESS allow: and the operator pins
+	// @o/a keep_warm; both must prewarm and be AlwaysWarm even though deep is
+	// not a direct child.
 	withEgress := func(ref reference.Reference, policy string) *agentNode {
 		return &agentNode{Key: "deep-1", Ref: ref, Manifest: &bundle.Manifest{Agentfile: bundle.AgentfileSpec{Egress: policy}}}
 	}
@@ -624,8 +617,8 @@ func TestBuildRunPlan_NestedCallerServesAndCalls(t *testing.T) {
 	if got := a.Spec.Env["AGENTCAGE_SERVE_HTTP"]; got != ":8000" {
 		t.Errorf("a SERVE_HTTP = %q, want :8000", got)
 	}
-	// a's url for b points at the gateway by a capability key, not at b's
-	// container, so a's own deny edge to b is enforced and unguessable.
+	// a's url for b points at the gateway by capability key, not at b's
+	// container, so a's own deny edge to b is enforced.
 	gotURL := a.Spec.Env["AGENTCAGE_USES_B_URL"]
 	if !strings.HasPrefix(gotURL, "http://run9-gw:9000/") {
 		t.Errorf("a USES b url = %q, want the gateway prefix", gotURL)

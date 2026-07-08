@@ -11,13 +11,11 @@ import (
 	"github.com/okedeji/agentcage/internal/telemetry"
 )
 
-// buildTrace assembles a run's trace from its run window, the LLM gateway's
-// per-call events, and the MCP gateway's sub-agent calls. The run span is the
-// root; each agent that made an LLM call gets a span under it (widened to cover
-// its calls), and each parent-to-sub-agent call gets a sub_agent span. Grouping
-// LLM calls by agent gives the tree its shape without the gateway reporting the
-// full call graph; the root's children are ordered by start so the tree reads in
-// time order.
+// buildTrace assembles a run's trace: the run span is the root, each agent
+// that made an LLM call gets a span under it (widened to cover its calls), and
+// each parent-to-sub-agent call gets a sub_agent span. Grouping LLM calls by
+// agent gives the tree its shape without the gateway reporting the full call
+// graph.
 func buildTrace(runID string, start, end time.Time, calls []llmgateway.CallEvent, subCalls []mcpgateway.SubCallEvent) *telemetry.Trace {
 	root := &telemetry.Span{
 		Name:       "agentcage.run",
@@ -64,8 +62,7 @@ func buildTrace(runID string, start, end time.Time, calls []llmgateway.CallEvent
 	return &telemetry.Trace{RunID: runID, Root: root}
 }
 
-// totalTokens sums every metered call's prompt and completion tokens, the run's
-// whole token spend for the history record.
+// totalTokens sums every metered call's prompt and completion tokens.
 func totalTokens(calls []llmgateway.CallEvent) int64 {
 	var n int64
 	for _, c := range calls {
@@ -74,8 +71,8 @@ func totalTokens(calls []llmgateway.CallEvent) int64 {
 	return n
 }
 
-// handleRunTrace serves a run's stored trace JSON. A run with no trace (it made
-// no LLM call, or history is off) is a 404.
+// handleRunTrace serves a run's stored trace JSON. A run with no trace (no LLM
+// call made, or history off) is a 404.
 func (d *Daemon) handleRunTrace(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if d.hist == nil {

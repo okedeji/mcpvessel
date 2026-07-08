@@ -1,25 +1,8 @@
-// Package reference parses the agent references operators type on the
-// command line and the registry references the manifest records, and
-// resolves both to the OCI coordinates the registry layer pulls and
-// pushes against.
-//
-// Two surface forms resolve to the same place:
-//
-//	@okedeji/researcher:0.1              agentcage-native shorthand
-//	ghcr.io/okedeji/researcher:0.1       a fully-qualified OCI reference
-//
-// The shorthand has no host, so it maps to the default registry (ghcr.io,
-// overridable via AGENTCAGE_REGISTRY). The fully-qualified form names its
-// host and passes through untouched. This is the one place that knows the
-// mapping; everything downstream works in OCI coordinates.
-//
-// Reverse-DNS MCP Registry names (io.github.<user>/...) are not special
-// here. Recognizing one and resolving it to the OCI artifact it points at
-// means querying the MCP Registry, which is the registry client's job; it
-// hands back a fully-qualified ref that this package then parses. A caller
-// that passes a reverse-DNS name straight in gets it read mechanically as
-// a host of that name, which is the caller's bug to route, not ours to
-// guess at.
+// Package reference parses agent references into OCI coordinates. The
+// @org/name shorthand maps to the default registry (ghcr.io, overridable
+// via AGENTCAGE_REGISTRY); a fully-qualified host/org/name passes through.
+// Reverse-DNS MCP Registry names are not recognized here; resolving one is
+// the registry client's job.
 package reference
 
 import (
@@ -30,16 +13,12 @@ import (
 	"github.com/okedeji/agentcage/internal/env"
 )
 
-// fallbackRegistry is where host-less references resolve unless
-// AGENTCAGE_REGISTRY overrides it. GHCR hosts OCI artifacts and offers
+// fallbackRegistry is where host-less references resolve. GHCR offers
 // immutable tags, which the digest lockfile depends on.
 const fallbackRegistry = "ghcr.io"
 
-// Reference is a parsed agent reference resolved to OCI coordinates.
-//
-// Tag and Digest are both optional and at most one is usually set: a
-// reference pulled by tag carries Tag, a reference locked in a manifest
-// carries Digest. A reference with neither is legal at this layer; the
+// Reference is a parsed agent reference in OCI coordinates. At most one of
+// Tag and Digest is usually set; neither is legal at this layer, and the
 // operation that needs one rejects it with its own error.
 type Reference struct {
 	Original   string // exactly what the caller passed, for error messages
@@ -79,10 +58,9 @@ func Parse(s string) (Reference, error) {
 	}, nil
 }
 
-// splitTagDigest peels the optional :tag or @digest off the end of a
-// reference body, leaving the bare name. A digest wins over a tag when
-// both somehow appear. The tag colon is found inside the final path
-// segment so a host:port colon earlier in the string is left alone.
+// splitTagDigest peels the optional :tag or @digest off the body. The tag
+// colon is searched only in the final path segment so a host:port colon is
+// left alone; a digest wins when both somehow appear.
 func splitTagDigest(body string) (name, tag, digest string, err error) {
 	if at := strings.LastIndex(body, "@"); at >= 0 {
 		name, digest = body[:at], body[at+1:]
@@ -106,10 +84,9 @@ func splitTagDigest(body string) (name, tag, digest string, err error) {
 	return body, "", "", nil
 }
 
-// resolveHost decides which OCI host a name belongs to and what the
-// repository path under it is. Shorthand (@org/name) targets the default
-// registry; anything whose first path segment looks like a host (carries
-// a dot or a port) is taken at face value.
+// resolveHost decides which OCI host a name belongs to. Shorthand targets
+// the default registry; a first path segment that looks like a host (a dot
+// or a port) is taken at face value; anything else is ambiguous.
 func resolveHost(name string, shorthand bool) (registry, repository string, err error) {
 	if shorthand {
 		if !strings.Contains(name, "/") {
@@ -126,8 +103,6 @@ func resolveHost(name string, shorthand bool) (registry, repository string, err 
 	return "", "", fmt.Errorf("ambiguous reference: write @org/name for the default registry or host/org/name for an explicit one")
 }
 
-// defaultRegistry is where host-less references land. AGENTCAGE_REGISTRY
-// overrides it for operators running against a private host.
 func defaultRegistry() string {
 	if v := strings.TrimSpace(os.Getenv(env.Registry)); v != "" {
 		return v
@@ -135,15 +110,13 @@ func defaultRegistry() string {
 	return fallbackRegistry
 }
 
-// DefaultRegistry is the host shorthand references resolve to. The login
-// command defaults to it when the operator names no registry.
+// DefaultRegistry is the host shorthand references resolve to.
 func DefaultRegistry() string {
 	return defaultRegistry()
 }
 
-// publicHosts are the OCI registries whose artifacts the wider ecosystem can
-// pull without a private credential, so a push to one is a candidate for MCP
-// Registry publication. A host not on this list is treated as private.
+// publicHosts can be pulled without a private credential, so a push to one
+// is a candidate for MCP Registry publication. Anything else is private.
 var publicHosts = map[string]bool{
 	"docker.io": true,
 	"ghcr.io":   true,
@@ -155,11 +128,10 @@ func IsPublicHost(host string) bool {
 	return publicHosts[host]
 }
 
-// ReverseDNSName derives the MCP Registry name a reference publishes under,
-// io.github.<owner>/<name>. It maps only GHCR, because GitHub is the namespace
-// agentcage proves ownership of at login; any other host, or a repository path
-// that is not a plain owner/name, has no identity to map and reports false so
-// the caller asks for an explicit name instead of guessing one.
+// ReverseDNSName derives the MCP Registry name a reference publishes
+// under, io.github.<owner>/<name>. Only GHCR maps, because GitHub is the
+// namespace agentcage proves ownership of at login; any other host, or a
+// path deeper than owner/name, reports false rather than guessing.
 func (r Reference) ReverseDNSName() (string, bool) {
 	if r.Registry != "ghcr.io" {
 		return "", false
@@ -171,9 +143,8 @@ func (r Reference) ReverseDNSName() (string, bool) {
 	return "io.github." + owner + "/" + name, true
 }
 
-// OCIRef is the canonical host/repository[:tag|@digest] string the
-// registry layer pulls and pushes against. Digest wins over tag when
-// both are set so a locked reference fetches exactly what it pinned.
+// OCIRef is the canonical host/repository[:tag|@digest] string. Digest wins
+// over tag so a locked reference fetches exactly what it pinned.
 func (r Reference) OCIRef() string {
 	base := r.Registry + "/" + r.Repository
 	if r.Digest != "" {
@@ -185,12 +156,10 @@ func (r Reference) OCIRef() string {
 	return base
 }
 
-// Display renders a reference for a human naming a local artifact: the
-// @org/name shorthand when the registry is the default, and the full
-// host/repository form for an explicit registry. It exists because OCIRef
-// always spells out the default host, which reads as a registry association a
-// local-only bundle does not have. Registry operations (push, pull, login) keep
-// OCIRef, since there the real host is the point.
+// Display renders the @org/name shorthand when the registry is the
+// default, the full form otherwise. OCIRef always spells out the host,
+// which reads as a registry association a local-only bundle does not have;
+// registry operations keep OCIRef, where the real host is the point.
 func (r Reference) Display() string {
 	if r.Registry != defaultRegistry() {
 		return r.OCIRef()

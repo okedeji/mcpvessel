@@ -75,8 +75,8 @@ func TestBuild_HappyPath(t *testing.T) {
 		t.Errorf("Agentfile.Expose = %v, want [fetch_paper]", manifest.Agentfile.Expose)
 	}
 
-	// Catalog mirrors MAIN + EXPOSE in M1. Private tools and descriptions
-	// arrive in M2 once the build introspects the running agent.
+	// Built without introspection, so the catalog is declared-only:
+	// MAIN + EXPOSE, no descriptions or private tools.
 	wantTools := []Tool{
 		{Name: "respond", Visibility: VisibilityMain},
 		{Name: "fetch_paper", Visibility: VisibilityPublic},
@@ -129,7 +129,6 @@ func TestBuild_HashChangesWhenContentChanges(t *testing.T) {
 	}
 	m1, _ := extract(t, out1)
 
-	// Change one file's content.
 	writeFile(t, filepath.Join(src, "agent.py"), "print('different')\n")
 
 	out2 := filepath.Join(t.TempDir(), "b.agent")
@@ -329,11 +328,9 @@ ENTRYPOINT python3 agent.py
 }
 
 func TestBuild_CatalogOmittedForToolCollectionWithoutMainOrExpose(t *testing.T) {
-	// Pathological case: a bundle that ships an MCP server but
-	// declares neither MAIN nor EXPOSE. The build still succeeds; the
-	// catalog is empty (omitempty drops it from JSON). The bundle is
-	// not callable via run or call, but that is the operator's problem,
-	// not the build's.
+	// Neither MAIN nor EXPOSE declared. The build still succeeds with an
+	// empty catalog; an uncallable bundle is the operator's problem, not
+	// the build's.
 	src := t.TempDir()
 	writeFile(t, filepath.Join(src, "Agentfile"), `FROM python:3.12-slim
 ENTRYPOINT python3 agent.py
@@ -375,8 +372,7 @@ ENTRYPOINT python3 agent.py
 	if !manifest.Evals.Declared {
 		t.Error("Evals.Declared = false, want true")
 	}
-	// Declared but never run: the run fields stay nil so a consumer reads
-	// "declared, never run" apart from "ran and scored zero".
+	// Declared but never run: nil run fields read apart from a zero score.
 	if manifest.Evals.Passed != nil || manifest.Evals.Failed != nil || manifest.Evals.LastRunAt != nil {
 		t.Errorf("run fields set on a never-run bundle: %+v", manifest.Evals)
 	}
@@ -397,10 +393,9 @@ func TestBuild_NoEvalDirectiveOmitsEvalsBlock(t *testing.T) {
 }
 
 func TestBuild_ExcludesOwnTempFileWhenBuildingIntoSourceDir(t *testing.T) {
-	// Building with the output inside the source directory must not
-	// package the build's own .tmp staging file. The hash walk runs
-	// before the temp exists; the tar walk runs after, so the skip filter
-	// has to exclude it or the archive disagrees with files_hash.
+	// The hash walk runs before the .tmp staging file exists; the tar walk
+	// runs after. The skip filter must exclude it or the archive disagrees
+	// with files_hash.
 	src := t.TempDir()
 	minimalSource(t, src)
 	out := filepath.Join(src, "out.agent")
@@ -421,7 +416,6 @@ func TestBuild_ExcludesOwnTempFileWhenBuildingIntoSourceDir(t *testing.T) {
 
 func TestBuild_MissingAgentfile(t *testing.T) {
 	src := t.TempDir()
-	// No Agentfile written.
 	out := filepath.Join(t.TempDir(), "a.agent")
 	err := Build(src, out)
 	if err == nil {
@@ -447,8 +441,8 @@ func TestBuild_InvalidAgentfile(t *testing.T) {
 	}
 }
 
-// extract opens a .agent file and returns the manifest plus a map of
-// archive-relative paths to file contents for every non-manifest entry.
+// extract returns a bundle's manifest plus archive-relative path to content
+// for every other entry.
 func extract(t *testing.T, path string) (*Manifest, map[string]string) {
 	t.Helper()
 	f, err := os.Open(path)

@@ -12,41 +12,34 @@ import (
 	"github.com/okedeji/agentcage/internal/identity"
 )
 
-// connectRetryInterval paces ConnectHTTP's reconnect attempts while a freshly
-// started agent is still binding its port. It is short because the failure mode
-// is a fast connection-refused, not a slow timeout; the caller's context
-// deadline, not this interval, bounds the total wait.
+// connectRetryInterval paces ConnectHTTP's reconnects while a fresh agent
+// is still binding its port. Short because the failure mode is a fast
+// connection-refused; the caller's ctx deadline bounds the total wait.
 const connectRetryInterval = 100 * time.Millisecond
 
-// Client is an open MCP session against a single agent process.
-//
-// Construct with Connect. Always Close in a defer to release the
-// underlying session goroutines and stream readers.
+// Client is an open MCP session against a single agent process. Close it
+// to release the session goroutines and stream readers.
 type Client struct {
 	session *mcpsdk.ClientSession
 }
 
-// ElicitRequest is a question an agent raises in the middle of a call: a
-// human-readable message and, when it wants a structured answer, a JSON Schema
-// of the fields it expects. It is the agentcage-shaped view of MCP's
-// elicitation/create.
+// ElicitRequest is a question an agent raises mid-call: a message and,
+// when it wants a structured answer, a JSON Schema of the fields.
 type ElicitRequest struct {
 	Message string
 	Schema  map[string]any
 }
 
 // ElicitResult is the caller's answer. Action is "accept", "decline", or
-// "cancel"; Content holds the submitted fields and is present only on "accept".
+// "cancel"; Content is present only on "accept".
 type ElicitResult struct {
 	Action  string
 	Content map[string]any
 }
 
-// ElicitHandler answers an agent's mid-call question. serve supplies one backed
-// by the operator's MCP client. Wiring a handler is also what advertises the
-// elicitation capability, so an agent can only ask when a handler is present;
-// that is the gate that keeps a one-shot run/call from offering a question
-// channel that has no one on the other end.
+// ElicitHandler answers an agent's mid-call question. Wiring a handler is
+// what advertises the elicitation capability: no handler, no question
+// channel with no one on the other end.
 type ElicitHandler func(ctx context.Context, q *ElicitRequest) (*ElicitResult, error)
 
 // Option configures a Client at connect time.
@@ -56,19 +49,16 @@ type options struct {
 	onElicit ElicitHandler
 }
 
-// WithElicitation makes the client answer the server's elicitation/create
-// requests through h and advertise the elicitation capability so the server may
-// ask. A nil h leaves the capability unadvertised, the default, so the server
-// cannot elicit.
+// WithElicitation routes the server's elicitation/create requests through h
+// and advertises the capability. A nil h leaves it unadvertised, so the
+// server cannot elicit.
 func WithElicitation(h ElicitHandler) Option {
 	return func(o *options) { o.onElicit = h }
 }
 
-// clientOptions folds the agentcage options into the SDK's ClientOptions,
-// returning nil when nothing is set so the client advertises no extra
-// capabilities. The SDK auto-advertises the elicitation capability the moment
-// an ElicitationHandler is non-nil, so a handler is set only when the caller
-// asked for one.
+// clientOptions returns nil when nothing is set: the SDK auto-advertises
+// elicitation the moment an ElicitationHandler is non-nil, so one is wired
+// only when the caller asked.
 func clientOptions(opts []Option) *mcpsdk.ClientOptions {
 	var o options
 	for _, opt := range opts {
@@ -92,16 +82,9 @@ func clientOptions(opts []Option) *mcpsdk.ClientOptions {
 	}
 }
 
-// Connect establishes an MCP session over the given stdio pair.
-//
-// `reader` is what we read agent responses from (the agent's stdout).
-// `writer` is what we send agent requests to (the agent's stdin).
-// Both are wrapped with io.NopCloser before reaching the SDK; the
-// caller owns the lifecycle of the underlying streams.
-//
-// The MCP handshake (initialize) runs as part of Connect; by the time
-// it returns, the agent has reported its protocol version and is ready
-// for tool calls.
+// Connect establishes an MCP session over a stdio pair: reader is the
+// agent's stdout, writer its stdin. The caller owns both streams. The MCP
+// initialize handshake completes before Connect returns.
 func Connect(ctx context.Context, reader io.Reader, writer io.Writer, opts ...Option) (*Client, error) {
 	c := mcpsdk.NewClient(&mcpsdk.Implementation{
 		Name:    identity.Name,
@@ -117,15 +100,11 @@ func Connect(ctx context.Context, reader io.Reader, writer io.Writer, opts ...Op
 	return &Client{session: session}, nil
 }
 
-// ConnectHTTP establishes an MCP session against an agent serving streamable
-// HTTP, the transport a detached cage uses (AGENTCAGE_SERVE_HTTP) and the way
-// the daemon reaches a root it does not hold over stdio. endpoint is the full
-// MCP URL, e.g. http://127.0.0.1:9123/mcp.
-//
-// A freshly started cage may not have bound its port yet, so the initial
-// connect is retried until it succeeds or ctx is done. The retry is on the
-// handshake, not on a hung server: connection-refused fails fast, so the wait
-// is paced by connectRetryInterval and bounded by the caller's ctx deadline.
+// ConnectHTTP establishes an MCP session against an agent serving
+// streamable HTTP, the transport a detached cage uses. endpoint is the full
+// MCP URL, e.g. http://127.0.0.1:9123/mcp. A fresh cage may not have bound
+// its port yet, so the handshake is retried until it succeeds or ctx is
+// done; connection-refused fails fast, so ctx bounds the wait.
 func ConnectHTTP(ctx context.Context, endpoint string, opts ...Option) (*Client, error) {
 	c := mcpsdk.NewClient(&mcpsdk.Implementation{
 		Name:    identity.Name,
@@ -144,14 +123,12 @@ func ConnectHTTP(ctx context.Context, endpoint string, opts ...Option) (*Client,
 	}
 }
 
-// nopWriteCloser adapts an io.Writer into an io.WriteCloser whose
-// Close is a no-op, mirroring io.NopCloser for readers.
+// nopWriteCloser mirrors io.NopCloser for writers.
 type nopWriteCloser struct{ io.Writer }
 
 func (nopWriteCloser) Close() error { return nil }
 
-// Close ends the session. Safe to call once; subsequent calls return
-// the original error from the SDK.
+// Close ends the session. Nil-safe.
 func (c *Client) Close() error {
 	if c == nil || c.session == nil {
 		return nil
@@ -161,18 +138,15 @@ func (c *Client) Close() error {
 
 // Tool is the agentcage-shaped view of one tool the agent exposes: its
 // name, description, and input schema as the agent's MCP server reports
-// them. Build-time introspection reads these to fill the bundle's tool
-// catalog. Schema is nil when the agent declares no input schema.
+// them. Schema is nil when the agent declares no input schema.
 type Tool struct {
 	Name        string
 	Description string
 	Schema      map[string]any
 }
 
-// ListTools returns every tool the connected agent advertises. Used by
-// the CLI to look up the default tool's name when the operator did not
-// pass --tool explicitly. Does not paginate; agents are expected to
-// expose a small handful of tools.
+// ListTools returns every tool the connected agent advertises. It does not
+// paginate; agents are expected to expose a small handful.
 func (c *Client) ListTools(ctx context.Context) ([]Tool, error) {
 	res, err := c.session.ListTools(ctx, nil)
 	if err != nil {
@@ -189,11 +163,10 @@ func (c *Client) ListTools(ctx context.Context) ([]Tool, error) {
 	return out, nil
 }
 
-// schemaToMap normalizes an MCP tool's input schema to a map. The SDK
-// hands the client a map[string]any already, but the field is typed `any`
-// and a server may marshal a different concrete type, so anything else is
-// round-tripped through JSON. A schema that will not marshal is dropped
-// rather than failing the listing.
+// schemaToMap normalizes a tool's input schema. The SDK usually hands over
+// a map[string]any, but the field is typed any, so other concrete types
+// round-trip through JSON. A schema that will not marshal is dropped rather
+// than failing the listing.
 func schemaToMap(schema any) map[string]any {
 	if schema == nil {
 		return nil
@@ -212,13 +185,9 @@ func schemaToMap(schema any) map[string]any {
 	return m
 }
 
-// CallTool invokes name with the given arguments and returns the text
-// content of the first text block in the response. Non-text content
-// (images, embedded resources) is ignored at this layer; if a use case
-// needs it we add a method that returns the structured CallToolResult.
-//
-// If the tool returned an error (CallToolResult.IsError or any error
-// embedded in the result), CallTool returns it wrapped with the name.
+// CallTool invokes name and returns the first text block of the response.
+// Non-text content (images, embedded resources) is ignored at this layer.
+// A tool-reported error (IsError) comes back wrapped with the tool name.
 func (c *Client) CallTool(ctx context.Context, name string, args any) (string, error) {
 	res, err := c.session.CallTool(ctx, &mcpsdk.CallToolParams{
 		Name:      name,
@@ -233,8 +202,6 @@ func (c *Client) CallTool(ctx context.Context, name string, args any) (string, e
 	return firstText(res.Content), nil
 }
 
-// firstText returns the text of the first TextContent block in blocks,
-// or empty string if none is present.
 func firstText(blocks []mcpsdk.Content) string {
 	for _, c := range blocks {
 		if t, ok := c.(*mcpsdk.TextContent); ok {

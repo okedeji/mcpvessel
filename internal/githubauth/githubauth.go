@@ -1,11 +1,7 @@
-// Package githubauth runs GitHub's OAuth device flow and returns the access
-// token it yields. It is the identity half of publishing to the MCP Registry:
-// the registry maps a proven GitHub identity to the io.github.<user> namespace
-// a publish is allowed to claim.
-//
-// The device flow is used, not a browser redirect, because agentcage is a CLI:
-// there is no loopback server to catch a redirect, so the operator is shown a
-// code to type at github.com and the command polls until they finish.
+// Package githubauth runs GitHub's OAuth device flow for MCP Registry
+// publishing: a proven GitHub identity maps to the io.github.<user>
+// namespace. Device flow, not a browser redirect, because a CLI has no
+// loopback server to catch one.
 package githubauth
 
 import (
@@ -18,12 +14,10 @@ import (
 	"time"
 )
 
-// defaultBaseURL is GitHub's OAuth host. Overridable so a test drives the flow
-// against a stub instead of the real github.com.
 const defaultBaseURL = "https://github.com"
 
-// scope is the least the registry needs to verify the operator's identity:
-// their login name, nothing about their repositories or organizations.
+// scope is the minimum for identity verification: the login name, nothing
+// about repositories or organizations.
 const scope = "read:user"
 
 // Prompt carries what the operator must do to authorize the device.
@@ -41,9 +35,8 @@ type Config struct {
 }
 
 // DeviceFlow requests a device code, shows it through cfg.Notify, and polls
-// until GitHub reports the operator authorized (returning the access token) or
-// the attempt expires. A missing client id fails closed: there is no anonymous
-// device flow to fall back to.
+// until the operator authorizes or the attempt expires. A missing client id
+// is an error; there is no anonymous device flow.
 func DeviceFlow(ctx context.Context, cfg Config) (string, error) {
 	if cfg.ClientID == "" {
 		return "", fmt.Errorf("no GitHub OAuth client id; set %s to a registered app", "AGENTCAGE_GITHUB_CLIENT_ID")
@@ -86,10 +79,8 @@ func requestDeviceCode(ctx context.Context, base, clientID string) (deviceCode, 
 	return out, nil
 }
 
-// poll asks GitHub for the token on the interval it specified, honoring the
-// slow_down and authorization_pending signals, until the operator authorizes or
-// the device code expires. The deadline is GitHub's own expires_in, so a
-// walked-away operator does not hang the command forever.
+// poll asks for the token on GitHub's stated interval, honoring slow_down and
+// authorization_pending. The deadline is GitHub's own expires_in.
 func poll(ctx context.Context, base, clientID string, code deviceCode) (string, error) {
 	interval := time.Duration(max(code.Interval, 1)) * time.Second
 	deadline := time.Now().Add(time.Duration(max(code.ExpiresIn, 1)) * time.Second)
@@ -111,7 +102,7 @@ func poll(ctx context.Context, base, clientID string, code deviceCode) (string, 
 		case out.AccessToken != "":
 			return out.AccessToken, nil
 		case out.Error == "authorization_pending":
-			// operator has not finished yet; wait the interval and retry.
+			// Wait the interval and retry.
 		case out.Error == "slow_down":
 			interval += 5 * time.Second
 		case out.Error == "":
@@ -147,8 +138,7 @@ func postForm(ctx context.Context, endpoint string, form url.Values, out any) er
 	return json.NewDecoder(resp.Body).Decode(out)
 }
 
-// sleep waits d, or returns early if the context is cancelled, so Ctrl-C during
-// a poll stops the command instead of waiting out the interval.
+// sleep waits d or returns early on context cancellation.
 func sleep(ctx context.Context, d time.Duration) error {
 	t := time.NewTimer(d)
 	defer t.Stop()

@@ -5,13 +5,11 @@ import (
 	"io"
 )
 
-// Plain is the classic line-by-line builder format: one line per step
-// start, nothing more. Safe to use anywhere (CI logs, piped output, files).
+// Plain prints one line per step start, nothing more. Safe anywhere.
 type Plain struct {
 	w io.Writer
 }
 
-// NewPlain constructs a Plain renderer writing to w.
 func NewPlain(w io.Writer) *Plain {
 	return &Plain{w: w}
 }

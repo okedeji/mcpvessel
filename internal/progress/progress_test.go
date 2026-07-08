@@ -21,9 +21,8 @@ func TestPlain_StepsAndDone(t *testing.T) {
 }
 
 func TestTTY_RendersHeaderAndSteps(t *testing.T) {
-	// A bytes.Buffer isn't a TTY, but NewTTY does not require one; only
-	// width detection falls back. We can still exercise the renderer's
-	// output and verify it contains the expected pieces.
+	// NewTTY does not require a real terminal; only width detection falls
+	// back, so a bytes.Buffer still captures the output.
 	var buf bytes.Buffer
 	r := NewTTY(&buf)
 	r.Step(1, 3, "Parsing Agentfile")
@@ -43,7 +42,6 @@ func TestTTY_RendersHeaderAndSteps(t *testing.T) {
 			t.Errorf("missing %q in TTY output:\n%s", want, out)
 		}
 	}
-	// ANSI clear-to-end-of-line marker should be present on every line.
 	if !strings.Contains(out, "\033[K") {
 		t.Errorf("missing ANSI clear-to-EOL in TTY output (escape codes stripped?)")
 	}
@@ -54,8 +52,7 @@ func TestTTY_DoneIsIdempotent(t *testing.T) {
 	r := NewTTY(&buf)
 	r.Step(1, 1, "Only step")
 	r.Done()
-	// Second call should be a no-op (no panic, no double-close).
-	r.Done()
+	r.Done() // no panic, no double-close
 }
 
 func TestParseMode(t *testing.T) {
@@ -88,7 +85,6 @@ func TestNew_RespectsExplicitMode(t *testing.T) {
 
 func TestNew_AutoFallsBackToPlainOnNonTTY(t *testing.T) {
 	var buf bytes.Buffer
-	// A bytes.Buffer isn't a TTY, so auto must pick Plain.
 	if _, ok := New(&buf, ModeAuto).(*Plain); !ok {
 		t.Errorf("New(buf, auto) did not return *Plain for non-TTY writer")
 	}

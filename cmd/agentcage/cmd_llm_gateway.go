@@ -12,9 +12,9 @@ import (
 	"github.com/okedeji/agentcage/internal/llmgateway"
 )
 
-// newLLMGatewayCmd runs the in-run LLM gateway. It is hidden: the runtime
-// starts it inside the gateway container, not operators. Its endpoint set,
-// per-agent models, and budget arrive as environment the runtime injects.
+// newLLMGatewayCmd runs the in-run LLM gateway. Hidden: the runtime starts it
+// inside the gateway container; its endpoints, per-agent models, and budget
+// arrive as injected environment.
 func newLLMGatewayCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:    "llm-gateway",
@@ -40,9 +40,9 @@ func newLLMGatewayCmd() *cobra.Command {
 				Payload: func(r llmgateway.CallRecord) { llmgateway.WriteReplayLine(os.Stdout, r) },
 			})
 
-			// The control surface listens on the container's loopback only, so
-			// agents on the run network cannot reach it; the daemon drives it via
-			// nerdctl exec, which runs inside this container's namespace.
+			// Loopback only: agents on the run network cannot reach the
+			// control surface; the daemon drives it via nerdctl exec, inside
+			// this container's namespace.
 			control := &http.Server{Addr: "127.0.0.1:" + env.DefaultLLMControlPort, Handler: gw.Control()}
 			go func() {
 				if err := control.ListenAndServe(); err != nil && err != http.ErrServerClosed {

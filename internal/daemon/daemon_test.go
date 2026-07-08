@@ -16,10 +16,9 @@ import (
 	"github.com/okedeji/agentcage/internal/identity"
 )
 
-// shortSocket returns a Unix socket path under a short temp dir, not t.TempDir(),
-// whose name carries the test name. macOS caps a socket path at 104 bytes, and a
-// long test name under /var/folders pushes t.TempDir()'s path over it; a short
-// /tmp dir keeps every test's socket bindable.
+// shortSocket returns a socket path under a short /tmp dir, not t.TempDir():
+// macOS caps a socket path at 104 bytes, and a long test name under
+// /var/folders pushes t.TempDir()'s path over it.
 func shortSocket(t *testing.T) string {
 	t.Helper()
 	dir, err := os.MkdirTemp("/tmp", "ac")
@@ -86,9 +85,6 @@ func TestRegistry_HoldTake(t *testing.T) {
 	}
 }
 
-// TestListRuns_MergesHistoryAndLive locks the ps read path: a finished run comes
-// from history, a live run's in-flight info wins over its stored running record,
-// and both appear once.
 func TestListRuns_MergesHistoryAndLive(t *testing.T) {
 	d := New()
 	store, err := history.Open(filepath.Join(t.TempDir(), "history.db"))
@@ -131,9 +127,6 @@ func TestListRuns_MergesHistoryAndLive(t *testing.T) {
 	}
 }
 
-// TestServe_SocketRoundTrip starts the daemon on a real Unix socket, dials it
-// with the client, and checks version + ps over the wire, then a clean shutdown
-// when the context is cancelled.
 func TestServe_SocketRoundTrip(t *testing.T) {
 	t.Setenv("AGENTCAGE_HOME", t.TempDir())
 	socket := shortSocket(t)
@@ -174,9 +167,8 @@ func TestServe_SocketRoundTrip(t *testing.T) {
 	}
 }
 
-// TestShutdown_StopsServe locks that the control-plane /shutdown route brings
-// the daemon down on its own, with no operator signal: Serve runs against a
-// background context, so only the shutdown request can stop it.
+// Serve runs against a background context here, so only the /shutdown request
+// can stop it.
 func TestShutdown_StopsServe(t *testing.T) {
 	t.Setenv("AGENTCAGE_HOME", t.TempDir())
 	socket := shortSocket(t)
@@ -187,8 +179,7 @@ func TestShutdown_StopsServe(t *testing.T) {
 	c := Dial(socket)
 	waitForDaemon(t, c)
 
-	// The ack can race the socket closing, so the request result is not asserted;
-	// Serve returning is the proof it worked.
+	// The ack can race the socket closing; Serve returning is the proof.
 	_ = c.Shutdown(context.Background())
 	select {
 	case err := <-errc:
@@ -200,8 +191,6 @@ func TestShutdown_StopsServe(t *testing.T) {
 	}
 }
 
-// TestServe_RefusesSecondListener locks the fail-fast behavior: a second daemon
-// against a socket a live one already owns errors rather than stomping it.
 func TestServe_RefusesSecondListener(t *testing.T) {
 	t.Setenv("AGENTCAGE_HOME", t.TempDir())
 	socket := shortSocket(t)
@@ -210,8 +199,8 @@ func TestServe_RefusesSecondListener(t *testing.T) {
 	go func() { _ = Serve(ctx, New(), socket) }()
 	waitForDaemon(t, Dial(socket))
 
-	// A bound deadline so a regression (binding anyway) fails the test instead
-	// of blocking on a healthy Serve.
+	// Bounded so a regression (binding anyway) fails instead of blocking on a
+	// healthy Serve.
 	ctx2, cancel2 := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel2()
 	if err := Serve(ctx2, New(), socket); err == nil {
@@ -219,8 +208,7 @@ func TestServe_RefusesSecondListener(t *testing.T) {
 	}
 }
 
-// waitForDaemon polls Version until the listener is up, so the round-trip tests
-// do not race the goroutine that binds the socket.
+// waitForDaemon polls Version until the listener is up.
 func waitForDaemon(t *testing.T, c *Client) string {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)

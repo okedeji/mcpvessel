@@ -11,9 +11,7 @@ import (
 	"github.com/okedeji/agentcage/internal/bundle"
 )
 
-// TestPushCmd_RequiresTag locks push's pre-network rejection: a bare
-// @org/name with no tag cannot be published, since the registry needs a
-// tag to publish under.
+// A bare @org/name must be rejected before any network call.
 func TestPushCmd_RequiresTag(t *testing.T) {
 	cmd := newPushCmd()
 	cmd.SilenceUsage = true

@@ -47,8 +47,8 @@ func TestBundle_ResolvesReverseDNSThroughStore(t *testing.T) {
 	defer ts.Close()
 	t.Setenv(env.MCPRegistry, ts.URL)
 
-	// Seed the store with that GHCR artifact so resolution lands locally and no
-	// real pull is needed to prove the reverse-DNS name reached the right ref.
+	// Seed the store with that artifact so resolution lands locally; no real
+	// pull is needed to prove the name reached the right ref.
 	st, err := store.New()
 	if err != nil {
 		t.Fatal(err)

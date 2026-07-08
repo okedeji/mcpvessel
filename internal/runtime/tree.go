@@ -9,10 +9,8 @@ import (
 	"github.com/okedeji/agentcage/internal/reference"
 )
 
-// agentNode is one agent in a run's USES tree: a unique key within the run,
-// the reference it was pulled by, the bundle pinned to its digest, and the
-// parsed manifest. The root is the agent the operator ran (no pull
-// reference); the rest are USES dependencies pulled by digest.
+// agentNode is one agent in a run's USES tree. The root is the agent the
+// operator ran (no pull reference); the rest are pulled by digest.
 type agentNode struct {
 	Key      string
 	Ref      reference.Reference
@@ -20,10 +18,9 @@ type agentNode struct {
 	Manifest *bundle.Manifest
 }
 
-// usesEdge is one USES relationship: Caller calls Sub, knowing it by Alias
-// (the USES local name the caller's AGENTCAGE_USES_<ALIAS>_URL carries),
-// with Deny tools the MCP gateway blocks on this edge. Public marks a USES
-// PUBLIC edge: serve exposes Sub to external callers alongside its caller.
+// usesEdge is one USES relationship: Caller calls Sub by Alias, with Deny
+// tools the MCP gateway blocks on this edge. Public marks a USES PUBLIC edge,
+// exposed to external callers alongside its caller.
 type usesEdge struct {
 	Caller string
 	Sub    string
@@ -40,21 +37,17 @@ type runTree struct {
 	Edges []usesEdge
 }
 
-// pullManifest fetches a USES dependency by its locked reference and returns
-// where the bundle landed plus its manifest. The orchestrator passes a
-// registry-backed implementation; tests pass an in-memory one.
+// pullManifest fetches a USES dependency by its locked reference. The
+// orchestrator passes a registry-backed implementation; tests an in-memory
+// one.
 type pullManifest func(ctx context.Context, ref reference.Reference) (bundlePath string, m *bundle.Manifest, err error)
 
-// resolveTree walks the transitive USES graph from the root manifest,
-// pulling each dependency by its locked digest, and returns every unique
-// agent and edge. The build-time resolver already pinned each USES to a
-// digest and rejected cycles, so the walk pulls deterministically. The
-// seen-check makes it terminate even if a malformed bundle reintroduced a
-// cycle: a node is walked once, its edges recorded every time.
-//
-// A USES without a digest is a bundle built before the resolver. The
-// runtime pulls by digest, so that is an error here rather than a silent
-// fall back to a mutable tag.
+// resolveTree walks the transitive USES graph from the root manifest, pulling
+// each dependency by its locked digest. The build-time resolver already
+// pinned every USES and rejected cycles; the seen-check still terminates a
+// malformed bundle's cycle (a node is walked once, its edges recorded every
+// time). A USES without a digest is an error, never a silent fall back to a
+// mutable tag.
 func resolveTree(ctx context.Context, rootKey, rootBundle string, root *bundle.Manifest, pull pullManifest) (*runTree, error) {
 	tree := &runTree{
 		Root:  rootKey,
@@ -101,8 +94,8 @@ func resolveTree(ctx context.Context, rootKey, rootBundle string, root *bundle.M
 	return tree, nil
 }
 
-// referenceForUse pins a USES entry to its locked digest as an OCI
-// reference the registry pulls by content, not by the mutable tag.
+// referenceForUse pins a USES entry to its locked digest so the registry
+// pulls by content, not by the mutable tag.
 func referenceForUse(u bundle.UseSpec) (reference.Reference, error) {
 	ref, err := reference.Parse(u.Ref + "@" + u.Digest)
 	if err != nil {
@@ -112,8 +105,8 @@ func referenceForUse(u bundle.UseSpec) (reference.Reference, error) {
 }
 
 // usesAlias is the local name a parent calls a sub-agent by: the last path
-// segment of the USES ref. It feeds AGENTCAGE_USES_<ALIAS>_URL, so the
-// agent side derives the same name from the same ref.
+// segment of the USES ref. Feeds AGENTCAGE_USES_<ALIAS>_URL; the agent side
+// derives the same name from the same ref.
 func usesAlias(ref string) string {
 	ref = strings.TrimPrefix(ref, "@")
 	if i := strings.LastIndex(ref, "/"); i >= 0 {
@@ -122,10 +115,9 @@ func usesAlias(ref string) string {
 	return ref
 }
 
-// nodeKey is the run-unique key for one agent: its alias plus a short
-// digest, so the same sub-agent pulled by two parents dedupes to one node
-// while two pins of the same name stay distinct. It doubles as a container
-// name component, so it is run through sanitizeRef.
+// nodeKey is the run-unique key for one agent: alias plus short digest, so a
+// sub-agent shared by two parents dedupes while two pins of one name stay
+// distinct. Doubles as a container name component, hence sanitizeRef.
 func nodeKey(ref, digest string) string {
 	short := strings.TrimPrefix(digest, "sha256:")
 	if len(short) > 12 {

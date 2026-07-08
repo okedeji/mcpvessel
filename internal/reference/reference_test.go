@@ -3,9 +3,7 @@ package reference
 import "testing"
 
 func TestParse_Forms(t *testing.T) {
-	// AGENTCAGE_REGISTRY is read at parse time; pin it off so the
-	// default-registry cases assert against ghcr.io regardless of the
-	// developer's environment.
+	// Pin the default registry to ghcr.io regardless of the developer's env.
 	t.Setenv("AGENTCAGE_REGISTRY", "")
 
 	cases := []struct {
@@ -136,8 +134,7 @@ func TestDisplay_ShorthandForDefaultRegistry(t *testing.T) {
 }
 
 func TestDisplay_HonorsRegistryOverride(t *testing.T) {
-	// When the operator points the default at their own host, a ref to that
-	// host reads as shorthand; ghcr is then just another explicit host.
+	// With the default pointed elsewhere, ghcr is just another explicit host.
 	t.Setenv("AGENTCAGE_REGISTRY", "registry.acme.internal")
 	local := Reference{Registry: "registry.acme.internal", Repository: "team/agent", Tag: "1"}
 	if got := local.Display(); got != "@team/agent:1" {

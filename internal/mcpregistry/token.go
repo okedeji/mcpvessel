@@ -14,15 +14,14 @@ import (
 	"github.com/okedeji/agentcage/internal/env"
 )
 
-// authExchangePath is where the official registry trades a GitHub access token
-// for its own bearer, per the live registry's OpenAPI: it takes {github_token}
-// and returns {registry_token, expires_at}. A mirror that authenticates
-// differently is reached by overriding the base URL.
+// authExchangePath trades a GitHub access token for the registry's own
+// bearer: {github_token} in, {registry_token, expires_at} out, per the live
+// registry's OpenAPI.
 const authExchangePath = "/v0.1/auth/github-at"
 
-// Token is the registry bearer 'login mcp-registry' obtains and publish reads.
-// Its value is a credential, so the three methods redact it: a Token logged by
-// accident prints as a placeholder, never the bearer itself.
+// Token is the registry bearer 'login mcp-registry' obtains and publish
+// reads. String, GoString, and MarshalJSON redact it: a Token logged by
+// accident prints a placeholder, never the bearer.
 type Token struct {
 	Value     string
 	ExpiresAt time.Time
@@ -33,15 +32,12 @@ func (t Token) GoString() string             { return t.String() }
 func (t Token) MarshalJSON() ([]byte, error) { return []byte(`"[redacted]"`), nil }
 
 // Expired reports whether the token is known to be past its expiry. A zero
-// ExpiresAt means the registry did not say, so it is treated as usable and a
-// stale token surfaces as a publish 401 rather than a guess here.
+// ExpiresAt is treated as usable; staleness then surfaces as a publish 401.
 func (t Token) Expired() bool {
 	return !t.ExpiresAt.IsZero() && time.Now().After(t.ExpiresAt)
 }
 
-// ExchangeGitHubToken trades a GitHub access token for a registry bearer. The
-// request and response field names follow the official registry's GitHub
-// exchange.
+// ExchangeGitHubToken trades a GitHub access token for a registry bearer.
 func (c *Client) ExchangeGitHubToken(ctx context.Context, githubToken string) (Token, error) {
 	body, err := json.Marshal(map[string]string{"github_token": githubToken})
 	if err != nil {
@@ -81,17 +77,15 @@ func (c *Client) ExchangeGitHubToken(ctx context.Context, githubToken string) (T
 	return tok, nil
 }
 
-// tokenFile is the on-disk shape. It is separate from Token so Save persists
-// the real value: Token.MarshalJSON redacts, which is exactly what a persisted
-// credential must not do.
+// tokenFile is the on-disk shape, separate from Token because
+// Token.MarshalJSON redacts and a persisted credential must not be.
 type tokenFile struct {
 	RegistryToken string    `json:"registry_token"`
 	ExpiresAt     time.Time `json:"expires_at,omitempty"`
 }
 
 // SaveToken writes the bearer to a 0600 file under ~/.agentcage, the same
-// permission the secret store uses, so a login persists across commands without
-// widening who can read it.
+// permission the secret store uses.
 func SaveToken(t Token) error {
 	path, err := tokenPath()
 	if err != nil {
@@ -110,9 +104,8 @@ func SaveToken(t Token) error {
 	return nil
 }
 
-// LoadToken reads the stored bearer. A missing file is "not logged in", not an
-// error, so a caller can tell the operator to run login rather than surfacing a
-// stat failure.
+// LoadToken reads the stored bearer. A missing file is "not logged in",
+// not an error.
 func LoadToken() (tok Token, found bool, err error) {
 	path, err := tokenPath()
 	if err != nil {

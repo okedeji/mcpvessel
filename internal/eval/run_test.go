@@ -12,8 +12,8 @@ import (
 	"github.com/okedeji/agentcage/internal/daemon"
 )
 
-// fakeRunner returns a canned output/usage/error per tool call, so a whole
-// suite runs without a daemon.
+// fakeRunner returns canned output/usage/error so a suite runs without a
+// daemon.
 type fakeRunner struct {
 	output string
 	usage  daemon.RunUsage
@@ -108,8 +108,8 @@ func TestRun_TimeoutReasonTranslated(t *testing.T) {
 }
 
 func TestRun_CostCeilingPostChecked(t *testing.T) {
-	// The gateway budget is soft, so a run can complete over budget; the post
-	// check catches it even when the run itself did not error.
+	// The gateway budget is soft, so a run can complete over budget without
+	// erroring; the post check must still catch it.
 	d := &fakeRunner{output: "ok", usage: daemon.RunUsage{CostMicroUSD: 120000}}
 	suite := suiteWith(Case{Name: "c1", Input: Input{Tool: "respond"}, Expect: Expect{MaxCostUSD: 0.1}})
 	report, _ := Run(context.Background(), d, nil, Options{Ref: "x", Manifest: manifestWith("respond"), Suite: suite})
@@ -122,14 +122,12 @@ func TestRun_OutputEquals(t *testing.T) {
 	eq := "4"
 	suite := suiteWith(Case{Name: "c1", Input: Input{Tool: "respond"}, Expect: Expect{OutputEquals: &eq}})
 
-	// Passes with surrounding whitespace trimmed.
 	pass := &fakeRunner{output: "  4\n"}
 	report, _ := Run(context.Background(), pass, nil, Options{Ref: "x", Manifest: manifestWith("respond"), Suite: suite})
 	if report.Passed != 1 {
 		t.Errorf("trimmed exact match should pass, got %+v", report.Cases[0])
 	}
 
-	// Fails on a different value, and the reason names the expected output.
 	fail := &fakeRunner{output: "four"}
 	report2, _ := Run(context.Background(), fail, nil, Options{Ref: "x", Manifest: manifestWith("respond"), Suite: suite})
 	if report2.Failed != 1 || !strings.Contains(report2.Cases[0].Failures[0], `does not equal "4"`) {
@@ -141,8 +139,8 @@ func TestRun_OutputMatches(t *testing.T) {
 	suite := suiteWith(Case{Name: "c1", Input: Input{Tool: "respond"}, Expect: Expect{OutputMatches: []string{`^\d+$`, `(?i)FORTY`}}})
 
 	pass := &fakeRunner{output: "42 forty"}
-	// The anchored ^\d+$ needs the whole string to be digits, so "42 forty"
-	// should actually fail the first pattern; use a case each way.
+	// "42 forty" fails the anchored ^\d+$ even though it matches the second
+	// pattern; every pattern must match.
 	report, _ := Run(context.Background(), pass, nil, Options{Ref: "x", Manifest: manifestWith("respond"), Suite: suite})
 	if report.Failed != 1 || !strings.Contains(report.Cases[0].Failures[0], `does not match`) {
 		t.Errorf("expected a regex miss on the anchored pattern, got %+v", report.Cases[0])
@@ -176,7 +174,6 @@ func TestRun_JudgeMeanOverJudgedCasesOnly(t *testing.T) {
 	if report.JudgeCostMicroUSD != 200 {
 		t.Errorf("JudgeCostMicroUSD = %d, want 200", report.JudgeCostMicroUSD)
 	}
-	// Judge cost is not folded into the case's own cost.
 	if report.Cases[0].CostMicroUSD != 0 {
 		t.Errorf("case cost = %d, judge spend must not leak into it", report.Cases[0].CostMicroUSD)
 	}

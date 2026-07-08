@@ -6,8 +6,7 @@ import (
 )
 
 func TestStop_NoDaemonRunning(t *testing.T) {
-	// A home with no daemon socket: Stop should report nothing was running
-	// rather than error or hang.
+	// A home with no daemon socket: Stop reports nothing was running.
 	t.Setenv("AGENTCAGE_HOME", t.TempDir())
 
 	stopped, err := Stop(context.Background())

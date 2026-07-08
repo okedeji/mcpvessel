@@ -38,8 +38,8 @@ JSON object per line.`,
 	return cmd
 }
 
-// eventPrinter picks the readable line format for a terminal and JSON lines for
-// a pipe, the same split the rest of the observability output uses.
+// eventPrinter picks readable lines for a terminal, JSON lines for a pipe,
+// the same split the rest of the observability output uses.
 func eventPrinter(w io.Writer) func(daemon.Event) {
 	if !progress.IsTerminal(w) {
 		enc := json.NewEncoder(w)
@@ -49,9 +49,8 @@ func eventPrinter(w io.Writer) func(daemon.Event) {
 }
 
 func printEvent(w io.Writer, e daemon.Event) {
-	// For a run.started/ended the label is its status and the subject is the run;
-	// for a runtime event (cage/elicitation) the label is the event type and the
-	// subject is the sub-agent it concerns, falling back to the run.
+	// run.started/ended: label is the status, subject is the run. Runtime
+	// events (cage/elicitation): label is the type, subject the sub-agent.
 	label, subject := e.Type, e.RunID
 	switch e.Type {
 	case daemon.EventRunStarted:

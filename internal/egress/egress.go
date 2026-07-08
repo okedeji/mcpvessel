@@ -1,9 +1,7 @@
-// Package egress is the in-run egress proxy: a hostname-filtering HTTP
-// CONNECT proxy that lets a cage reach only the hosts its EGRESS allow:
-// policy names. The per-run network is internal, so this proxy is the only
-// way out; a cage that declares no allow: never routes through it. It filters
-// by the host in the CONNECT line without terminating TLS, so it holds no
-// secret and never sees a payload.
+// Package egress is the in-run HTTP CONNECT proxy: a cage reaches only the
+// hosts its EGRESS allow: policy names, and the internal run network makes
+// this the only way out. It filters on the CONNECT host without terminating
+// TLS, so it holds no secret and never sees a payload.
 package egress
 
 import (
@@ -14,15 +12,13 @@ import (
 	"sync"
 )
 
-// Config maps a source (a cage's address on the run network) to the hostnames
-// it may reach. A source not in the map, or a host not in its list, is
-// refused: default deny.
+// Config maps a source (a cage's run-network address) to the hostnames it may
+// reach. Default deny: an unknown source or unlisted host is refused.
 type Config struct {
 	Sources map[string][]string `json:"sources"`
 }
 
-// Handler returns an HTTP CONNECT proxy that tunnels to an allowed host and
-// refuses everything else. The allow sets are compiled once at boot.
+// Handler returns the CONNECT proxy; allow sets are compiled once at boot.
 func Handler(cfg Config) http.Handler {
 	allow := make(map[string]map[string]bool, len(cfg.Sources))
 	for src, hosts := range cfg.Sources {
@@ -47,9 +43,9 @@ func Handler(cfg Config) http.Handler {
 	})
 }
 
-// tunnel dials the allowed target, tells the client the connection is open,
-// and copies bytes both ways until either side closes. It owns the two copy
-// goroutines and joins them before returning, so none outlives the request.
+// tunnel dials the target and copies bytes both ways until either side
+// closes. It joins its two copy goroutines before returning; none outlives
+// the request.
 func tunnel(w http.ResponseWriter, target string) {
 	upstream, err := dialTarget(target)
 	if err != nil {
@@ -78,18 +74,16 @@ func tunnel(w http.ResponseWriter, target string) {
 	_ = client.Close()
 }
 
-// dialTarget opens the upstream connection for a tunnel. It is a var so a test
-// can point a tunnel at a loopback backend that dialPublic would correctly
-// refuse; production always uses dialPublic.
+// dialTarget is a var so tests can tunnel to a loopback backend that
+// dialPublic would correctly refuse. Production always uses dialPublic.
 var dialTarget = dialPublic
 
-// dialPublic resolves target's host and dials only a public address, refusing
-// private, loopback, and link-local ones. Filtering by hostname but dialing
-// whatever it resolves to would make this an SSRF pivot: an allowed host
-// pointing at an internal IP, directly or via DNS rebinding, would reach a
-// sibling cage, a gateway, or the host. It dials the address it checked rather
-// than re-resolving, so a name cannot rebind to an internal IP between the
-// check and the dial.
+// dialPublic resolves the host and dials only a public address, refusing
+// private, loopback, and link-local ones. Without this, an allowed hostname
+// resolving to an internal IP (directly or via DNS rebinding) is an SSRF
+// pivot into a sibling cage, a gateway, or the host. It dials the address it
+// checked, never re-resolving, so a name cannot rebind between check and
+// dial.
 func dialPublic(target string) (net.Conn, error) {
 	host, port, err := net.SplitHostPort(target)
 	if err != nil {

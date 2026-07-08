@@ -59,7 +59,7 @@ func TestAgentfile_StampsOriginMarker(t *testing.T) {
 		t.Errorf("Agentfile missing the imported_from marker; got:\n%s", got)
 	}
 
-	// No origin, no marker: the line is only there to make a wrapper recognizable.
+	// No origin, no marker.
 	bare, err := Agentfile(Source{Registry: NPM, Identifier: "@scope/srv"})
 	if err != nil {
 		t.Fatalf("Agentfile: %v", err)
@@ -70,7 +70,6 @@ func TestAgentfile_StampsOriginMarker(t *testing.T) {
 }
 
 func TestCanonicalOrigin(t *testing.T) {
-	// Version-less, so every wrap of the same package shares one marker.
 	got := CanonicalOrigin(Source{Registry: PyPI, Identifier: "mcp-server-time", Version: "1.2"})
 	if got != "pypi:mcp-server-time" {
 		t.Errorf("CanonicalOrigin = %q, want the version-less coordinate", got)
@@ -86,7 +85,6 @@ func TestAgentfile_DescribesInputs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Agentfile: %v", err)
 	}
-	// The description rides as a comment directly above the SECRETS line.
 	if !strings.Contains(got, "# The service API key.\nSECRETS API_KEY") {
 		t.Errorf("Agentfile does not document the input; got:\n%s", got)
 	}

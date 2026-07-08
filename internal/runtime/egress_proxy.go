@@ -13,8 +13,8 @@ import (
 	"github.com/okedeji/agentcage/internal/env"
 )
 
-// egressProxyName is the egress proxy container and the host an allow: agent
-// reaches it at on the run network.
+// egressProxyName is the proxy's container name, also its hostname on the run
+// network.
 func egressProxyName(runID string) string { return runID + "-egress-proxy" }
 
 func nodeEgress(n *agentNode) string {
@@ -31,8 +31,8 @@ func manifestEgress(m *bundle.Manifest) string {
 	return m.Agentfile.Egress
 }
 
-// egressHosts parses an EGRESS allow: policy into its host list. A deny-default
-// (or any non-allow) policy has none, so it never routes through the proxy.
+// egressHosts parses an EGRESS allow: policy into its host list. Any
+// non-allow policy has none and never routes through the proxy.
 func egressHosts(policy string) []string {
 	if !strings.HasPrefix(policy, "allow:") {
 		return nil
@@ -46,11 +46,10 @@ func egressHosts(policy string) []string {
 	return hosts
 }
 
-// egressProxyEnv is the HTTP_PROXY-family env that routes an allow: agent's
-// external traffic through the run's egress proxy. NO_PROXY keeps intra-run
-// calls (the gateways) direct, since the proxy only tunnels external hosts and
-// those calls are plain HTTP it would reject. Both cases are set because
-// different clients read different ones.
+// egressProxyEnv routes an allow: agent's external traffic through the run's
+// egress proxy via the HTTP_PROXY family. NO_PROXY keeps intra-run calls (the
+// gateways) direct: the proxy only tunnels external hosts and would reject
+// their plain HTTP. Both cases are set; clients differ on which they read.
 func egressProxyEnv(runID string) map[string]string {
 	proxy := "http://" + egressProxyName(runID) + ":" + env.DefaultEgressPort
 	noProxy := runID + "-gw," + llmGatewayName(runID) + ",localhost,127.0.0.1"
@@ -64,13 +63,11 @@ func egressProxyEnv(runID string) map[string]string {
 	}
 }
 
-// startEgressProxy multi-homes onto each allow: agent's network plus the egress
-// network, keys its allow lists by each agent's address on its network, and
-// pushes its teardown. It runs after the agents so every one of them, the root
-// included, already has an IP to key by. Two agents resolving to the same
-// source IP would let one inherit the other's allow-list, so a collision is
-// fatal rather than silently mis-authorized; distinct per-agent subnets make it
-// not happen, but the check fails closed if it ever does.
+// startEgressProxy multi-homes the proxy onto each allow: agent's network plus
+// the egress network, keying allow lists by each agent's source IP; it runs
+// after the agents so every one already has an IP. Two agents on one source IP
+// would inherit each other's allow-lists, so a collision is fatal; distinct
+// per-agent subnets prevent it, and the check fails closed if it ever happens.
 func startEgressProxy(ctx context.Context, sess *bootSession, runID, egressNetwork string, agents map[string]egressAgent, in bootInput, td *teardown) error {
 	sources := make(map[string][]string, len(agents))
 	nets := []string{egressNetwork}
@@ -117,11 +114,10 @@ func startEgressProxy(ctx context.Context, sess *bootSession, runID, egressNetwo
 	return nil
 }
 
-// containerIP reads a container's address. nerdctl reports it as
-// .NetworkSettings.IPAddress; the per-network key is "unknown-eth0" in rootless
-// mode, so the flat field is the reliable one. An agent joins exactly one
-// network, so that field is unambiguously its address on the network it shares
-// with the proxy.
+// containerIP reads a container's address from nerdctl's flat
+// .NetworkSettings.IPAddress; the per-network key is "unknown-eth0" in
+// rootless mode, so the flat field is the reliable one. An agent joins exactly
+// one network, so it is unambiguous.
 func containerIP(ctx context.Context, p Provisioner, name string) (string, error) {
 	cmd := p.Nerdctl(ctx, "inspect", name, "--format", "{{.NetworkSettings.IPAddress}}")
 	var out bytes.Buffer

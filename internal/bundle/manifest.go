@@ -5,12 +5,8 @@ package bundle
 
 import "time"
 
-// Manifest is the JSON document stored at the root of every .agent file.
-// It records the parsed Agentfile, a hash that pins the source tree, and
-// a small amount of build metadata.
-//
-// Bundle consumers read the manifest to validate integrity (files_hash)
-// and to decide how to run the agent (the embedded agentfile spec).
+// Manifest is the JSON document at the root of every .agent file: the parsed
+// Agentfile, a hash pinning the source tree, and build metadata.
 type Manifest struct {
 	SpecVersion string        `json:"spec_version"`
 	Agentfile   AgentfileSpec `json:"agentfile"`
@@ -23,11 +19,8 @@ type Manifest struct {
 
 // Evals is the eval status carried in a manifest. Declared is set at build
 // time from the EVAL directive; the run fields are stamped after a full-suite
-// run of `agentcage eval` or `agentcage push --with-evals`.
-//
-// The run fields are pointers so a bundle that declares an EVAL suite but has
-// never run it (all nil) reads apart from one that ran and scored zero. A
-// consumer sees "declared, never run" versus "0 passed" without guessing.
+// run. They are pointers so a suite that never ran (all nil) reads apart from
+// one that ran and scored zero.
 type Evals struct {
 	Declared   bool       `json:"declared"`
 	LastRunAt  *time.Time `json:"last_run_at,omitempty"`
@@ -37,14 +30,9 @@ type Evals struct {
 }
 
 // Tool is one entry in the agent's tool catalog. The catalog lists every
-// tool the agent has (main, public, and private) so consumers can review
-// the full capability surface before depending on the agent. Listing a
-// private tool here does not make it callable from outside the cage;
-// visibility stays the access gate.
-//
-// Today the catalog holds only the MAIN and EXPOSE tools, with name and
-// visibility set. Build-time introspection enriches each entry with a
-// description and schema and adds the private tools the agent serves.
+// tool, private included, so the full capability surface is auditable;
+// listing a private tool does not make it callable, visibility stays the
+// access gate.
 type Tool struct {
 	Name        string         `json:"name"`
 	Visibility  Visibility     `json:"visibility"`
@@ -52,11 +40,8 @@ type Tool struct {
 	Schema      map[string]any `json:"schema,omitempty"`
 }
 
-// Visibility distinguishes the three roles a tool can have in an agent.
-// The MCP routing layer uses it to decide whether an external caller can
-// reach a tool: main and public are reachable, private is not. The catalog
-// still publishes private entries so reviewers can audit the full surface;
-// the access gate stays closed regardless.
+// Visibility is a tool's role. The MCP routing layer gates on it: main and
+// public are reachable from outside the cage, private is not.
 type Visibility string
 
 const (
@@ -65,13 +50,8 @@ const (
 	VisibilityPrivate Visibility = "private"
 )
 
-// AgentfileSpec is the wire-format representation of a parsed Agentfile.
-// It is decoupled from the parser's in-memory types so that the manifest
-// schema can evolve independently of how we choose to model directives
-// in Go.
-//
-// Fields tagged omitempty are omitted from JSON when unset, keeping
-// manifests for minimal agents concise.
+// AgentfileSpec is the wire form of a parsed Agentfile, decoupled from the
+// parser's in-memory types so the manifest schema can evolve independently.
 type AgentfileSpec struct {
 	From       string            `json:"from"`
 	Entrypoint string            `json:"entrypoint"`
@@ -90,24 +70,19 @@ type AgentfileSpec struct {
 	Eval       string            `json:"eval,omitempty"`
 }
 
-// ResourcesSpec is the wire form of the advisory RESOURCES directive. The
-// operator sets the concrete enforced cap; these are the author's hint.
+// ResourcesSpec is the wire form of the advisory RESOURCES directive: the
+// author's hint, not the enforced cap, which the operator sets.
 type ResourcesSpec struct {
 	CPUs string `json:"cpus,omitempty"`
 	Mem  string `json:"mem,omitempty"`
 	Pids int    `json:"pids,omitempty"`
 }
 
-// UseSpec is one entry in AgentfileSpec.Uses. Public mirrors the
-// USES PUBLIC modifier; Deny carries the parent's exclusion list from
-// the `USES @ref:ver DENY tool1,tool2` clause. An empty Deny means
-// the parent accepts every EXPOSE'd tool of the sub-agent.
-//
-// Digest is the sha256 the sub-agent's tag resolved to at build time. It
-// is the lockfile: the daemon pulls by digest, not tag, so a dependency
-// re-pushed under the same tag does not change what this bundle runs
-// against. A bundle built before the resolver carries no digest; omitempty
-// keeps that manifest valid and the daemon falls back to the tag for it.
+// UseSpec is one entry in AgentfileSpec.Uses. An empty Deny accepts every
+// EXPOSE'd tool of the sub-agent. Digest is the sha256 the tag resolved to at
+// build time, the lockfile: the daemon pulls by digest, so a dependency
+// re-pushed under the same tag does not change what this bundle runs against.
+// A pre-resolver bundle carries no digest and the daemon falls back to the tag.
 type UseSpec struct {
 	Ref     string   `json:"ref"`
 	Version string   `json:"version"`
@@ -116,16 +91,13 @@ type UseSpec struct {
 	Deny    []string `json:"deny,omitempty"`
 }
 
-// BanSpec is one entry in AgentfileSpec.Ban: an agent the root forbids
-// anywhere in its subtree, from the `BAN @ref [ONLY tool1,tool2]` directive.
-// An empty Tools bans the whole agent (it does not run and no edge reaches
-// it); a non-empty Tools bans those tools on every edge that reaches the
-// agent, however deep.
+// BanSpec is one BAN entry: an agent the root forbids anywhere in its
+// subtree. Empty Tools bans the whole agent; non-empty bans those tools on
+// every edge that reaches it, however deep.
 type BanSpec struct {
 	Ref   string   `json:"ref"`
 	Tools []string `json:"tools,omitempty"`
 }
 
-// specVersion is the on-disk version of the manifest schema. Bump when
-// the schema changes incompatibly.
+// specVersion is the manifest schema version. Bump on incompatible change.
 const specVersion = "0.1"

@@ -40,7 +40,6 @@ ENTRYPOINT python3 agent.py
 		t.Errorf("FilesHash = %q", manifest.FilesHash)
 	}
 
-	// Verify the files round-tripped exactly.
 	for path, want := range map[string]string{
 		"Agentfile":        "FROM python:3.12-slim\nRUN pip install --no-cache-dir mcp\nMODEL anthropic/claude-3.5\nMETA description \"test agent\"\nENTRYPOINT python3 agent.py\n",
 		"agent.py":         "print('hello')\n",
@@ -100,8 +99,8 @@ func TestReadSourceFile_RefusesEscape(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 
-	// A traversal path cleans to a files/ entry that cannot exist, so the read
-	// fails closed rather than reaching outside the source root.
+	// A traversal path cleans to a files/ entry that cannot exist, so the
+	// read fails closed.
 	if _, err := ReadSourceFile(out, "../../etc/passwd"); err == nil {
 		t.Error("expected an error for a path escaping the source root")
 	}
@@ -124,9 +123,8 @@ func TestExtract_NotAGzip(t *testing.T) {
 }
 
 func TestExtract_RefusesPathTraversal(t *testing.T) {
-	// Build a tar whose entry name escapes the destination directory.
-	// Build()'s own writer cannot produce one (it strips ".." from
-	// source-tree walks), so we craft the tar manually.
+	// Build's own writer cannot produce an escaping entry name, so the tar
+	// is crafted manually.
 	bundlePath := filepath.Join(t.TempDir(), "evil.agent")
 	mustWriteEvilBundle(t, bundlePath)
 
@@ -149,8 +147,8 @@ func TestExtract_RejectsTamperedFiles(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 
-	// Rewrite one source file while keeping the original manifest (and its
-	// files_hash), the shape of a tampered local bundle.
+	// One source file rewritten, original manifest (and files_hash) kept:
+	// the shape of a tampered local bundle.
 	tampered := filepath.Join(t.TempDir(), "tampered.agent")
 	repackReplacing(t, out, tampered, "files/agent.py", []byte("print('tampered')\n"))
 
@@ -160,8 +158,8 @@ func TestExtract_RejectsTamperedFiles(t *testing.T) {
 	}
 }
 
-// repackReplacing copies a bundle, swapping the body of one tar entry while
-// leaving every other entry (the manifest included) untouched.
+// repackReplacing copies a bundle, swapping one tar entry's body and leaving
+// every other entry untouched.
 func repackReplacing(t *testing.T, in, out, name string, body []byte) {
 	t.Helper()
 	inF, err := os.Open(in)
@@ -204,9 +202,8 @@ func repackReplacing(t *testing.T, in, out, name string, body []byte) {
 	}
 }
 
-// mustWriteEvilBundle writes a malformed bundle: a valid manifest plus
-// one "files/" entry whose relative path tries to climb above the
-// destination directory. Extract is expected to refuse it.
+// mustWriteEvilBundle writes a valid manifest plus one files/ entry whose
+// relative path climbs above the destination directory.
 func mustWriteEvilBundle(t *testing.T, path string) {
 	t.Helper()
 	f, err := os.Create(path)

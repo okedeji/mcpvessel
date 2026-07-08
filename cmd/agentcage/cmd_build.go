@@ -85,11 +85,9 @@ caught; --skip-cycle-check skips the walk on a graph you trust.`,
 
 type buildConfig struct {
 	srcDir string
-	// outPath is the store path build writes the bundle to. buildToStore
-	// derives it from the content hash and sets it before calling runBuild.
+	// outPath is the store path, derived from the content hash before runBuild.
 	outPath string
-	// filePath is the -o value: an optional portable copy written after the
-	// bundle lands in the store. Empty leaves the store as the only output.
+	// filePath is the -o portable copy; empty means store-only.
 	filePath       string
 	mode           progress.Mode
 	tag            string
@@ -98,14 +96,9 @@ type buildConfig struct {
 	noCache        bool
 }
 
-// runBuild assembles the Build options (USES digest resolution, tool
-// introspection) and packages the bundle.
-//
-// With introspection (the default) the heavy visual is BuildKit's image
-// build, rendered by runtime.Introspect to stderr; the lightweight
-// parse/hash/seal steps stay quiet so the build output stays the primary
-// thing on screen. With --no-introspect there is no image build, so the
-// 3-step packaging renderer is the primary output, the same as before.
+// runBuild assembles the Build options and packages the bundle. When
+// introspecting, BuildKit's output owns the screen and the packaging steps
+// stay quiet; otherwise the 3-step renderer is the only progress output.
 func runBuild(ctx context.Context, stdout, stderr io.Writer, cfg buildConfig) error {
 	var buildOpts []bundle.Option
 
@@ -124,8 +117,7 @@ func runBuild(ctx context.Context, stdout, stderr io.Writer, cfg buildConfig) er
 			return err
 		}
 		if introspectOpt == nil {
-			// The Agentfile did not parse, so fall back to the rendered
-			// packaging path and let bundle.Build report the parse error.
+			// Unparseable Agentfile; let bundle.Build report the error.
 			introspecting = false
 		} else {
 			buildOpts = append(buildOpts, introspectOpt)
@@ -145,20 +137,14 @@ func runBuild(ctx context.Context, stdout, stderr io.Writer, cfg buildConfig) er
 	return err
 }
 
-// buildIntoStore hashes the source and builds the bundle into the content-
-// addressed store, returning the content hash and the store path it wrote. It
-// is the core buildToStore reports on, and the seam `agentcage eval .` reuses
-// to make a source directory runnable before evaluating it.
 func buildIntoStore(ctx context.Context, stdout, stderr io.Writer, cfg buildConfig) (hash, storePath string, err error) {
 	st, err := store.New()
 	if err != nil {
 		return "", "", err
 	}
 
-	// Anchor the hash on the store dir, which sits outside the source tree:
-	// it excludes nothing from the walk, so this value matches the files_hash
-	// bundle.Build recomputes when it writes into the store, and the store
-	// path lands where a later run resolves the same source to.
+	// Anchor the hash on the store dir (outside the source tree) so it
+	// matches the files_hash bundle.Build recomputes when writing the bundle.
 	hash, err = bundle.HashSource(cfg.srcDir, st.Dir())
 	if err != nil {
 		return "", "", err
@@ -173,9 +159,8 @@ func buildIntoStore(ctx context.Context, stdout, stderr io.Writer, cfg buildConf
 		return "", "", err
 	}
 
-	// Seed the pull cache under the bundle's OCI digest so a parent that USES
-	// this agent can be built and run against it locally, without pushing it
-	// first: the runtime pulls sub-agents by digest and finds this seeded entry.
+	// Seed the pull cache under the OCI digest so a parent that USES this
+	// agent resolves it locally, without a push.
 	digest, err := registry.BundleDigest(cfg.outPath)
 	if err != nil {
 		return "", "", fmt.Errorf("computing bundle digest: %w", err)
@@ -186,12 +171,9 @@ func buildIntoStore(ctx context.Context, stdout, stderr io.Writer, cfg buildConf
 	return hash, cfg.outPath, nil
 }
 
-// validateEvalSuite fails the build when the Agentfile declares an EVAL suite
-// that escapes the source tree, is missing, or does not parse. This is the
-// domain check the parser defers: the parser takes the raw path on faith; the
-// build confirms it points at a real, well-formed suite before the bundle ships
-// claiming one. A malformed Agentfile is bundle.Build's to report, so a parse
-// failure here is not ours.
+// validateEvalSuite fails the build when a declared EVAL suite escapes the
+// source tree, is missing, or does not parse. A malformed Agentfile is
+// bundle.Build's to report, so a parse failure here is not ours.
 func validateEvalSuite(cfg buildConfig) error {
 	af, err := agentfile.ParseFile(filepath.Join(cfg.srcDir, bundle.AgentfileName))
 	if err != nil || af.Eval == "" {
@@ -207,15 +189,10 @@ func validateEvalSuite(cfg buildConfig) error {
 	return nil
 }
 
-// buildToStore builds the bundle into the content-addressed store, indexes it
-// by ref when -t is given, writes the -o copy when asked, and reports the
-// result. The store is the build's output; push, run, and call read it back by
-// ref.
 func buildToStore(ctx context.Context, stdout, stderr io.Writer, cfg buildConfig) error {
 	start := time.Now()
 
-	// Parse the ref before the build so a bad -t fails fast, not after the
-	// expensive image build.
+	// Parse -t up front so a bad ref fails before the expensive image build.
 	var ref reference.Reference
 	if cfg.tag != "" {
 		var err error
@@ -250,9 +227,6 @@ func buildToStore(ctx context.Context, stdout, stderr io.Writer, cfg buildConfig
 	return nil
 }
 
-// reportBuild prints the one-line build result: the ref when the bundle was
-// named with -t, otherwise its content hash plus a hint at how to name it. The
-// -o copy, when written, gets its own line.
 func reportBuild(stdout io.Writer, cfg buildConfig, ref reference.Reference, hash string, elapsed time.Duration) {
 	size := "?"
 	if info, err := os.Stat(cfg.outPath); err == nil {
@@ -270,19 +244,18 @@ func reportBuild(stdout io.Writer, cfg buildConfig, ref reference.Reference, has
 	}
 }
 
-// introspectionOption boots the agent, reads its tools, and returns a Build
-// option that enriches the catalog with descriptions, schemas, and private
-// tools. It returns a nil option (not an error) when the Agentfile does not
-// parse, leaving that for bundle.Build to report. A boot or tools/list
-// failure is fatal: a bundle whose agent will not start should not ship.
+// introspectionOption boots the agent and returns a Build option that
+// enriches the catalog with its live tool metadata. Returns a nil option, not
+// an error, on an unparseable Agentfile; bundle.Build reports that. A boot
+// or tools/list failure is fatal: an agent that will not start should not ship.
 func introspectionOption(ctx context.Context, stdout, stderr io.Writer, cfg buildConfig) (bundle.Option, error) {
 	af, err := agentfile.ParseFile(filepath.Join(cfg.srcDir, bundle.AgentfileName))
 	if err != nil {
 		return nil, nil
 	}
 
-	// The same source files hash the packed manifest records, so the image
-	// introspection builds here is the one the later run resolves and reuses.
+	// Same hash inputs as the packed manifest, so the image built here is the
+	// one a later run resolves and reuses.
 	hash, err := bundle.HashSource(cfg.srcDir, cfg.outPath)
 	if err != nil {
 		return nil, fmt.Errorf("hashing source for introspection: %w", err)
@@ -313,10 +286,7 @@ func introspectionOption(ctx context.Context, stdout, stderr io.Writer, cfg buil
 	return bundle.WithIntrospectedTools(introspected), nil
 }
 
-// warnMissingDescriptions nudges authors toward describing their public
-// surface. A public tool with no description is what consumers and calling
-// LLMs read, so its absence is worth a warning. It never blocks the build,
-// and private tools are exempt.
+// warnMissingDescriptions never blocks the build; private tools are exempt.
 func warnMissingDescriptions(w io.Writer, af *agentfile.Agentfile, tools []bundle.IntrospectedTool) {
 	public := map[string]bool{}
 	if af.Main != "" {
@@ -332,14 +302,13 @@ func warnMissingDescriptions(w io.Writer, af *agentfile.Agentfile, tools []bundl
 	}
 }
 
-// usesResolverOption resolves the Agentfile's USES dependencies to digests
-// and returns a Build option that locks them into the manifest. It returns
-// nil (no option, no network) when the agent has no USES, so a leaf build
-// stays offline.
+// usesResolverOption resolves USES dependencies to digests and returns a
+// Build option that locks them into the manifest. Nil when there are no USES:
+// leaf builds stay offline.
 func usesResolverOption(ctx context.Context, w io.Writer, cfg buildConfig) (bundle.Option, error) {
 	af, err := agentfile.ParseFile(filepath.Join(cfg.srcDir, bundle.AgentfileName))
 	if err != nil {
-		// A malformed Agentfile is bundle.Build's to report, not ours.
+		// bundle.Build reports the parse error.
 		return nil, nil
 	}
 	if len(af.Uses) == 0 {
@@ -350,10 +319,8 @@ func usesResolverOption(ctx context.Context, w io.Writer, cfg buildConfig) (bund
 	if err != nil {
 		return nil, err
 	}
-	// The registry client is only needed for a dependency the local store does
-	// not hold. Build it lazily-tolerant: a fully local USES graph resolves
-	// with no credentials, and a missing registry surfaces only if a remote
-	// dependency is actually reached.
+	// Tolerate a missing registry: a fully local USES graph resolves with no
+	// credentials, and regErr surfaces only if a remote dependency is reached.
 	reg, regErr := registry.New()
 
 	_, _ = fmt.Fprintf(w, "Resolving %d USES dependencies\n", len(af.Uses))
@@ -374,10 +341,9 @@ func usesResolverOption(ctx context.Context, w io.Writer, cfg buildConfig) (bund
 	}), nil
 }
 
-// storeFirstResolver resolves a USES dependency from the local store before the
-// registry, so an agent builds against a sibling built locally with build -t
-// without pushing it first. The digest it locks is the deterministic OCI digest
-// a later push produces, so the lock stays valid across the push.
+// storeFirstResolver checks the local store before the registry, so a parent
+// builds against a sibling built with -t and never pushed. The locked digest
+// is the deterministic OCI digest a push produces, so it stays valid after one.
 type storeFirstResolver struct {
 	store  *store.Store
 	reg    *registry.Client
@@ -418,8 +384,6 @@ func (r storeFirstResolver) Pull(ctx context.Context, ref reference.Reference) (
 	return reg.Pull(ctx, ref)
 }
 
-// humanSize formats n bytes in the smallest binary unit that keeps the
-// number above 1, the conventional way image sizes are shown.
 func humanSize(n int64) string {
 	const (
 		kb = 1 << 10

@@ -11,25 +11,21 @@ import (
 	"github.com/okedeji/agentcage/internal/env"
 )
 
-// Command is the subcommand that runs the daemon, the name Ensure spawns and the
-// CLI registers, kept in one place so the launch side and the command side
-// cannot drift.
+// Command is the subcommand that runs the daemon: the name Ensure spawns and
+// the CLI registers, kept in one place so they cannot drift.
 const Command = "daemon"
 
-// startTimeout bounds the wait for a freshly spawned daemon to bind its socket.
-// Binding is near-instant, so this only outlasts process startup; a hang fails
-// fast with a pointer at the log rather than waiting forever.
+// startTimeout bounds the wait for a freshly spawned daemon to bind its
+// socket. Binding is near-instant; this only outlasts process startup.
 const startTimeout = 5 * time.Second
 
-// stopTimeout bounds the wait for a daemon to stop answering after a shutdown
-// request. Graceful shutdown releases held runs first, which can take a moment
-// per run, so this is more generous than startup.
+// stopTimeout bounds the wait for a daemon to stop answering. Graceful
+// shutdown releases held runs first, so this is more generous than startup.
 const stopTimeout = 30 * time.Second
 
 // Stop asks a running daemon to shut down and waits until it stops answering.
-// It reports whether a daemon was actually running, so a caller can tell "I
-// stopped it" from "there was nothing to stop". The shutdown ack can race the
-// socket closing, so success is confirmed by polling, not by the request's
+// It reports whether a daemon was actually running. The shutdown ack can race
+// the socket closing, so success is confirmed by polling, not by the request's
 // result.
 func Stop(ctx context.Context) (stopped bool, err error) {
 	socket, err := SocketPath()
@@ -58,10 +54,9 @@ func Stop(ctx context.Context) (stopped bool, err error) {
 	}
 }
 
-// Ensure returns a client for the daemon, starting it if it is not already
-// listening. The daemon is spawned detached so it outlives the caller, with its
-// output appended to ~/.agentcage/daemon.log. Commands that need the daemon
-// call this so an operator never has to start it by hand.
+// Ensure returns a client for the daemon, starting one if none is listening.
+// The daemon is spawned detached, its output appended to
+// ~/.agentcage/daemon.log.
 func Ensure(ctx context.Context) (*Client, error) {
 	socket, err := SocketPath()
 	if err != nil {
@@ -92,8 +87,7 @@ func Ensure(ctx context.Context) (*Client, error) {
 	}
 }
 
-// answers reports whether a daemon is listening and responding, the cheap
-// version round-trip Ensure uses to decide whether to spawn one.
+// answers reports whether a daemon is listening and responding.
 func answers(ctx context.Context, c *Client) bool {
 	pingCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
 	defer cancel()
@@ -101,10 +95,9 @@ func answers(ctx context.Context, c *Client) bool {
 	return err == nil
 }
 
-// spawn starts the daemon as a detached background process that survives the
-// caller exiting. It runs the same binary, so the daemon is always the
-// installed version, and inherits the environment so AGENTCAGE_HOME (and thus
-// the socket and store paths) match.
+// spawn starts the daemon detached so it survives the caller exiting. It runs
+// the same binary and inherits the environment, so the version and
+// AGENTCAGE_HOME (socket and store paths) match.
 func spawn() error {
 	exe, err := os.Executable()
 	if err != nil {

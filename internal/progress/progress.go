@@ -1,7 +1,6 @@
-// Package progress renders build progress to a writer. Two renderers
-// ship: Plain (classic line-by-line output, safe everywhere) and TTY
-// (BuildKit-style live-updating dashboard with cursor control). The CLI
-// picks one based on a --progress flag.
+// Package progress renders build progress: Plain (line-by-line, safe
+// everywhere) and TTY (BuildKit-style live dashboard), selected by the
+// --progress flag.
 package progress
 
 import (
@@ -13,13 +12,11 @@ import (
 
 // Renderer reports build progress to its writer.
 type Renderer interface {
-	// Step reports that step n of total has started with the given
-	// message. The renderer infers the previous step's completion from
-	// the next Step call.
+	// Step reports that step n of total has started; the previous step is
+	// implicitly complete.
 	Step(n, total int, msg string)
-	// Done finalizes rendering and releases resources held by the
-	// renderer (timer goroutines, terminal state). Safe to call once;
-	// further Step calls are undefined after Done.
+	// Done finalizes rendering and stops any tick goroutine. Step calls
+	// after Done are undefined.
 	Done()
 }
 
@@ -27,17 +24,13 @@ type Renderer interface {
 type Mode string
 
 const (
-	// ModeAuto picks Plain when the writer isn't a TTY and TTY otherwise.
-	ModeAuto Mode = "auto"
-	// ModePlain forces line-by-line output.
+	ModeAuto  Mode = "auto"
 	ModePlain Mode = "plain"
-	// ModeTTY forces the live-updating renderer, even when piped.
-	ModeTTY Mode = "tty"
+	ModeTTY   Mode = "tty" // live renderer even when piped
 )
 
-// ParseMode normalizes a flag value into a Mode. Empty strings and
-// unrecognized values become ModeAuto so users can't accidentally
-// degrade their experience by typoing the flag.
+// ParseMode normalizes a flag value into a Mode; anything unrecognized
+// becomes ModeAuto rather than an error.
 func ParseMode(s string) Mode {
 	switch Mode(s) {
 	case ModePlain, ModeTTY, ModeAuto:
@@ -62,9 +55,8 @@ func New(w io.Writer, mode Mode) Renderer {
 	}
 }
 
-// IsTerminal reports whether w is a real interactive terminal. Returns
-// false for anything that isn't an *os.File or whose file descriptor is
-// not a TTY (pipes, regular files, CI capture buffers).
+// IsTerminal reports whether w is an interactive terminal: false for
+// pipes, regular files, and non-*os.File writers.
 func IsTerminal(w io.Writer) bool {
 	f, ok := w.(*os.File)
 	if !ok {

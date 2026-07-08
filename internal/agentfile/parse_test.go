@@ -76,7 +76,7 @@ ENTRYPOINT python3 -m researcher
 	if got.Env["LOG_LEVEL"] != "info" {
 		t.Errorf("Env[LOG_LEVEL] = %q", got.Env["LOG_LEVEL"])
 	}
-	// A value-less ENV is a required operator input: declared, but no default.
+	// Value-less ENV: declared, no default.
 	if v, ok := got.Env["SYSTEM_PROMPT"]; !ok || v != "" {
 		t.Errorf("Env[SYSTEM_PROMPT] = %q, ok=%v; want declared with empty default", v, ok)
 	}
@@ -120,7 +120,6 @@ EXPOSE cite_count
 }
 
 func TestParse_MainOptional(t *testing.T) {
-	// Tool collection: no MAIN. Parse succeeds; Main stays empty.
 	src := `FROM node:20-slim
 ENTRYPOINT node dist/server.js
 EXPOSE search
@@ -240,9 +239,8 @@ ENTRYPOINT python3 -m agent
 	}
 }
 
-// Inline # is treated as part of the directive value, not as a comment.
-// This matches Dockerfile and preserves legitimate uses like pip's
-// `url#sha256=...` pin specs.
+// Inline # is part of the value, matching Dockerfile; pip's url#sha256=
+// pin specs depend on it.
 func TestParse_InlineHashIsNotComment(t *testing.T) {
 	src := `FROM python:3.12-slim # not a comment
 RUN pip install foo @ https://example.com/foo.tar.gz#sha256=abc

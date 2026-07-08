@@ -13,9 +13,8 @@ import (
 	"github.com/okedeji/agentcage/internal/mcpgateway"
 )
 
-// newMCPGatewayCmd runs the in-run MCP gateway. It is hidden: the runtime
-// starts it inside the gateway container, not operators. Its routing table
-// and listen address arrive as environment the runtime injects.
+// newMCPGatewayCmd runs the in-run MCP gateway. Hidden: the runtime starts it
+// inside the gateway container, with routing table and address in the environment.
 func newMCPGatewayCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:    "mcp-gateway",
@@ -37,9 +36,9 @@ func newMCPGatewayCmd() *cobra.Command {
 				Payload: func(r mcpgateway.SubCallRecord) { mcpgateway.WriteSubReplayLine(os.Stdout, r) },
 			})
 
-			// The activation control stream listens on the container's loopback
-			// only, so agents on the run network cannot reach it; the daemon
-			// drives it by exec'ing the mcp-control bridge into this container.
+			// The control stream listens on container loopback only, out of
+			// reach of the run network; the daemon drives it by exec'ing the
+			// mcp-control bridge into this container.
 			go serveMCPControl(gw)
 
 			srv := &http.Server{Addr: addr, Handler: gw.Handler()}
@@ -49,10 +48,8 @@ func newMCPGatewayCmd() *cobra.Command {
 	return cmd
 }
 
-// serveMCPControl accepts one control connection at a time on loopback and runs
-// the activation stream over it. The daemon holds a single bridge per run and
-// re-execs it if it dies, so a returned connection just loops back to Accept for
-// the next one.
+// serveMCPControl accepts one control connection at a time; the daemon holds a
+// single bridge per run and re-execs a dead one, so loop back to Accept.
 func serveMCPControl(gw *mcpgateway.Gateway) {
 	ln, err := net.Listen("tcp", "127.0.0.1:"+env.DefaultMCPControlPort)
 	if err != nil {

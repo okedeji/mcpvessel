@@ -7,8 +7,6 @@ import (
 	"testing"
 )
 
-// TestOpenRunLogSink locks that the sink writes to the run's durable log file,
-// the file the runtime tees the agent's stderr into.
 func TestOpenRunLogSink(t *testing.T) {
 	t.Setenv("AGENTCAGE_HOME", t.TempDir())
 	sink := openRunLogSink("echo-1")
@@ -38,8 +36,7 @@ func TestHandleRunLogs(t *testing.T) {
 		t.Fatalf("missing log: status %d, want 404", rec.Code)
 	}
 
-	// A written log reads back verbatim, no daemon round-trip needed for the run
-	// to be over: the file is the source of truth.
+	// A written log reads back verbatim.
 	f, err := openRunLog("echo-1")
 	if err != nil {
 		t.Fatalf("openRunLog: %v", err)

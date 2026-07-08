@@ -9,9 +9,8 @@ import (
 	"testing"
 )
 
-// connect opens a raw connection to the proxy and sends a CONNECT for target,
-// returning the status line. It also reports the source IP the proxy will see
-// for this connection, so the test can allow or deny exactly it.
+// connect sends a raw CONNECT for target and returns the status line plus the
+// source IP the proxy saw, so a test can allow or deny exactly it.
 func connect(t *testing.T, proxyAddr, target string) (status string, srcIP string, conn net.Conn) {
 	t.Helper()
 	c, err := net.Dial("tcp", proxyAddr)
@@ -38,8 +37,7 @@ func TestHandler_RefusesUnknownSource(t *testing.T) {
 }
 
 func TestHandler_RefusesDisallowedHost(t *testing.T) {
-	// Learn the source IP from a throwaway connect, then allow only good.test
-	// for it and ask for a different host.
+	// Learn the source IP from a throwaway connect, then allow only good.test.
 	tmp := httptest.NewServer(Handler(Config{}))
 	_, srcIP, c0 := connect(t, tmp.Listener.Addr().String(), "x:1")
 	_ = c0.Close()
@@ -55,13 +53,12 @@ func TestHandler_RefusesDisallowedHost(t *testing.T) {
 }
 
 func TestHandler_TunnelsAllowedHost(t *testing.T) {
-	// The backend is on loopback, which the SSRF guard rightly refuses, so this
-	// test points the tunnel at a permissive dialer to exercise the data path.
+	// The backend is on loopback, which the SSRF guard rightly refuses;
+	// swap in a permissive dialer to exercise the data path.
 	old := dialTarget
 	dialTarget = func(target string) (net.Conn, error) { return net.Dial("tcp", target) }
 	defer func() { dialTarget = old }()
 
-	// A TCP backend that echoes one line, standing in for an allowed host.
 	backend, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -79,7 +76,6 @@ func TestHandler_TunnelsAllowedHost(t *testing.T) {
 
 	backendHost := hostOnly(backend.Addr().String())
 
-	// Learn the source IP, then allow it to reach the backend host.
 	probe := httptest.NewServer(Handler(Config{}))
 	_, srcIP, p := connect(t, probe.Listener.Addr().String(), "x:1")
 	_ = p.Close()
@@ -104,10 +100,8 @@ func TestHandler_TunnelsAllowedHost(t *testing.T) {
 }
 
 func TestHandler_RefusesPrivateTarget(t *testing.T) {
-	// Even when the source is allowed to reach the host string, the proxy must
-	// refuse to dial it if it resolves to a private address: a hostname-filter
-	// that tunnels to internal IPs is an SSRF pivot. The host is explicitly
-	// allowed, so a 403 here can only come from the dial guard, not host-deny.
+	// The host is explicitly allowed, so a 403 can only come from the dial
+	// guard refusing the private address, not from host-deny.
 	tmp := httptest.NewServer(Handler(Config{}))
 	_, srcIP, c0 := connect(t, tmp.Listener.Addr().String(), "x:1")
 	_ = c0.Close()

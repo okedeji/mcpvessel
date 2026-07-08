@@ -17,8 +17,8 @@ import (
 	"github.com/okedeji/agentcage/internal/reference"
 )
 
-// realBundle builds a minimal but valid .agent so packBundle can read its
-// manifest (it pins the OCI created annotation to the bundle's built_at).
+// realBundle builds a minimal valid .agent; packBundle needs a readable
+// manifest to pin the created annotation to built_at.
 func realBundle(t *testing.T) string {
 	t.Helper()
 	src := t.TempDir()
@@ -49,8 +49,6 @@ func TestPackBundle_RoundTrip(t *testing.T) {
 		t.Errorf("ArtifactType = %q, want %q", desc.ArtifactType, ArtifactType)
 	}
 
-	// content.ReadAll inside fetchBundle verifies the blob digest, so a
-	// successful fetch proves integrity.
 	got, manifestDesc, err := fetchBundle(ctx, store, "0.1")
 	if err != nil {
 		t.Fatalf("fetchBundle: %v", err)
@@ -78,8 +76,7 @@ func TestBundleDigest_DeterministicAndMatchesPush(t *testing.T) {
 		t.Errorf("BundleDigest is not deterministic: %s vs %s", d1, d2)
 	}
 
-	// The locally computed digest must equal what a push produces, so a USES
-	// lock made locally stays valid once the dependency is pushed.
+	// A locally locked USES digest must stay valid once the dependency is pushed.
 	desc, err := packBundle(context.Background(), memory.New(), "0.1", bundlePath, nil)
 	if err != nil {
 		t.Fatalf("packBundle: %v", err)
@@ -111,8 +108,8 @@ func TestPackBundle_StampsOwnershipForPublish(t *testing.T) {
 		t.Errorf("manifest annotation = %q, want %q", man.Annotations[mcpServerNameAnnotation], name)
 	}
 
-	// The registry reads the marker from the config's Labels, so that is what
-	// must carry it, not only the manifest annotation.
+	// The MCP Registry reads the marker from the config's Labels, not only the
+	// manifest annotation.
 	cb, err := content.FetchAll(ctx, store, man.Config)
 	if err != nil {
 		t.Fatal(err)
@@ -146,8 +143,7 @@ func TestSeedCache_MakesPullALocalHit(t *testing.T) {
 	}
 	c := &Client{cacheDir: filepath.Join(home, "cache")}
 
-	// A digest-pinned Pull short-circuits from the cache with no network, so a
-	// seeded bundle resolves offline.
+	// A digest-pinned Pull must short-circuit from the cache with no network.
 	ref, err := reference.Parse("ghcr.io/x/y@" + digest)
 	if err != nil {
 		t.Fatal(err)
@@ -168,8 +164,7 @@ func TestFetchBundle_RejectsNonBundleManifest(t *testing.T) {
 	ctx := context.Background()
 	store := memory.New()
 
-	// A manifest whose only layer is not the agentcage bundle media type must
-	// be rejected: it is some other OCI artifact, not one of ours.
+	// The only layer has a foreign media type: some other OCI artifact.
 	blob := content.NewDescriptorFromBytes("application/octet-stream", []byte("not a bundle"))
 	if err := store.Push(ctx, blob, bytes.NewReader([]byte("not a bundle"))); err != nil {
 		t.Fatal(err)

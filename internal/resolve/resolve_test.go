@@ -13,8 +13,7 @@ import (
 	"github.com/okedeji/agentcage/internal/reference"
 )
 
-// fakeReg serves pre-built bundles and canned digests keyed by
-// repository:tag, standing in for a real OCI registry.
+// fakeReg serves pre-built bundles and canned digests keyed by repository:tag.
 type fakeReg struct {
 	digests map[string]string
 	bundles map[string]string
@@ -92,7 +91,6 @@ func TestResolve_LocksDigests(t *testing.T) {
 
 func TestResolve_DetectsCycleBackToParent(t *testing.T) {
 	t.Setenv("AGENTCAGE_REGISTRY", "")
-	// parent USES web; web USES parent. The walk must catch the loop.
 	web := buildBundle(t, "web", "USES @acme/parent:0.1")
 	reg := &fakeReg{
 		digests: map[string]string{"acme/web:1.0.0": "sha256:web", "acme/parent:0.1": "sha256:parent"},
@@ -112,7 +110,6 @@ func TestResolve_DetectsCycleBackToParent(t *testing.T) {
 
 func TestResolve_DetectsCycleAmongDependencies(t *testing.T) {
 	t.Setenv("AGENTCAGE_REGISTRY", "")
-	// a USES b, b USES a, neither is the parent.
 	a := buildBundle(t, "a", "USES @acme/b:1.0.0")
 	b := buildBundle(t, "b", "USES @acme/a:1.0.0")
 	reg := &fakeReg{
@@ -146,8 +143,8 @@ func TestResolve_AcyclicGraphPasses(t *testing.T) {
 
 func TestResolve_SkipCycleCheckStillLocksDigests(t *testing.T) {
 	t.Setenv("AGENTCAGE_REGISTRY", "")
-	// web USES parent (a cycle), but with SkipCycleCheck the walk never
-	// runs, so resolution succeeds and still returns the digest.
+	// No bundle registered for web: with SkipCycleCheck the walk (and its
+	// pull) never runs, and resolution still returns the digest.
 	reg := &fakeReg{
 		digests: map[string]string{"acme/web:1.0.0": "sha256:web"},
 		bundles: map[string]string{},

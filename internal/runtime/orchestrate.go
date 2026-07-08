@@ -20,38 +20,33 @@ import (
 	"github.com/okedeji/agentcage/internal/registry"
 )
 
-// containerStopTimeout bounds how long teardown waits for one detached
-// container or network to go away. rm -f kills and removes; 30s leaves room
-// for that plus the limactl shell round-trip into the VM. Exceeding it
-// abandons the container to the next stray-resource sweep rather than
-// hanging the operator's shutdown.
+// containerStopTimeout bounds teardown of one container or network: rm -f
+// plus the limactl shell round-trip. On expiry the resource is abandoned to
+// the next stray-resource sweep rather than hanging shutdown.
 const containerStopTimeout = 30 * time.Second
 
-// bootRun picks the boot path by whether the agent declares any USES: no
-// dependencies takes today's single-cage path unchanged; one or more
-// takes the tree path that starts every sub-agent behind the MCP gateway.
+// bootRun picks the boot path: no USES takes the single-cage path, one or
+// more takes the tree path behind the MCP gateway.
 func bootRun(ctx context.Context, in RunInput, boot bootInput, runID string) (*mcp.Client, *workingSet, error) {
 	cfg, err := config.Load()
 	if err != nil {
 		return nil, nil, err
 	}
-	// The run's --memory/--cpus/--pids flags override the configured default
-	// cap per field; a per-agent config cap still wins as the more specific
-	// choice, so this overlays onto Defaults only.
+	// Run flags overlay Defaults only; a per-agent config cap still wins as
+	// the more specific choice.
 	res := cfg.Resources
 	res.Defaults = overlayCap(in.Resources, res.Defaults)
 	ops := operatorInputs{env: in.Env, secrets: in.Secrets, models: cfg.Models, resources: res, managed: in.Managed, prewarm: cfg.Cages.EffectivePrewarm(), keepWarm: cfg.Cages.KeepWarm, maxLive: cfg.Cages.EffectiveMaxLive(), record: in.Record}
 
-	// The machine memory cap applies to both boot paths, so set it before the
-	// branch; the live-cage caps and idle TTL only bound a USES tree's elastic set.
+	// The machine memory cap applies to both boot paths; the live-cage caps
+	// and idle TTL only bound a USES tree's elastic set.
 	boot.MachineMemCap = cfg.Machine.MemoryBytes()
 
 	if len(boot.Manifest.Agentfile.Uses) == 0 {
-		// A directly-run agent has no registry ref, so per-agent overrides do
-		// not key it; the operator default cap and the runtime default still do.
+		// No registry ref, so per-agent overrides do not key a directly-run
+		// agent; the default caps still apply.
 		boot.Cap = agentCap(nil, ops.resources)
-		// The single cage still counts against the host cap, so a served agent's
-		// instances are bounded the same as a tree's.
+		// A single cage counts against the host cap like a tree's do.
 		boot.HostMax = cfg.Cages.EffectiveHostMaxLive()
 		return bootAgent(ctx, boot)
 	}
@@ -92,19 +87,16 @@ func resolveRunTree(ctx context.Context, runID, rootBundle string, root *bundle.
 	return resolveTree(ctx, runID, rootBundle, root, pull)
 }
 
-// bootTree starts a parent whose bundle has USES dependencies: a per-run
-// network, every sub-agent detached and serving HTTP on it, the MCP gateway
-// carrying the routing table, and finally the root parent attached over
-// stdio with its sub-agent URLs. The order matters: the network exists
-// before anything joins it, and the root boots last so the MCP gateway and
-// sub-agents it calls are already listening. Teardown reverses all of it.
+// bootTree boots a USES tree: networks, prewarmed sub-agents, the MCP
+// gateway, then the root attached over stdio. The root boots last so
+// everything it calls is already listening; teardown reverses the order.
 func bootTree(ctx context.Context, in bootInput, tree *runTree, plan *runPlan, runID string) (*mcp.Client, *workingSet, error) {
 	td := &teardown{}
 	booted := false
-	// Prewarmed cages are tracked in the working set, not on td (so a reaped one
-	// is not also queued for release), so a boot that fails partway removes them
-	// here rather than through the teardown stack. sess is nil until newBootSession
-	// returns, but started is empty until after that, so the loop never derefs it.
+	// Prewarmed cages live in the working set, not on td (a reaped cage must
+	// not also sit on the teardown stack), so a failed boot removes them here.
+	// sess is nil until newBootSession returns, but started is empty until
+	// after that, so the loop never derefs nil.
 	var sess *bootSession
 	var started []string
 	hostReserved := 0
@@ -125,9 +117,9 @@ func bootTree(ctx context.Context, in bootInput, tree *runTree, plan *runPlan, r
 		return nil, nil, err
 	}
 
-	// Refuse a run whose always-on baseline cannot fit the machine before any
-	// container starts, and clamp the elastic cap to what the leftover memory
-	// holds so on-demand growth cannot OOM the host either.
+	// Before any container starts: refuse a run whose always-on baseline
+	// cannot fit the machine, and clamp the elastic cap to the leftover
+	// memory so on-demand growth cannot OOM the host.
 	usable, err := usableMemory(sess.provisioner, in.MachineMemCap, in.Stderr)
 	if err != nil {
 		return nil, nil, err
@@ -143,10 +135,10 @@ func bootTree(ctx context.Context, in bootInput, tree *runTree, plan *runPlan, r
 		_, _ = fmt.Fprintf(in.Stderr, "note: %s\n", note)
 	}
 
-	// Reserve a host slot for the run's always-on baseline (the root and the
-	// gateway singletons) before starting it, so host_max_live counts the whole
-	// run, not just its elastic sub-agents. The prewarmed sub-agents reserve their
-	// own slots in the skeleton loop below; the always-warm ones are among them.
+	// Reserve host slots for the always-on baseline (root + gateway
+	// singletons) up front: host_max_live counts the whole run, not just the
+	// elastic sub-agents. Prewarmed sub-agents reserve their own slots in the
+	// skeleton loop.
 	baseline := 2 // root + the MCP gateway, present in every tree
 	if len(plan.LLMAgents) > 0 {
 		baseline++
@@ -159,12 +151,10 @@ func bootTree(ctx context.Context, in bootInput, tree *runTree, plan *runPlan, r
 	}
 	td.push(releaseBaseline(baseline))
 
-	// Every network is internal and created up front, before the MCP gateway joins
-	// all of them: the dedicated networks for the root and always-warm cages, and
-	// the two pools pooled cages draw from. Each cage is alone on its network, so
-	// no cage can reach a sibling directly and bypass the MCP gateway's deny. Each
-	// remove is pushed before the containers that join it, so teardown (reverse
-	// order) removes the containers first.
+	// All internal networks are created up front, before the MCP gateway
+	// joins them. Each cage is alone on its network, so no cage can reach a
+	// sibling directly and bypass the gateway's deny. Each remove is pushed
+	// before the containers that join it, so teardown removes containers first.
 	allNets := make([]string, 0, len(plan.AgentNets)+len(plan.ReasonPool)+len(plan.PlainPool))
 	for _, key := range sortedStringKeys(plan.AgentNets) {
 		allNets = append(allNets, plan.AgentNets[key])
@@ -179,14 +169,10 @@ func bootTree(ctx context.Context, in bootInput, tree *runTree, plan *runPlan, r
 		td.push(func() error { return removeNetwork(sess.provisioner, net) })
 	}
 
-	// The skeleton boots only the prewarmed agents (the root's direct children
-	// plus the pinned-warm ones); the rest activate on first call. A pooled
-	// prewarmed cage draws a network from its pool here; an always-warm one already
-	// carries its dedicated network. Every skeleton cage reserves a slot against
-	// the host capacity: the compulsory always-warm baseline is guaranteed only up
-	// to what the machine can hold, so a skeleton that does not fit fails the boot
-	// with a clear error rather than overcommitting the host. The per-run cap does
-	// not apply here; it bounds the elastic growth on top of the skeleton.
+	// The skeleton boots only prewarmed agents; the rest activate on first
+	// call. Each skeleton cage reserves a host slot: a skeleton that does not
+	// fit fails the boot rather than overcommitting the host. The per-run cap
+	// does not apply here; it bounds elastic growth on top of the skeleton.
 	reasonFree := append([]string{}, plan.ReasonPool...)
 	plainFree := append([]string{}, plan.PlainPool...)
 	netOf := map[string]string{}
@@ -195,11 +181,10 @@ func bootTree(ctx context.Context, in bootInput, tree *runTree, plan *runPlan, r
 	addr := map[string]string{}
 	now := nowFunc()
 
-	// startCage builds and starts one cage and resolves where the gateway reaches
-	// it. The gateway routes by address rather than name because its /etc/hosts is
-	// frozen at its own start and cannot name a cage that activates later, so the
-	// container's IP, read once here, is what the daemon hands the gateway. Both
-	// the skeleton loop below and on-demand activation go through it.
+	// startCage builds and starts one cage and resolves its address. The
+	// gateway routes by IP, not name: its /etc/hosts is frozen at its own
+	// start and cannot name a cage that activates later. Both the skeleton
+	// loop and on-demand activation go through here.
 	startCage := func(ctx context.Context, pa plannedAgent) (string, error) {
 		if err := buildAgentImage(ctx, sess, pa.Node, pa.Spec.ImageRef, in.NoCache, in.Stderr); err != nil {
 			return "", fmt.Errorf("activating %s: %w", pa.Node.Key, err)
@@ -241,9 +226,9 @@ func bootTree(ctx context.Context, in bootInput, tree *runTree, plan *runPlan, r
 		addr[a.Node.Key] = cageAddr
 	}
 
-	// The MCP gateway is the only host the parent's USES URLs resolve to, so it
-	// sees every call in the tree and enforces every edge's deny. Its image
-	// is keyed by version, so an existing one is current; skip rebuilding it.
+	// The MCP gateway is the only host the parent's USES URLs resolve to, so
+	// it sees every call in the tree and enforces every edge's deny. Its
+	// image is keyed by version: an existing one is current, skip the rebuild.
 	if in.NoCache || !imageExists(ctx, sess.provisioner, plan.MCPGateway.ImageRef) {
 		if err := BuildGatewayImage(ctx, sess.bk, in.NoCache, in.Stderr); err != nil {
 			return nil, nil, err
@@ -254,10 +239,9 @@ func bootTree(ctx context.Context, in bootInput, tree *runTree, plan *runPlan, r
 	}
 	td.push(func() error { return removeContainer(sess.provisioner, plan.MCPGateway.RunID) })
 
-	// One non-internal network is the door to the outside for both the LLM
-	// gateway and the egress proxy. It exists whenever the run reasons or any
-	// agent declares allow:, and only then, so a tree that needs neither stays
-	// fully internal.
+	// One non-internal network is the sole door outside, shared by the LLM
+	// gateway and egress proxy. It exists only when the run reasons or an
+	// agent declares allow:; otherwise the tree stays fully internal.
 	var egressNet string
 	if len(plan.LLMAgents) > 0 || len(plan.EgressAgents) > 0 {
 		egressNet = runID + "-egress"
@@ -267,9 +251,8 @@ func bootTree(ctx context.Context, in bootInput, tree *runTree, plan *runPlan, r
 		td.push(func() error { return removeNetwork(sess.provisioner, egressNet) })
 	}
 
-	// The LLM gateway boots after the MCP gateway and before the root, so a
-	// reasoning root finds its AGENTCAGE_LLM_URL already listening. It is
-	// skipped entirely when nothing in the tree reasons.
+	// Boots before the root so a reasoning root finds AGENTCAGE_LLM_URL
+	// already listening.
 	if len(plan.LLMAgents) > 0 {
 		budget := resolveBudget(in.Budget, plan.Budget, in.Stderr)
 		llmCfg, err := buildLLMConfig(plan.LLMAgents, plan.LLMTokens, budget)
@@ -289,9 +272,8 @@ func bootTree(ctx context.Context, in bootInput, tree *runTree, plan *runPlan, r
 		return nil, nil, err
 	}
 
-	// The egress proxy starts after the root because the root runs attached and
-	// last, so this is the first point every allow: agent in the tree, the root
-	// included, has an address to key its allow-list by.
+	// The egress proxy starts after the root: only then does every allow:
+	// agent, root included, have an address to key its allow-list by.
 	if len(plan.EgressAgents) > 0 {
 		if err := startEgressProxy(ctx, sess, runID, egressNet, plan.EgressAgents, in, td); err != nil {
 			return nil, nil, err
@@ -345,11 +327,11 @@ func bootTree(ctx context.Context, in bootInput, tree *runTree, plan *runPlan, r
 }
 
 // buildAgentImage extracts a sub-agent's bundle to a temp dir, reparses its
-// Agentfile, and builds its image. The source is only needed during the
-// build, so it is removed as soon as the image lands in containerd.
+// Agentfile, and builds its image. The extracted source is deleted once the
+// image lands in containerd.
 func buildAgentImage(ctx context.Context, sess *bootSession, node *agentNode, imageRef string, noCache bool, stderr io.Writer) error {
-	// A present content-addressed image needs no source at all, so check
-	// before paying to extract and reparse the bundle.
+	// Check before paying to extract: a present content-addressed image
+	// needs no source at all.
 	if !noCache && imageExists(ctx, sess.provisioner, imageRef) {
 		return nil
 	}

@@ -69,8 +69,6 @@ itself can call them.`,
 	return cmd
 }
 
-// inspectRegistryEntry resolves an MCP Registry name and prints its catalog
-// detail, so an operator sees what a server ships and needs before importing it.
 func inspectRegistryEntry(ctx context.Context, w io.Writer, name string, jsonOut bool) error {
 	server, err := mcpregistry.New().Resolve(ctx, name)
 	if err != nil {
@@ -85,10 +83,9 @@ func inspectRegistryEntry(ctx context.Context, w io.Writer, name string, jsonOut
 	return nil
 }
 
-// printRegistryEntry renders an MCP Registry entry: its identity, each package
-// with the inputs it declares, and any remotes. It closes with how to act on it:
-// an importable server names the import command; a remote-only one names the
-// escape hatch, since a cage cannot contain a hosted endpoint.
+// printRegistryEntry renders an MCP Registry entry, closing with how to act on
+// it: the import command when importable, the EGRESS escape hatch when
+// remote-only (a cage cannot contain a hosted endpoint).
 func printRegistryEntry(w io.Writer, s *mcpregistry.Server) {
 	_, _ = fmt.Fprintf(w, "Registry entry: %s\n", s.Name)
 	if s.Description != "" {
@@ -141,11 +138,8 @@ func printRegistryEntry(w io.Writer, s *mcpregistry.Server) {
 	}
 }
 
-// printManifest renders the human-readable inspect view: build metadata,
-// every Agentfile directive that is set, the tool catalog with each
-// tool's visibility and description, and the resolved USES dependencies.
-// Tool schemas are verbose and their shape is not final, so they appear
-// only under --json, not here.
+// printManifest renders the human inspect view. Tool schemas appear only
+// under --json: they are verbose and their shape is not final.
 func printManifest(w io.Writer, path string, m *bundle.Manifest) {
 	af := m.Agentfile
 	_, _ = fmt.Fprintf(w, "Bundle:       %s\n", path)
@@ -228,9 +222,8 @@ func printManifest(w io.Writer, path string, m *bundle.Manifest) {
 	}
 }
 
-// evalStatusLine renders the manifest's eval block: a declared-but-never-run
-// suite reads apart from one that ran, since the run fields stay nil until a
-// full-suite run stamps them.
+// evalStatusLine distinguishes a declared-but-never-run suite from one that
+// ran; the run fields stay nil until a full-suite run stamps them.
 func evalStatusLine(e *bundle.Evals) string {
 	if e.Passed == nil || e.Failed == nil {
 		return "declared, never run"
@@ -245,8 +238,7 @@ func evalStatusLine(e *bundle.Evals) string {
 	return line
 }
 
-// sortedKeys returns a map's keys in a stable order so inspect output is
-// deterministic across runs (Go map iteration is not).
+// sortedKeys keeps inspect output deterministic; map iteration is not.
 func sortedKeys(m map[string]string) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
@@ -256,12 +248,9 @@ func sortedKeys(m map[string]string) []string {
 	return keys
 }
 
-// schemaSignature renders a tool's input schema as a compact parameter
-// list, like a function signature: (message: string, depth?: string). An
-// optional parameter (not in the schema's required set) gets a "?". A tool
-// with a schema but no parameters reads "()"; a tool with no captured
-// schema (a declared-only catalog) gets no signature at all. The full
-// schema stays in --json; this is the readable summary.
+// schemaSignature renders a tool's input schema as a compact signature:
+// (message: string, depth?: string). "?" marks a non-required parameter; no
+// captured schema (a declared-only catalog) means no signature at all.
 func schemaSignature(schema map[string]any) string {
 	if schema == nil {
 		return ""
@@ -303,9 +292,8 @@ func schemaSignature(schema map[string]any) string {
 	return "(" + strings.Join(parts, ", ") + ")"
 }
 
-// formatUSDMicros renders integer micro-USD as a dollar string, trimming
-// trailing zeros past two decimals so $5.00 reads as "5.00" and a
-// sub-cent budget keeps its precision.
+// formatUSDMicros renders integer micro-USD as dollars, trimming trailing
+// zeros past two decimals so a sub-cent budget keeps its precision.
 func formatUSDMicros(m int64) string {
 	s := fmt.Sprintf("%d.%06d", m/1_000_000, m%1_000_000)
 	s = strings.TrimRight(s, "0")
@@ -319,8 +307,7 @@ func formatUSDMicros(m int64) string {
 	}
 }
 
-// resourcesLine renders a RESOURCES spec as the cpu/mem/pids fields that
-// are set, for the inspect and tree views.
+// resourcesLine is shared by the inspect and tree views.
 func resourcesLine(r *bundle.ResourcesSpec) string {
 	var parts []string
 	if r.CPUs != "" {

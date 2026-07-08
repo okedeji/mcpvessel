@@ -31,7 +31,6 @@ func TestToolSlugAndUnique(t *testing.T) {
 		}
 	}
 
-	// Two sources slugging to the same name get distinct refs and aliases.
 	used := map[string]bool{}
 	a := uniqueSlug("srv", used)
 	b := uniqueSlug("srv", used)
@@ -45,7 +44,6 @@ func TestParseToolArg(t *testing.T) {
 	if src != "oci:ghcr.io/acme/mcp-slack:1.2" || len(launch) != 2 || launch[0] != "mcp-slack" || launch[1] != "--stdio" {
 		t.Errorf("parseToolArg = %q %v, want the source split from its launch", src, launch)
 	}
-	// No inline launch: just the source, launch inferred later.
 	if src, launch := parseToolArg("npm:@scope/srv"); src != "npm:@scope/srv" || launch != nil {
 		t.Errorf("parseToolArg = %q %v, want the bare source and no launch", src, launch)
 	}

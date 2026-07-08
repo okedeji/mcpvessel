@@ -45,8 +45,6 @@ func TestSaveLoad_RoundTrips(t *testing.T) {
 	}
 }
 
-// The whole point of the type: a secret value never leaks through logging or
-// an accidental marshal of the Store.
 func TestStore_Redacts(t *testing.T) {
 	s := &Store{}
 	s.Set("k", "super-secret")

@@ -6,7 +6,6 @@ import (
 	"time"
 )
 
-// open returns a store backed by a fresh temp file, closed when the test ends.
 func open(t *testing.T) *Store {
 	t.Helper()
 	s, err := Open(filepath.Join(t.TempDir(), dbName))
@@ -51,7 +50,7 @@ func TestPutOverwritesAndListIsNewestFirst(t *testing.T) {
 	if err := s.Put(Record{RunID: "b", Status: StatusRunning, StartedAt: recent}); err != nil {
 		t.Fatal(err)
 	}
-	// The terminal write for "a" overwrites its running entry rather than adding one.
+	// Terminal write for "a" must overwrite its running entry, not add one.
 	if err := s.Put(Record{RunID: "a", Status: StatusSucceeded, StartedAt: old, CostMicroUSD: 12_000}); err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +101,6 @@ func TestReconcileRunningOnlyTouchesRunning(t *testing.T) {
 	}
 }
 
-// A second reconcile is a no-op: once crashed, a record is terminal.
 func TestReconcileRunningIdempotent(t *testing.T) {
 	s := open(t)
 	now := time.Now()

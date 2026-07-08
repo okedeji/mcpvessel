@@ -7,10 +7,8 @@ import (
 	"time"
 )
 
-// Event is one entry on the `agentcage events` live feed. Type names the
-// transition; the rest carries enough to read the feed without a second lookup.
-// The bus is the single sink for lifecycle events, so new event types (sub-agent
-// activation, elicitation) publish through it as they gain a daemon-side hook.
+// Event is one entry on the lifecycle event feed. It carries enough to read
+// the feed without a second lookup.
 type Event struct {
 	Time   time.Time `json:"time"`
 	Type   string    `json:"type"`
@@ -21,18 +19,16 @@ type Event struct {
 	Detail string    `json:"detail,omitempty"`
 }
 
-// Event types. The run lifecycle pair is emitted by the daemon; the rest come
-// from the runtime (sub-agent activation, eviction, elicitation) through the
-// run's OnEvent hook.
+// Event types emitted by the daemon itself; other types come from the runtime
+// through the run's OnEvent hook.
 const (
 	EventRunStarted = "run.started"
 	EventRunEnded   = "run.ended"
 )
 
-// eventBufferSize bounds each subscriber's queue. A watcher that falls this far
-// behind is dropped from rather than allowed to block the publisher: losing an
-// event on a stuck `agentcage events` client is acceptable, stalling a run's
-// lifecycle on it is not.
+// eventBufferSize bounds each subscriber's queue. A watcher this far behind
+// loses events rather than blocking the publisher: a stuck events client must
+// not stall a run's lifecycle.
 const eventBufferSize = 256
 
 // eventBus fans out events to every live subscriber. publish never blocks; a
@@ -48,7 +44,7 @@ func newEventBus() *eventBus {
 }
 
 // subscribe registers a watcher and returns its channel and an unsubscribe to
-// defer. unsubscribe closes the channel, so a ranging reader ends cleanly.
+// defer. unsubscribe closes the channel.
 func (b *eventBus) subscribe() (<-chan Event, func()) {
 	ch := make(chan Event, eventBufferSize)
 	b.mu.Lock()
@@ -67,8 +63,8 @@ func (b *eventBus) subscribe() (<-chan Event, func()) {
 }
 
 // publish delivers e to every subscriber, dropping it for any whose buffer is
-// full. Send and close are both under the lock, so publish never sends on a
-// closed channel: unsubscribe deletes from the map before closing.
+// full. Send and close are both under the lock and unsubscribe deletes from
+// the map before closing, so publish never sends on a closed channel.
 func (b *eventBus) publish(e Event) {
 	if b == nil {
 		return
@@ -83,9 +79,7 @@ func (b *eventBus) publish(e Event) {
 	}
 }
 
-// handleEvents streams the event feed to a client until it disconnects. The
-// subscriber is registered before the first write and dropped on return, so a
-// client that hangs up frees its slot.
+// handleEvents streams the event feed to a client until it disconnects.
 func (d *Daemon) handleEvents(w http.ResponseWriter, r *http.Request) {
 	ch, unsub := d.events.subscribe()
 	defer unsub()

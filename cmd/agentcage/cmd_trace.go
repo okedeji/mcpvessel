@@ -46,8 +46,6 @@ func printTrace(w io.Writer, tr *telemetry.Trace) {
 	printSpan(w, tr.Root, 0)
 }
 
-// printSpan renders one span and its children, indented by depth, with the
-// span's duration and a few key attributes so the tree reads at a glance.
 func printSpan(w io.Writer, s *telemetry.Span, depth int) {
 	line := strings.Repeat("  ", depth) + s.Name
 	if d := s.Duration(); d > 0 {
@@ -62,8 +60,8 @@ func printSpan(w io.Writer, s *telemetry.Span, depth int) {
 	}
 }
 
-// spanAttrs is the short attribute summary shown after a span: the model and
-// cost of an LLM call, nothing for the structural spans.
+// spanAttrs summarizes an LLM call span (model, tokens, cost); empty for
+// structural spans.
 func spanAttrs(s *telemetry.Span) string {
 	model, _ := s.Attributes["model"].(string)
 	if model == "" {

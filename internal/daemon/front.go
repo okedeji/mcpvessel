@@ -20,8 +20,7 @@ import (
 	"github.com/okedeji/agentcage/internal/serve"
 )
 
-// serveRequest is the POST /serve body: the agent to serve, the address to bind
-// the front door to, and the operator's exposure overrides.
+// serveRequest is the POST /serve body.
 type serveRequest struct {
 	Ref      string   `json:"ref"`
 	Listen   string   `json:"listen"`
@@ -29,23 +28,17 @@ type serveRequest struct {
 	NoExpose []string `json:"no_expose,omitempty"`
 }
 
-// servedAgent reports one endpoint the front door opened, for the CLI to print.
+// servedAgent reports one endpoint the front door opened.
 type servedAgent struct {
 	Address string   `json:"address"`
 	Tools   []string `json:"tools"`
 }
 
-// handleServe registers a run's exposed agents and opens an MCP-over-HTTP front
-// door bound to the requested address. The exposed set is the served root plus
-// every USES PUBLIC sub-agent the overrides leave reachable; each becomes its own
-// endpoint under /agents/ backed by an instance manager. Agents boot lazily: a
-// client's first call to an endpoint boots that client its own instance, reused
-// across its calls and reaped when it goes idle, so concurrent clients run
-// concurrently instead of sharing one serialized session.
-//
-// A registration that fails partway releases what it set up, so a failed serve
-// leaks nothing. The front door is held until the served agents stop or the
-// daemon shuts down, which releases every live instance behind it.
+// handleServe opens an MCP-over-HTTP front door for a run's exposed agents:
+// the served root plus every USES PUBLIC sub-agent the overrides leave
+// reachable, each an /agents/ endpoint backed by an instance manager. Boots
+// are lazy and per-client, so concurrent clients get their own instances. A
+// registration that fails partway releases what it set up.
 func (d *Daemon) handleServe(w http.ResponseWriter, r *http.Request) {
 	var req serveRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -114,11 +107,10 @@ func (d *Daemon) handleServe(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"listen": req.Listen, "agents": out})
 }
 
-// registerExposed sets up a front-door agent per exposed agent: it reads the
-// public tools from the bundle's catalog (no boot needed to list them), creates
-// an instance manager that boots a per-client instance on demand, and records a
-// serve entry so ps lists it and stop releases its whole pool. On error it rolls
-// back the entries already created and returns them so nothing leaks.
+// registerExposed sets up a front-door agent per exposed agent: public tools
+// read from the bundle's catalog (no boot needed to list them), an instance
+// manager booting per-client instances on demand, and a serve entry in the
+// registry. On error it rolls back the entries already created.
 func (d *Daemon) registerExposed(display string, exposed []runtime.ExposedAgent, cfg config.Serve) ([]serve.Agent, []string, error) {
 	agents := make([]serve.Agent, 0, len(exposed))
 	ids := make([]string, 0, len(exposed))
@@ -145,16 +137,14 @@ func (d *Daemon) registerExposed(display string, exposed []runtime.ExposedAgent,
 				if err != nil {
 					return nil, err
 				}
-				// The working set outlives the call that booted the instance: the
-				// instance is reused across the client's calls and torn down by the
-				// manager, not by any one request.
+				// Background context: the instance outlives the call that booted
+				// it and is torn down by the manager, not by any one request.
 				session.StartWorkingSet(context.Background())
 				return session, nil
 			},
-			// A served instance is a run: record and stream it like a one-shot, so
-			// ps, the events feed, and its cost/trace/replay all see each client's
-			// instance. The front door above is the pool, not a run, so it stays off
-			// the feed; these hooks are the per-client lifecycle inside it.
+			// Each per-client instance is a run, recorded and streamed like a
+			// one-shot. The front door itself is a pool, not a run; it stays off
+			// the feed.
 			instanceHooks{
 				onStart: func(runID string) {
 					info := RunInfo{ID: runID, Ref: display, Status: history.StatusRunning, StartedAt: nowFunc()}
@@ -185,10 +175,9 @@ func (d *Daemon) registerExposed(display string, exposed []runtime.ExposedAgent,
 	return agents, ids, nil
 }
 
-// catalogTools keeps only the agent's public tools, matching the bundle's tool
-// catalog against the allowed names so each endpoint advertises a public tool
-// with its real schema and nothing it should not. Read from the static manifest,
-// not a live session, so no instance has to boot just to list tools.
+// catalogTools matches the bundle's tool catalog against the allowed names:
+// each endpoint advertises only public tools, with their real schemas, read
+// from the static manifest so no instance boots just to list tools.
 func catalogTools(manifest *bundle.Manifest, allowed []string) []mcp.Tool {
 	allow := make(map[string]bool, len(allowed))
 	for _, n := range allowed {
@@ -203,8 +192,8 @@ func catalogTools(manifest *bundle.Manifest, allowed []string) []mcp.Tool {
 	return out
 }
 
-// dropServe releases the given serve entries and removes them from the registry,
-// the rollback when a serve fails after some of its agents are already set up.
+// dropServe releases the given serve entries and removes them from the
+// registry.
 func (d *Daemon) dropServe(ids []string) {
 	for _, id := range ids {
 		if held, ok := d.take(id); ok {
@@ -213,8 +202,7 @@ func (d *Daemon) dropServe(ids []string) {
 	}
 }
 
-// dropRuns releases the given sessions and removes them from the registry, the
-// rollback a one-shot run uses when its call is done.
+// dropRuns releases the given sessions and removes them from the registry.
 func (d *Daemon) dropRuns(sessions []*runtime.Session) {
 	for _, s := range sessions {
 		if held, ok := d.take(s.RunID()); ok {

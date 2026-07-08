@@ -24,7 +24,6 @@ func TestAgentfile_MultipleUses(t *testing.T) {
 }
 
 func TestAgentfile_DefersModelAndNeedsARef(t *testing.T) {
-	// No model pinned: the MODEL defers to the operator's default, nothing aged in.
 	got, err := Agentfile(Params{UsesRefs: []string{"@me/x-tools:0.1"}})
 	if err != nil {
 		t.Fatalf("Agentfile: %v", err)

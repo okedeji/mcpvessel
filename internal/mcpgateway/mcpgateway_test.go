@@ -53,7 +53,6 @@ func TestHandler_ForwardsAllowedAndRejectsDenied(t *testing.T) {
 	}}))
 	defer gw.Close()
 
-	// An allowed tools/call is forwarded and its response returned.
 	resp := postJSON(t, gw.URL+"/web/mcp", `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search"}}`)
 	if hits != 1 {
 		t.Errorf("allowed call not forwarded (upstream hits = %d)", hits)
@@ -62,8 +61,7 @@ func TestHandler_ForwardsAllowedAndRejectsDenied(t *testing.T) {
 		t.Errorf("upstream response not returned: %s", resp)
 	}
 
-	// A denied tools/call never reaches upstream; the gateway returns a
-	// JSON-RPC error echoing the request id.
+	// A denied call must never reach upstream and must echo the request id.
 	resp = postJSON(t, gw.URL+"/web/mcp", `{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"delete_all"}}`)
 	if hits != 1 {
 		t.Errorf("denied call reached upstream (upstream hits = %d)", hits)
@@ -88,8 +86,7 @@ func TestHandler_BannedEdgeRejectsEverything(t *testing.T) {
 	}}))
 	defer gw.Close()
 
-	// Even the initialize handshake is rejected, and nothing reaches the
-	// (in a real run, never-started) target.
+	// Even the initialize handshake is rejected; nothing reaches the target.
 	resp := postJSON(t, gw.URL+"/weird/mcp", `{"jsonrpc":"2.0","id":3,"method":"initialize"}`)
 	if hits != 0 {
 		t.Errorf("a banned edge forwarded to upstream (hits = %d)", hits)
@@ -101,7 +98,6 @@ func TestHandler_BannedEdgeRejectsEverything(t *testing.T) {
 		t.Errorf("banned error should echo request id 3: %s", resp)
 	}
 
-	// A tools/call is rejected the same way.
 	resp = postJSON(t, gw.URL+"/weird/mcp", `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"anything"}}`)
 	if hits != 0 {
 		t.Errorf("a banned tools/call forwarded to upstream (hits = %d)", hits)

@@ -82,8 +82,7 @@ func TestGenerateLimaTemplate_IsDeterministic(t *testing.T) {
 }
 
 func TestGenerateLimaTemplate_QuotesHostSocketPath(t *testing.T) {
-	// Paths with shell-meaningful chars must end up quoted so Lima's
-	// YAML parser sees them as a single string. %q does the right thing.
+	// A path with spaces must end up quoted as one YAML string.
 	got := generateLimaTemplate(LimaTemplateInput{
 		InstanceName:  "agentcage",
 		HostSocketDir: "/Users/x with space/.agentcage/lima/sock",

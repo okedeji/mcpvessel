@@ -12,9 +12,8 @@ import (
 	"github.com/okedeji/agentcage/internal/env"
 )
 
-// newLLMControlCmd is the client the daemon execs inside an LLM gateway
-// container to drive its control surface. It is hidden: the daemon runs it via
-// nerdctl exec, never an operator. Running inside the container, it reaches the
+// newLLMControlCmd is the client the daemon execs (via nerdctl exec, never an
+// operator) inside an LLM gateway container. Running there, it reaches the
 // gateway's loopback control listener that nothing on the run network can.
 func newLLMControlCmd() *cobra.Command {
 	cmd := &cobra.Command{

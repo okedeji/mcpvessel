@@ -17,11 +17,10 @@ import (
 	"github.com/okedeji/agentcage/internal/runtime"
 )
 
-// writeReplay assembles and writes a recording run's .replay artifact: the run's
-// input and output the daemon already holds, plus the gateway's captured call
-// payloads. It reads the gateway before teardown removes it, then writes the
-// artifact to the daemon's replays dir for `agentcage replay record` to fetch.
-// Best-effort: a recording that cannot be written warns and never fails the run.
+// writeReplay assembles and writes a recording run's .replay artifact: the
+// run's input and output plus the gateway's captured call payloads. It must
+// run before teardown removes the gateway. Best-effort: a recording that
+// cannot be written warns and never fails the run.
 func (d *Daemon) writeReplay(runID string, b locate.Result, req RunRequest, result string, callErr error, started time.Time) {
 	records, _ := runtime.RunReplay(context.Background(), runID)
 	subRecords, _ := runtime.RunSubagentReplay(context.Background(), runID)
@@ -43,10 +42,9 @@ func (d *Daemon) writeReplay(runID string, b locate.Result, req RunRequest, resu
 	}
 }
 
-// replayEvents merges the LLM gateway's call records and the MCP gateway's
-// sub-agent records into one event list, ordered by occurrence and numbered by
-// seq. Each captured body is embedded as JSON when it is JSON and a JSON string
-// otherwise (a streamed response).
+// replayEvents merges LLM call records and sub-agent records into one list,
+// ordered by start and numbered by seq. A captured body is embedded raw when
+// it is JSON, as a JSON string otherwise (a streamed response).
 func replayEvents(records []llmgateway.CallRecord, subRecords []mcpgateway.SubCallRecord) []replay.Event {
 	timed := make([]struct {
 		start int64
@@ -99,8 +97,8 @@ func replayResult(result string, callErr error) replay.Result {
 	return replay.Result{Output: result, Status: "succeeded"}
 }
 
-// handleRunReplay serves a run's .replay artifact. A run that did not record (or
-// is unknown) has no artifact and is a 404.
+// handleRunReplay serves a run's .replay artifact; a run that did not record
+// is a 404.
 func (d *Daemon) handleRunReplay(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	path, err := replay.Path(id)

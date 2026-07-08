@@ -12,14 +12,12 @@ import (
 	"github.com/okedeji/agentcage/internal/mcpgateway"
 )
 
-// nowFunc is overridable so the reaper's idle math stays testable without a real
-// clock.
+// nowFunc is overridable so the reaper's idle math is testable.
 var nowFunc = time.Now
 
-// cageState is where a sub-agent cage is in its lifecycle. A node with no entry
-// is absent (down). booting and live both occupy a working-set slot; evicting is
-// on its way out and frees its slot the moment it enters this state, so a new
-// activation can take the slot while the old cage is still being removed.
+// cageState tracks a sub-agent cage's lifecycle; a node with no entry is down.
+// booting and live both occupy a slot; evicting freed its slot on entry, so a
+// new activation can take it while the old cage is still being removed.
 type cageState int
 
 const (
@@ -28,18 +26,15 @@ const (
 	cageEvicting
 )
 
-// workingSet is a held run's live cages and the policy that bounds them. The
+// workingSet is a held run's live cages and the policy that bounds them: the
 // skeleton boots up front, the rest activate on demand (activation.go), idle
 // cages are reaped, and the whole set is capped so one run cannot exhaust the
-// host. The boot session, the
-// resolved plan, and the teardown stack outlive boot here instead of dying with
-// the closure bootTree used to return.
+// host.
 //
-// sess is the provisioner plus BuildKit client containers boot against. plan and
-// tree are the resolved run, both nil for a single-cage run with no USES. td
-// holds the run's shared infrastructure (networks, gateways, the root); sub-agent
-// cages are tracked in state and torn down through it, not pushed onto td, so a
-// reaped cage's removal is not also queued for release.
+// td holds the run's shared infrastructure (networks, gateways, the root).
+// Sub-agent cages are tracked in state and torn down through it, not pushed
+// onto td, so a reaped cage's removal is not also queued for release. plan and
+// tree are nil for a single-cage run with no USES.
 type workingSet struct {
 	mu sync.Mutex
 
@@ -48,89 +43,75 @@ type workingSet struct {
 	tree *runTree
 	td   *teardown
 
-	// specByNode maps a sub-agent node key to the planned cage that runs it, so an
-	// on-demand activation boots exactly the cage the plan already shaped.
+	// specByNode maps a node key to the planned cage that runs it.
 	specByNode map[string]plannedAgent
 
-	// alwaysWarm names nodes that, once warm, are never reaped or evicted: the
-	// egress-declaring agents (whose proxy keying must not go stale) and the
-	// operator's keep_warm list. They hold their slots for the run's life.
+	// alwaysWarm nodes are never reaped or evicted: egress-declaring agents
+	// (their proxy keying must not go stale) and the operator's keep_warm list.
 	alwaysWarm map[string]bool
 
-	// reasonFree and plainFree are the unassigned networks in each pool, the
-	// drawers a pooled cage borrows from on activation and returns to on eviction.
-	// netOf records which network a live pooled cage currently holds.
+	// reasonFree and plainFree are the unassigned pool networks; netOf records
+	// which network a live pooled cage currently holds.
 	reasonFree []string
 	plainFree  []string
 	netOf      map[string]string
 
-	// state, pins, and lastUse are the live cage bookkeeping. pins counts a
-	// node's in-flight forwards, reported by the gateway; a node with pins > 0 is
-	// mid-call and never evicted. lastUse is when a node last went idle, the key
-	// the reaper and LRU eviction order by. inflight single-flights a node's boot.
+	// pins counts a node's in-flight forwards, reported by the gateway; pins >
+	// 0 means mid-call and never evicted. lastUse is when a node last went
+	// idle, the reaper and LRU key. inflight single-flights a node's boot.
 	state    map[string]cageState
 	pins     map[string]int
 	lastUse  map[string]time.Time
 	inflight map[string]*activation
 
-	// addr is each live node's resolved gateway target, the cage's container IP
-	// captured at boot. The gateway cannot name a cage that started after it, so
-	// the daemon hands it the address on activation. edgesByNode maps a node back
-	// to the edges that route to it, so a reaped cage's edges are all invalidated.
+	// addr is each live node's gateway target, the container IP captured at
+	// boot; the gateway cannot name a cage that started after it. edgesByNode
+	// maps a node back to the edges routing to it, so a reaped cage's edges
+	// are all invalidated.
 	addr        map[string]string
 	edgesByNode map[string][]string
 
-	// maxLive caps the cages this run keeps live at once; hostMax caps them across
-	// every run via the package-level counter; idleTTL is how long a cage may sit
-	// idle before the reaper takes it.
+	// maxLive caps this run's live cages; hostMax caps them host-wide via the
+	// package-level counter; idleTTL is the reaper's idle threshold.
 	maxLive int
 	hostMax int
 	idleTTL time.Duration
 
-	// streamUp is true while the gateway control stream is connected. The reaper
-	// evicts only while it is up, because a disconnected gateway cannot report a
-	// fresh pin, and evicting blind could take a cage mid-call.
+	// streamUp is true while the gateway control stream is connected. The
+	// reaper evicts only while it is up: a disconnected gateway cannot report
+	// a fresh pin, and evicting blind could take a cage mid-call.
 	streamUp bool
 
-	// outbound carries the daemon's replies (activation verdicts) to the gateway
-	// over whichever control stream is connected. Buffered so a boot completing
-	// never blocks on the writer.
+	// outbound carries the daemon's replies (activation verdicts) to the
+	// gateway. Buffered so a boot completing never blocks on the writer.
 	outbound chan mcpgateway.ControlMessage
 
-	// elicit routes a sub-agent's mid-call question to the operator driving the
-	// run's current call. It is the same router the serve front door binds the
-	// operator's answer side onto, so a question from any depth reaches the caller
-	// directly over the control stream rather than bubbling agent by agent. Nil
-	// for a one-shot tree, which has no operator to ask, so its questions fail closed.
+	// elicit routes a sub-agent's mid-call question from any depth to the
+	// operator over the control stream. Nil for a one-shot tree; its questions
+	// fail closed.
 	elicit mcp.ElicitHandler
 
-	// startCage builds and starts one cage's container and returns the address the
-	// gateway should forward to (the cage's container IP); stopCage removes it.
-	// Real runs wire these to the provisioner in bootTree; tests stub them to
-	// exercise the activation state machine without containers.
+	// startCage and stopCage are wired to the provisioner in bootTree; tests
+	// stub them to exercise the activation state machine without containers.
 	startCage func(ctx context.Context, pa plannedAgent) (string, error)
 	stopCage  func(name string) error
 
-	// stderr is where a failed on-demand activation reports why. The gateway only
-	// learns the verdict (ok or not), so without this an operator has no record of
-	// a boot that the run answered closed.
+	// stderr is where a failed activation reports why; the gateway only
+	// learns the verdict.
 	stderr io.Writer
 
-	// onEvent and runID feed the daemon's live event feed: each activation and
-	// eviction reports through onEvent, stamped with runID. Nil for every caller
-	// but the daemon, so the activation path pays nothing off that path.
+	// onEvent and runID feed the daemon's live event feed. Nil off the daemon
+	// path.
 	onEvent func(Event)
 	runID   string
 
-	// warnings are boot-time notes the operator should see, like a live-cage cap
-	// clamped to fit memory. A one-shot run streams them on stderr; a served run's
-	// stderr is the daemon log, so serve reports these in its response instead.
+	// warnings are boot-time notes for the operator, like a live-cage cap
+	// clamped to fit memory.
 	warnings []string
 
-	// slotFreed wakes an activation waiting for a slot when one frees (a cage
-	// unpins or is evicted). saturationWait bounds that wait before the activation
-	// fails closed. Buffered to one, since a woken waiter rechecks the full
-	// reservation anyway.
+	// slotFreed wakes an activation waiting for a slot; saturationWait bounds
+	// that wait before the activation fails closed. Buffered to one, since a
+	// woken waiter rechecks the full reservation anyway.
 	slotFreed      chan struct{}
 	saturationWait time.Duration
 
@@ -138,8 +119,8 @@ type workingSet struct {
 	cancel  context.CancelFunc
 }
 
-// signalSlotFree wakes one activation waiting for a slot. Non-blocking: at most
-// one pending wake is held, enough because each waiter rechecks on waking.
+// signalSlotFree wakes one waiting activation. Non-blocking; each waiter
+// rechecks on waking.
 func (w *workingSet) signalSlotFree() {
 	select {
 	case w.slotFreed <- struct{}{}:
@@ -147,11 +128,10 @@ func (w *workingSet) signalSlotFree() {
 	}
 }
 
-// occupiedLocked is the number of elastic cages holding a slot: booting or live,
-// and not always-warm. The per-run cap bounds only the elastic working set, so
-// the compulsory always-warm cages (egress and the operator's pins) are excluded
-// and never compete with on-demand activation for a slot. An evicting cage has
-// already yielded its slot.
+// occupiedLocked counts elastic cages holding a slot: booting or live, not
+// always-warm. The per-run cap bounds only the elastic set, so always-warm
+// cages never compete with activation for a slot; an evicting cage has already
+// yielded its slot.
 func (w *workingSet) occupiedLocked() int {
 	n := 0
 	for node, s := range w.state {
@@ -162,9 +142,9 @@ func (w *workingSet) occupiedLocked() int {
 	return n
 }
 
-// lruVictimLocked picks the least-recently-used live, unpinned cage, the one to
-// evict to free a slot. It never returns a booting cage (no container to remove
-// yet) or a pinned one (mid-call), so eviction cannot take a live call.
+// lruVictimLocked picks the least-recently-used live, unpinned cage. It never
+// returns a booting cage (no container to remove yet) or a pinned one
+// (mid-call), so eviction cannot take a live call.
 func (w *workingSet) lruVictimLocked() (string, bool) {
 	var victim string
 	var oldest time.Time
@@ -180,11 +160,9 @@ func (w *workingSet) lruVictimLocked() (string, bool) {
 	return victim, victim != ""
 }
 
-// popPoolNet takes a network off the matching free list, the reuse drawer a
-// pooled cage draws from: the reasoning pool for a reasoning cage, the plain pool
-// otherwise. It errors when the list is empty, which the pool's sizing makes
-// unreachable once a slot is free, so a failure is a real bug, not a saturated
-// run.
+// popPoolNet takes a network off the matching free list. Pool sizing makes an
+// empty list unreachable once a slot is free, so the error is a real bug, not
+// a saturated run.
 func popPoolNet(reasonFree, plainFree *[]string, reasoning bool) (string, error) {
 	free := plainFree
 	if reasoning {
@@ -198,13 +176,13 @@ func popPoolNet(reasonFree, plainFree *[]string, reasoning bool) (string, error)
 	return n, nil
 }
 
-// reasoningNode reports whether a node reasons (has a MODEL), which decides the
-// pool it draws from and whether the LLM gateway can reach it.
+// reasoningNode reports whether a node has a MODEL, which decides its pool and
+// whether the LLM gateway can reach it.
 func (w *workingSet) reasoningNode(node string) bool {
 	return w.plan.LLMAgents[node] != ""
 }
 
-// returnNetLocked hands a freed network back to its pool's drawer for reuse.
+// returnNetLocked hands a freed network back to its pool.
 func (w *workingSet) returnNetLocked(node, net string) {
 	if w.reasoningNode(node) {
 		w.reasonFree = append(w.reasonFree, net)
@@ -213,8 +191,8 @@ func (w *workingSet) returnNetLocked(node, net string) {
 	}
 }
 
-// beginEvictLocked marks a live cage on its way out, freeing its slot, host slot,
-// and network for reuse at once. The container is removed afterward, outside the
+// beginEvictLocked marks a live cage on its way out, freeing its slot, host
+// slot, and network at once. The container is removed afterward, outside the
 // lock; dropEvicting clears the rest once it is gone.
 func (w *workingSet) beginEvictLocked(node string) {
 	w.state[node] = cageEvicting
@@ -225,9 +203,8 @@ func (w *workingSet) beginEvictLocked(node string) {
 	}
 }
 
-// reapableLocked collects the live, unpinned cages idle longer than the TTL, the
-// reaper's victims. Pinned cages are mid-call and skipped however long they have
-// run.
+// reapableLocked collects live, unpinned cages idle past the TTL. Pinned cages
+// are mid-call and skipped however long they have run.
 func (w *workingSet) reapableLocked(now time.Time) []string {
 	var victims []string
 	for node, s := range w.state {
@@ -241,10 +218,10 @@ func (w *workingSet) reapableLocked(now time.Time) []string {
 	return victims
 }
 
-// releaseAll stops activation, removes every cage still live, then drains the
-// shared teardown, joining every error. cancel fires before the drain so no cage
-// is booted or reaped after teardown begins; the live cages come down before the
-// teardown removes the networks they sit on.
+// releaseAll stops activation, removes every live cage, then drains the shared
+// teardown, joining every error. cancel fires before the drain so no cage is
+// booted or reaped after teardown begins; cages come down before the networks
+// they sit on.
 func (w *workingSet) releaseAll() error {
 	w.mu.Lock()
 	w.closing = true

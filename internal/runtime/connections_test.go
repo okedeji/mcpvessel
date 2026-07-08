@@ -6,11 +6,8 @@ import (
 	"testing"
 )
 
-// These tests verify the connection helpers' shape without requiring a
-// real containerd or buildkitd daemon. Both clients connect lazily
-// (the underlying gRPC connection is established on first RPC), so
-// integration coverage against real daemons lives in a separate file
-// gated by a build tag.
+// Shape tests only: both clients connect lazily, so no daemon is needed.
+// Integration coverage against real daemons is gated by a build tag.
 
 func TestDialContainerd_StoresAddressAndNamespace(t *testing.T) {
 	c, err := DialContainerd("")
@@ -39,10 +36,6 @@ func TestDialContainerd_UsesCustomAddress(t *testing.T) {
 }
 
 func TestContainerd_AccessorsReturnConfig(t *testing.T) {
-	// We cannot call DialContainerd against a real daemon here, but we
-	// can verify the accessors on a hand-constructed struct return the
-	// fields they should. This is the cheapest signal that the public
-	// shape stays stable.
 	c := &Containerd{
 		namespace: "agentcage",
 		address:   "/some/path/containerd.sock",
@@ -60,7 +53,6 @@ func TestContainerd_CloseSafeOnNil(t *testing.T) {
 	if err := c.Close(); err != nil {
 		t.Errorf("Close on nil receiver returned: %v", err)
 	}
-	// Same for a zero-value struct with no client.
 	c = &Containerd{}
 	if err := c.Close(); err != nil {
 		t.Errorf("Close on zero struct returned: %v", err)
@@ -73,9 +65,8 @@ func TestDialBuildKit_StoresAddress(t *testing.T) {
 	defer cancel()
 	b, err := DialBuildKit(ctx, custom)
 	if err != nil {
-		// BuildKit's client.New does dial-on-construct in some
-		// configurations. Skip rather than fail if so; this is a
-		// shape test, not an integration test.
+		// BuildKit's client.New dials eagerly in some configurations; skip
+		// rather than fail, this is a shape test.
 		t.Skipf("DialBuildKit failed against bogus address (likely eager dial): %v", err)
 	}
 	defer func() { _ = b.Close() }()

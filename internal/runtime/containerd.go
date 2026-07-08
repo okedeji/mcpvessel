@@ -6,54 +6,34 @@ import (
 	"github.com/containerd/containerd/v2/client"
 )
 
-// DefaultContainerdAddress is the conventional socket path containerd
-// listens on across Linux distributions. Lima-provisioned VMs on macOS
-// and Windows forward this same path back to the host so the address
-// is portable; see the platform-provisioner slices for how the forward
-// is configured.
+// DefaultContainerdAddress is containerd's conventional socket path. Lima VMs
+// forward the same path back to the host, keeping the address portable.
 const DefaultContainerdAddress = "/run/containerd/containerd.sock"
 
-// DefaultContainerdNamespace is the containerd namespace agentcage
-// reads from. It matches what rootless BuildKit writes its image
-// exports into by default, the `default` namespace, which is also
-// what `nerdctl` picks up without `--namespace`. Using our own
-// namespace ("agentcage") would require reconfiguring BuildKit's
-// containerd worker, so we accept sharing `default` and rely on
-// OCI image labels (io.agentcage.*) to identify our objects.
+// DefaultContainerdNamespace is "default": what rootless BuildKit exports
+// image builds into and what nerdctl reads without --namespace. A dedicated
+// "agentcage" namespace would require reconfiguring BuildKit's containerd
+// worker, so we share default and identify our objects by io.agentcage.*
+// labels.
 const DefaultContainerdNamespace = "default"
 
-// DefaultSnapshotter names the containerd snapshotter plugin agentcage
-// uses to unpack images and mount container root filesystems. We use
-// "overlayfs" because that is what BuildKit's containerd worker (the
-// one nerdctl-full installs and starts by default inside Lima) writes
-// its image exports into. Reading from a different snapshotter would
-// see an empty snapshot chain even when the image is unpacked there.
-//
-// You can verify by inspecting the buildkitd process inside the VM:
-//
-//	ps -ef | grep buildkitd
-//	# ... --containerd-worker-snapshotter=overlayfs ...
-//
-// containerd's built-in default ("erofs") is registered but reports
-// "skip" for the rootless setup, which is why we cannot just leave
-// the snapshotter unset.
+// DefaultSnapshotter is "overlayfs", the snapshotter BuildKit's containerd
+// worker (nerdctl-full's default inside Lima) exports into; reading a
+// different one sees an empty snapshot chain even when the image is unpacked.
+// containerd's built-in default (erofs) reports "skip" under rootless, so the
+// snapshotter cannot be left unset.
 const DefaultSnapshotter = "overlayfs"
 
-// Containerd wraps a containerd client with the agentcage namespace
-// already configured. Close must be called when the wrapper is no
-// longer needed; the wrapped client owns a gRPC connection and a few
-// goroutines.
+// Containerd wraps a containerd client scoped to the agentcage namespace.
+// Close releases the wrapped client's gRPC connection and goroutines.
 type Containerd struct {
 	client    *client.Client
 	namespace string
 	address   string
 }
 
-// DialContainerd opens a connection to a containerd daemon at the given
-// address. Pass "" to use DefaultContainerdAddress.
-//
-// Returns an error wrapped with the dialed address so operators can
-// distinguish "wrong socket path" from "daemon down" in logs.
+// DialContainerd connects to containerd at address, or
+// DefaultContainerdAddress when empty.
 func DialContainerd(address string) (*Containerd, error) {
 	if address == "" {
 		address = DefaultContainerdAddress
@@ -77,16 +57,12 @@ func (c *Containerd) Close() error {
 	return c.client.Close()
 }
 
-// Address returns the socket address this connection was opened
-// against. Useful for error messages downstream.
+// Address returns the socket address this connection was dialed against.
 func (c *Containerd) Address() string { return c.address }
 
-// Namespace returns the containerd namespace the connection is scoped
-// to. All operations issued through this wrapper see only objects in
-// this namespace.
+// Namespace returns the containerd namespace the connection is scoped to.
 func (c *Containerd) Namespace() string { return c.namespace }
 
-// Client returns the underlying containerd client for operations the
-// wrapper does not yet expose. The client must not be Close'd by the
-// caller; that belongs to the wrapper.
+// Client returns the underlying containerd client. Closing it belongs to the
+// wrapper.
 func (c *Containerd) Client() *client.Client { return c.client }

@@ -37,10 +37,8 @@ the agent reference, its status, and how long it has been up.`,
 	return cmd
 }
 
-// printRuns renders the ps table. The header prints even when there are no
-// runs, so an empty list reads as "nothing running" rather than blank output.
-// UP is how long a live run has been up or, for a finished run, the dash; COST
-// is the run's metered LLM spend, blank when nothing was metered.
+// printRuns renders the ps table. The header prints even with no runs so an
+// empty list reads as "nothing running" rather than blank output.
 func printRuns(w io.Writer, runs []daemon.RunInfo) {
 	tw := tabwriter.NewWriter(w, 0, 0, 3, ' ', 0)
 	_, _ = fmt.Fprintln(tw, "RUN ID\tREF\tSTATUS\tUP\tCOST")
@@ -50,8 +48,7 @@ func printRuns(w io.Writer, runs []daemon.RunInfo) {
 	_ = tw.Flush()
 }
 
-// uptime is the age of a live run and a dash for a finished one: a run with an
-// end time is no longer "up", so reporting its age would mislead.
+// uptime is the age of a live run, a dash for a finished one.
 func uptime(r daemon.RunInfo) string {
 	if !r.EndedAt.IsZero() {
 		return "-"
@@ -59,8 +56,8 @@ func uptime(r daemon.RunInfo) string {
 	return since(r.StartedAt)
 }
 
-// cost formats a run's metered spend, blank when nothing was metered so a tool
-// collection or an unstarted run does not show a misleading $0.0000.
+// cost is blank when nothing was metered, so a tool collection or an unstarted
+// run does not show a misleading $0.0000.
 func cost(microUSD int64) string {
 	if microUSD == 0 {
 		return ""
@@ -68,8 +65,7 @@ func cost(microUSD int64) string {
 	return "$" + formatUSDMicros(microUSD)
 }
 
-// since formats how long a run has been up as a single coarse unit ("3s", "5m",
-// "2h"), reading the clock through nowFunc so tests stay deterministic.
+// since formats an age as a single coarse unit ("3s", "5m", "2h").
 func since(t time.Time) string {
 	if t.IsZero() {
 		return "-"
@@ -85,5 +81,5 @@ func since(t time.Time) string {
 	}
 }
 
-// nowFunc is overridable so since() is testable without a real clock.
+// nowFunc is swapped in tests.
 var nowFunc = time.Now

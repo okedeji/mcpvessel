@@ -78,9 +78,8 @@ with the provider key, never inside a cage.`,
 				return err
 			}
 
-			// In JSON mode stdout carries only the machine report, so live
-			// per-case lines are suppressed; the human path prints them as
-			// cases finish.
+			// JSON mode: stdout carries only the machine report, so live
+			// per-case lines are suppressed.
 			results := cmd.OutOrStdout()
 			if jsonOut {
 				results = nil
@@ -100,8 +99,8 @@ with the provider key, never inside a cage.`,
 				return err
 			}
 
-			// Stamp a full-suite run only: a --case run does not cover the suite,
-			// so recording its counts would misrepresent the agent.
+			// Stamp full-suite runs only; a --case run's counts would
+			// misrepresent the agent.
 			if caseName == "" {
 				if err := eval.Stamp(bundlePath, report, time.Now()); err != nil {
 					return fmt.Errorf("recording eval results: %w", err)
@@ -137,8 +136,7 @@ with the provider key, never inside a cage.`,
 	return cmd
 }
 
-// suiteParams is what runSuiteForBundle needs to run one agent's suite. It is
-// shared by eval and push --with-evals.
+// suiteParams is shared by eval and push --with-evals.
 type suiteParams struct {
 	ref        string
 	manifest   *bundle.Manifest
@@ -151,9 +149,8 @@ type suiteParams struct {
 	logs       io.Writer // build progress and agent stderr
 }
 
-// runSuiteForBundle runs a suite against a live daemon and returns the report.
-// It preflights the daemon so a down daemon is one clean error, not every case
-// failing with a connection refused, and builds the judge only when a selected
+// runSuiteForBundle preflights the daemon so a down daemon is one clean error,
+// not a connection refused per case, and builds the judge only when a selected
 // case needs one.
 func runSuiteForBundle(ctx context.Context, p suiteParams) (*eval.Report, error) {
 	socket, err := daemon.SocketPath()
@@ -197,10 +194,9 @@ func runSuiteForBundle(ctx context.Context, p suiteParams) (*eval.Report, error)
 	return eval.Run(ctx, client, nil, opts)
 }
 
-// resolveEvalTarget turns the eval argument into what the daemon resolves (a
-// ref, a content hash, or a bundle path), the local bundle path to read the
-// suite and stamp, and a display name. A source directory is built into the
-// store first, since the suite must come from a packed bundle, not loose files.
+// resolveEvalTarget turns the eval argument into a daemon-resolvable ref, the
+// local bundle path to read and stamp, and a display name. A source directory
+// is built into the store first: the suite must come from a packed bundle.
 func resolveEvalTarget(ctx context.Context, stderr io.Writer, arg string) (ref, bundlePath, display string, err error) {
 	if info, statErr := os.Stat(arg); statErr == nil && info.IsDir() {
 		hash, storePath, buildErr := buildIntoStore(ctx, stderr, stderr, buildConfig{
@@ -232,7 +228,6 @@ func suiteNeedsJudge(s *eval.Suite, caseName string) bool {
 	return false
 }
 
-// printCaseResult prints one case's go-test-style line and its failure reasons.
 func printCaseResult(w io.Writer, r eval.CaseResult) {
 	status := "PASS"
 	if !r.Passed {
@@ -243,13 +238,10 @@ func printCaseResult(w io.Writer, r eval.CaseResult) {
 	for _, f := range r.Failures {
 		_, _ = fmt.Fprintf(w, "    %s\n", f)
 	}
-	// A blank line between cases, and before the summary, keeps the report
-	// readable when the daemon's logs interleave with the result lines.
+	// Blank line between cases: the daemon's logs interleave with these.
 	_, _ = fmt.Fprintln(w)
 }
 
-// printSummary prints the suite's closing line: ok or FAIL, the counts, the
-// judge segment when any case was judged, and the money and time spent.
 func printSummary(w io.Writer, display string, r *eval.Report) {
 	tag := "ok"
 	counts := fmt.Sprintf("%d passed", r.Passed)

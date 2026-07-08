@@ -13,8 +13,7 @@ import (
 	"github.com/okedeji/agentcage/internal/runtime"
 )
 
-// statsWatchInterval is how often --watch refreshes the table. A couple of
-// seconds keeps it live without re-reading the runtime's stats too hard.
+// statsWatchInterval paces --watch refreshes.
 const statsWatchInterval = 2 * time.Second
 
 func newStatsCmd() *cobra.Command {
@@ -50,8 +49,6 @@ A cage is one container in a run: the agent, its gateways, and any sub-agents.
 	return cmd
 }
 
-// watchStats reprints the table on a ticker, clearing the screen each refresh so
-// it updates in place, until the caller interrupts.
 func watchStats(ctx context.Context, c *daemon.Client, w io.Writer) error {
 	t := time.NewTicker(statsWatchInterval)
 	defer t.Stop()
@@ -60,7 +57,7 @@ func watchStats(ctx context.Context, c *daemon.Client, w io.Writer) error {
 		if err != nil {
 			return fmt.Errorf("%w (is the daemon running?)", err)
 		}
-		// Clear the screen and home the cursor so the table refreshes in place.
+		// Clear the screen and home the cursor.
 		_, _ = io.WriteString(w, "\033[2J\033[H")
 		printStats(w, stats)
 		select {
@@ -71,8 +68,6 @@ func watchStats(ctx context.Context, c *daemon.Client, w io.Writer) error {
 	}
 }
 
-// printStats renders the stats table. The header prints even when nothing is
-// running, so an empty list reads as "no cages" rather than blank output.
 func printStats(w io.Writer, stats []runtime.CageStat) {
 	tw := tabwriter.NewWriter(w, 0, 0, 3, ' ', 0)
 	_, _ = fmt.Fprintln(tw, "CAGE\tCPU\tMEM\tPIDS")
@@ -82,7 +77,7 @@ func printStats(w io.Writer, stats []runtime.CageStat) {
 	_ = tw.Flush()
 }
 
-// dash shows a placeholder for a value nerdctl did not report rather than a gap.
+// dash marks a value nerdctl did not report.
 func dash(s string) string {
 	if s == "" {
 		return "-"

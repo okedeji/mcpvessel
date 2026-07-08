@@ -14,20 +14,18 @@ import (
 	"github.com/okedeji/agentcage/internal/secrets"
 )
 
-// judgeTimeout bounds a single grading call. The judge is an external provider,
-// so the call has a deadline: a wedged endpoint fails the case rather than
-// hanging the whole suite. Generous because a large output is real work to grade.
+// judgeTimeout bounds one grading call so a wedged provider fails the case,
+// not the whole suite. Generous: a large output is real work to grade.
 const judgeTimeout = 90 * time.Second
 
-// judgeInstruction is appended to the author's rubric so the model returns a
-// score we can parse. Kept strict: an unparseable reply fails the case closed,
-// never a silent pass, so the instruction leaves no room for prose.
+// judgeInstruction is appended to the author's rubric. Strict on purpose: an
+// unparseable reply fails the case closed, never a silent pass.
 const judgeInstruction = `Reply with only this JSON and nothing else: {"score": <number between 0.0 and 1.0>, "reason": "<one sentence>"}`
 
-// Judgement grades an output against a rubric using an operator-configured
+// Judgement grades output against a rubric via an operator-configured
 // provider. It runs in the trusted CLI process, never in a cage, because it
-// needs a provider key that must never reach agent code. It holds that key, so
-// the three redacting methods below keep the key out of any log line.
+// holds a provider key that must never reach agent code; the redacting
+// methods below keep that key out of any log line.
 type Judgement struct {
 	baseURL  string
 	model    string
@@ -43,14 +41,10 @@ func (j Judgement) String() string               { return fmt.Sprintf("eval.Judg
 func (j Judgement) GoString() string             { return j.String() }
 func (j Judgement) MarshalJSON() ([]byte, error) { return []byte(`"[redacted]"`), nil }
 
-// NewJudge resolves the model the judge grades with and its provider key.
-//
-// override, when set, is "provider/model" and must name a configured provider:
-// an operator who typed a judge model wants a typo to stop them, not to be
-// papered over with the default (the silent fallback the LLM gateway does for
-// an agent's advisory MODEL does not apply to an explicit operator flag). When
-// override is empty, the default provider and its model are used. A missing
-// default, or a provider with no usable key, is a fail-closed error before any
+// NewJudge resolves the judge's model and provider key. override
+// ("provider/model") must name a configured provider: an operator's typo
+// should stop them, not be papered over with the default. Empty override uses
+// the default provider. A missing default or key fails closed before any
 // case runs.
 func NewJudge(cfg *config.Config, sec *secrets.Store, override string) (*Judgement, error) {
 	ep, model, err := resolveJudgeEndpoint(cfg, override)
@@ -98,10 +92,9 @@ func resolveJudgeEndpoint(cfg *config.Config, override string) (config.Endpoint,
 	return config.Endpoint{}, "", fmt.Errorf("no default LLM provider to judge with; set one with 'agentcage config provider set ... --default' or pass --judge-model provider/model")
 }
 
-// Score grades output against rubric, returning a score in [0, 1], a one-line
-// reason, and the grading call's cost. It retries once on an unparseable reply,
-// then fails closed: a judge that cannot produce a number is never read as a
-// pass.
+// Score grades output against rubric. It retries once on an unparseable
+// reply, then fails closed: a judge that cannot produce a number is never
+// read as a pass.
 func (j *Judgement) Score(ctx context.Context, rubric, input, output string) (Verdict, error) {
 	ctx, cancel := context.WithTimeout(ctx, judgeTimeout)
 	defer cancel()
@@ -165,9 +158,9 @@ func (j *Judgement) chat(ctx context.Context, body chatRequest) (string, tokenUs
 	return cr.Choices[0].Message.Content, cr.Usage, nil
 }
 
-// parseVerdict pulls the score object out of a chat reply. The model is asked
-// for bare JSON, but a stray code fence or lead-in sentence still parses: take
-// the first brace-delimited object and decode it.
+// parseVerdict decodes the first brace-delimited object in the reply,
+// tolerating a stray code fence or lead-in sentence around the asked-for
+// bare JSON.
 func parseVerdict(content string) (Verdict, error) {
 	start := strings.Index(content, "{")
 	end := strings.LastIndex(content, "}")
@@ -192,7 +185,7 @@ func parseVerdict(content string) (Verdict, error) {
 }
 
 // costMicroUSD mirrors the LLM gateway's meter: prices are micro-USD per
-// million tokens, so cost is integer math with no float drift.
+// million tokens, integer math, no float drift.
 func costMicroUSD(u tokenUsage, priceIn, priceOut int64) int64 {
 	return u.PromptTokens*priceIn/1_000_000 + u.CompletionTokens*priceOut/1_000_000
 }

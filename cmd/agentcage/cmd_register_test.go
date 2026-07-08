@@ -22,8 +22,7 @@ import (
 	"github.com/okedeji/agentcage/internal/reference"
 )
 
-// nonInteractiveCmd is a command whose stdin is a buffer, so isInteractive is
-// false and confirmLoginIfNeeded takes its non-prompting branches.
+// nonInteractiveCmd has buffer stdin, so isInteractive reports false.
 func nonInteractiveCmd(stdin string) *cobra.Command {
 	c := &cobra.Command{}
 	c.SetIn(bytes.NewBufferString(stdin))
@@ -114,7 +113,6 @@ func TestPublishDecision(t *testing.T) {
 	}
 }
 
-// buildBundleFile writes a minimal agent bundle to a fresh .agent file.
 func buildBundleFile(t *testing.T) string {
 	t.Helper()
 	src := t.TempDir()

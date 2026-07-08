@@ -1,15 +1,12 @@
-// Package telemetry holds a run's trace model: the span tree the daemon builds
-// from a run's recorded events and `agentcage trace` renders. It is the shared
-// shape between the daemon that writes it into the history and the CLI that
-// prints it, so neither spells the schema twice.
+// Package telemetry holds a run's trace model: the span tree the daemon
+// writes into history and `agentcage trace` renders.
 package telemetry
 
 import "time"
 
-// Span is one node in a run's trace. Children nest under it: a run holds an agent
-// per reasoning cage, an agent holds its LLM calls. Attributes carry the span's
-// measured facts (model, tokens, cost). Times are absolute; Duration derives the
-// elapsed wall time.
+// Span is one node in a run's trace: a run holds an agent per reasoning cage,
+// an agent holds its LLM calls. Attributes carry measured facts (model,
+// tokens, cost).
 type Span struct {
 	Name       string         `json:"name"`
 	Start      time.Time      `json:"start"`
@@ -18,8 +15,8 @@ type Span struct {
 	Children   []*Span        `json:"children,omitempty"`
 }
 
-// Duration is the span's elapsed wall time, zero when its end is not after its
-// start (an unfinished or zero-width span).
+// Duration is the span's elapsed wall time, zero for an unfinished or
+// zero-width span.
 func (s *Span) Duration() time.Duration {
 	if !s.End.After(s.Start) {
 		return 0

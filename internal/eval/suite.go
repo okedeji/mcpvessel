@@ -16,16 +16,14 @@ import (
 // SchemaVersion is the locked eval-suite schema version. Only "0.1" is valid.
 const SchemaVersion = "0.1"
 
-// Suite is one agent's eval suite, the parsed form of the file the EVAL
-// directive points at. The schema is locked small on purpose (DESIGN.md 5);
-// authors grow into it.
+// Suite is the parsed form of the file the EVAL directive points at. The
+// schema is locked small on purpose.
 type Suite struct {
 	Version version `yaml:"version"`
 	Cases   []Case  `yaml:"cases"`
 }
 
-// Case is one eval: an input to send the agent and the expectations its output
-// must satisfy. A case passes iff every declared expectation passes; an
+// Case is one eval. It passes iff every declared expectation passes; an
 // undeclared expectation is not checked.
 type Case struct {
 	Name   string `yaml:"name"`
@@ -34,24 +32,20 @@ type Case struct {
 	Judge  *Judge `yaml:"judge,omitempty"`
 }
 
-// Input names the exposed tool to invoke and the arguments to send it. Tool
-// must be the agent's MAIN or one of its EXPOSE'd tools.
+// Input names the tool to invoke and its arguments. Tool must be the agent's
+// MAIN or one of its EXPOSE'd tools.
 type Input struct {
 	Tool string         `yaml:"tool"`
 	Args map[string]any `yaml:"args,omitempty"`
 }
 
-// Expect is the set of checks a case's output must pass. Every field is
-// optional; an unset field is not checked.
-//
-// OutputEquals is a pointer so a case can require an exact empty output (set to
-// "") apart from not checking equality at all (nil). It compares with
-// surrounding whitespace trimmed, since a model told to "reply with only X"
-// routinely adds a trailing newline that is not a real mismatch.
-//
-// OutputMatches holds RE2 regular expressions (Go's regexp); the output must
-// match every one. Patterns are compiled at load time, so a broken pattern is a
-// load error, not a case that silently never matches.
+// Expect is the set of checks a case's output must pass; unset fields are not
+// checked. OutputEquals is a pointer so requiring an exact empty output ("")
+// reads apart from not checking equality (nil); it compares with surrounding
+// whitespace trimmed, since a model told to "reply with only X" routinely
+// adds a trailing newline. OutputMatches patterns (RE2) are compiled at load
+// time, so a broken pattern is a load error, not a case that silently never
+// matches.
 type Expect struct {
 	OutputContains     []string `yaml:"output_contains,omitempty"`
 	OutputNotContains  []string `yaml:"output_not_contains,omitempty"`
@@ -61,8 +55,8 @@ type Expect struct {
 	MaxDurationSeconds int      `yaml:"max_duration_seconds,omitempty"`
 }
 
-// Judge is the optional LLM-as-judge check: a rubric an operator-configured
-// model scores the output against, passing when the score meets the threshold.
+// Judge is the optional LLM-as-judge check: a rubric scored by an
+// operator-configured model, passing at or above the threshold.
 type Judge struct {
 	Enabled       bool    `yaml:"enabled"`
 	Prompt        string  `yaml:"prompt"`
@@ -70,8 +64,7 @@ type Judge struct {
 }
 
 // version reads the schema version verbatim so a bare `version: 0.1` (a YAML
-// float) and a quoted `version: "0.1"` both land as the string "0.1" instead of
-// a lossy float like 0.1 rendering as "0.1" only by luck.
+// float) and a quoted `version: "0.1"` both land as the string "0.1".
 type version string
 
 func (v *version) UnmarshalYAML(node *yaml.Node) error {
@@ -88,9 +81,9 @@ func LoadSuiteFile(path string) (*Suite, error) {
 	return LoadSuite(data)
 }
 
-// LoadSuite parses and validates an eval suite from YAML bytes. Unknown fields
-// are rejected: a typo like output_containz must fail loading, not silently
-// leave an expectation unchecked and report a false pass.
+// LoadSuite parses and validates an eval suite from YAML bytes. Unknown
+// fields are rejected: a typo like output_containz must fail loading, not
+// silently skip an expectation and report a false pass.
 func LoadSuite(data []byte) (*Suite, error) {
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
@@ -148,7 +141,7 @@ func (s *Suite) validate() error {
 }
 
 // MaxCostMicroUSD returns the case's cost ceiling in micro-USD, the scale the
-// gateway budget and history record use, or 0 when the case sets none.
+// gateway budget uses, or 0 when unset.
 func (e Expect) MaxCostMicroUSD() int64 {
 	return int64(math.Round(e.MaxCostUSD * 1e6))
 }

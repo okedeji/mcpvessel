@@ -15,20 +15,18 @@ import (
 )
 
 func TestRewriteInitialize(t *testing.T) {
-	// An initialize request gains the elicitation capability.
 	in := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{"roots":{}}}}`
 	out := rewriteInitialize([]byte(in))
 	if !hasElicitationCap(t, out) {
 		t.Errorf("initialize was not given the elicitation capability: %s", out)
 	}
 
-	// A request with no capabilities object still gains one.
 	out = rewriteInitialize([]byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`))
 	if !hasElicitationCap(t, out) {
 		t.Errorf("initialize with empty params was not given the capability: %s", out)
 	}
 
-	// Anything that is not an initialize request is returned byte-for-byte.
+	// A non-initialize body must come back byte-for-byte.
 	other := `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`
 	if got := string(rewriteInitialize([]byte(other))); got != other {
 		t.Errorf("non-initialize body was rewritten: %s", got)
@@ -63,15 +61,12 @@ func TestStripDeniedTools(t *testing.T) {
 		t.Errorf("allowed tool was dropped: %s", out)
 	}
 
-	// A result with no denied tools is left untouched.
 	if _, changed := stripDeniedTools([]byte(`{"result":{"tools":[{"name":"search"}]}}`), deny); changed {
 		t.Error("a list with no denied tools should be unchanged")
 	}
-	// A non-list message is left untouched.
 	if _, changed := stripDeniedTools([]byte(`{"result":{"ok":true}}`), deny); changed {
 		t.Error("a non-list result should be unchanged")
 	}
-	// An empty deny set strips nothing.
 	if _, changed := stripDeniedTools([]byte(list), nil); changed {
 		t.Error("an empty deny set should strip nothing")
 	}
@@ -97,8 +92,6 @@ func TestElicitResponse(t *testing.T) {
 	}
 }
 
-// TestGateway_ElicitRoundTrip proves the control-stream express lane: Elicit
-// emits a question and returns the daemon's answer correlated by id.
 func TestGateway_ElicitRoundTrip(t *testing.T) {
 	g := New(Config{Edges: map[string]Edge{"sub": {Target: "http://x/mcp"}}})
 	gwConn, daemonConn := net.Pipe()
@@ -126,8 +119,6 @@ func TestGateway_ElicitRoundTrip(t *testing.T) {
 	}
 }
 
-// TestGateway_ElicitFailsClosedOnDisconnect proves a question whose answer can
-// no longer arrive fails closed rather than hanging until the timeout.
 func TestGateway_ElicitFailsClosedOnDisconnect(t *testing.T) {
 	g := New(Config{Edges: map[string]Edge{"sub": {Target: "http://x/mcp"}}})
 	gwConn, daemonConn := net.Pipe()
@@ -160,11 +151,9 @@ func TestGateway_ElicitFailsClosedOnDisconnect(t *testing.T) {
 	}
 }
 
-// TestGateway_BubblesSubAgentElicitationToOperator is the end-to-end proof: a
-// sub-agent asks a question mid-call, a plain parent client (no elicitation
-// support of its own) calls it through the gateway, and the gateway makes the
-// sub-agent able to ask, intercepts the question, routes it to the operator over
-// the control stream, and posts the answer back so the call finishes.
+// End to end: a sub-agent asks mid-call, the parent client has no elicitation
+// support of its own, and the gateway intercepts the question, routes it to
+// the operator, and posts the answer back so the call finishes.
 func TestGateway_BubblesSubAgentElicitationToOperator(t *testing.T) {
 	sub := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "sub", Version: "0"}, nil)
 	mcpsdk.AddTool(sub, &mcpsdk.Tool{Name: "deploy"},
@@ -216,8 +205,6 @@ func TestGateway_BubblesSubAgentElicitationToOperator(t *testing.T) {
 	}
 }
 
-// TestGateway_StripsDeniedToolsFromList proves the response-side deny strip over
-// a real listing: a denied tool never appears in the tools/list the parent sees.
 func TestGateway_StripsDeniedToolsFromList(t *testing.T) {
 	sub := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "sub", Version: "0"}, nil)
 	mcpsdk.AddTool(sub, &mcpsdk.Tool{Name: "search"}, okTool)
@@ -256,8 +243,8 @@ func okTool(_ context.Context, _ *mcpsdk.CallToolRequest, _ struct{}) (*mcpsdk.C
 	return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "ok"}}}, struct{}{}, nil
 }
 
-// fakeDaemon answers every question the gateway raises with a fixed answer, the
-// operator's stand-in for the integration tests.
+// fakeDaemon answers every question with a fixed answer, the operator's
+// stand-in.
 func fakeDaemon(conn io.ReadWriteCloser, answer ElicitAnswer) {
 	dec := json.NewDecoder(conn)
 	enc := json.NewEncoder(conn)

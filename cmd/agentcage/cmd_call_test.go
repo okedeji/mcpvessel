@@ -80,11 +80,11 @@ func TestParseArgPairs_CoercesBySchema(t *testing.T) {
 		t.Fatalf("parseArgPairs: %v", err)
 	}
 	want := map[string]any{
-		"timezone": "Asia/Tokyo",                           // a string stays a string, not mangled
-		"entities": []any{map[string]any{"name": "Atlas"}}, // an array is parsed as JSON
-		"count":    int64(5),                               // integer converted
-		"dry_run":  true,                                   // boolean converted
-		"nick":     "42",                                   // union type resolves to string, kept verbatim
+		"timezone": "Asia/Tokyo",
+		"entities": []any{map[string]any{"name": "Atlas"}},
+		"count":    int64(5),
+		"dry_run":  true,
+		"nick":     "42", // union type resolves to string, kept verbatim
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("parseArgPairs = %#v, want %#v", got, want)
@@ -96,7 +96,6 @@ func TestParseArgPairs_NoSchemaFallsBackToJSONThenString(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseArgPairs: %v", err)
 	}
-	// With no schema, valid JSON parses and a bare word stays a string.
 	if got["n"] != float64(3) || got["s"] != "hello" {
 		t.Errorf("blind coercion = %#v, want n=3(number) s=hello(string)", got)
 	}
@@ -154,8 +153,8 @@ func TestAssertToolIsPublic_ToolCollectionWithExpose(t *testing.T) {
 }
 
 func TestAssertToolIsPublic_UsesCatalogWhenPresent(t *testing.T) {
-	// EXPOSE * leaves the raw directive as "*", but the catalog carries the
-	// expanded per-tool visibility, and the check must read the catalog.
+	// EXPOSE * stays "*" in the raw directive; only the catalog carries the
+	// expanded per-tool visibility.
 	m := &bundle.Manifest{
 		Agentfile: bundle.AgentfileSpec{Expose: []string{"*"}},
 		Tools: []bundle.Tool{

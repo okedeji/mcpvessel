@@ -110,8 +110,7 @@ stored value, so a shell or CI override still wins for that run.`,
 	return cmd
 }
 
-// anyChanged reports whether the operator passed any of the named flags, so a
-// 'set' command updates only the fields given and rejects an empty invocation.
+// anyChanged reports whether any of the named flags was passed.
 func anyChanged(cmd *cobra.Command, names ...string) bool {
 	for _, n := range names {
 		if cmd.Flags().Changed(n) {
@@ -372,8 +371,6 @@ func newConfigMetricsShowCmd() *cobra.Command {
 	}
 }
 
-// isLoopbackHost reports whether a metrics bind host stays on the local machine,
-// so the set command can warn only when it does not.
 func isLoopbackHost(host string) bool {
 	if host == "" || host == "localhost" {
 		return true
@@ -702,9 +699,9 @@ func newConfigPathCmd() *cobra.Command {
 	}
 }
 
-// parseUSDMicros turns a USD amount like "5", "2.50", or "0.003" into integer
-// micro-USD (millionths of a dollar). More than six decimal places is finer
-// than agentcage tracks and is rejected.
+// parseUSDMicros turns a USD amount like "2.50" or "0.003" into integer
+// micro-USD. More than six decimal places is finer than agentcage tracks
+// and is rejected.
 func parseUSDMicros(s string) (int64, error) {
 	whole, frac, hasFrac := strings.Cut(s, ".")
 	var dollars int64

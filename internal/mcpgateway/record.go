@@ -10,9 +10,9 @@ import (
 	"time"
 )
 
-// SubCallEvent is one parent-to-sub-agent tools/call, logged per call so the
-// daemon can add a sub-agent span to the run's trace. Times are the gateway
-// clock's unix nanos, internally consistent so a call's duration is exact.
+// SubCallEvent is one parent-to-sub-agent tools/call, logged so the daemon
+// can add a sub-agent span to the run's trace. Times are the gateway clock's
+// unix nanos.
 type SubCallEvent struct {
 	Edge          string `json:"edge"`
 	Tool          string `json:"tool"`
@@ -20,8 +20,8 @@ type SubCallEvent struct {
 	EndUnixNano   int64  `json:"end_unix_nano"`
 }
 
-// SubCallRecord is a sub-agent call's full payload, logged only when recording:
-// the tool's arguments and the response the parent received back.
+// SubCallRecord is a sub-agent call's full payload, logged only when
+// recording.
 type SubCallRecord struct {
 	Edge          string `json:"edge"`
 	Tool          string `json:"tool"`
@@ -31,24 +31,21 @@ type SubCallRecord struct {
 	EndUnixNano   int64  `json:"end_unix_nano"`
 }
 
-// Log prefixes marking the gateway's per-call lines on stdout, which the daemon
-// reads at finish: SubCall is the always-logged metadata, SubReplay the
-// full-payload line written only when recording.
+// Log prefixes for the gateway's per-call stdout lines, read by the daemon at
+// finish.
 const (
 	SubCallLogPrefix   = "AGENTCAGE_SUBCALL "
 	SubReplayLogPrefix = "AGENTCAGE_SUBREPLAY "
 )
 
-// Hooks are the gateway's per-call observation callbacks, non-nil only in the
-// running gateway where the cmd wires them to stdout. Call fires for every
-// sub-agent tools/call; Payload only when the run records.
+// Hooks are the gateway's per-call observation callbacks. Call fires for
+// every sub-agent tools/call; Payload only when the run records.
 type Hooks struct {
 	Call    func(SubCallEvent)
 	Payload func(SubCallRecord)
 }
 
-// SetHooks wires the per-call observation callbacks. The running gateway's cmd
-// calls it; the Handler convenience and tests leave them nil and record nothing.
+// SetHooks wires the per-call observation callbacks.
 func (g *Gateway) SetHooks(h Hooks) {
 	g.recordCall = h.Call
 	g.recordPayload = h.Payload
@@ -66,8 +63,8 @@ func writeJSONLine(w io.Writer, prefix string, v any) {
 	_, _ = fmt.Fprintln(w, prefix+string(b))
 }
 
-// ParseSubCallLines and ParseSubReplayLines return every matching line in the
-// gateway's captured log, in order.
+// ParseSubCallLines and ParseSubReplayLines return every matching log line,
+// in order.
 func ParseSubCallLines(logs string) []SubCallEvent {
 	var out []SubCallEvent
 	for _, line := range strings.Split(logs, "\n") {
@@ -98,9 +95,8 @@ func ParseSubReplayLines(logs string) []SubCallRecord {
 	return out
 }
 
-// parseToolsCall extracts the tool name and raw arguments from a JSON-RPC
-// tools/call request, reporting whether body is one. A batch or any other method
-// is not recorded as a sub-agent call.
+// parseToolsCall extracts the tool name and raw arguments from a tools/call
+// request. A batch or any other method is not recorded as a sub-agent call.
 func parseToolsCall(body []byte) (tool string, args []byte, ok bool) {
 	var req struct {
 		Method string `json:"method"`
@@ -115,8 +111,6 @@ func parseToolsCall(body []byte) (tool string, args []byte, ok bool) {
 	return req.Params.Name, req.Params.Arguments, true
 }
 
-// recordSubCall logs the call's metadata always and its full payload when a
-// capturing writer kept the response.
 func (g *Gateway) recordSubCall(edge, tool string, args []byte, start, end time.Time, captured *bytes.Buffer) {
 	if g.recordCall != nil {
 		g.recordCall(SubCallEvent{Edge: edge, Tool: tool, StartUnixNano: start.UnixNano(), EndUnixNano: end.UnixNano()})
@@ -126,9 +120,8 @@ func (g *Gateway) recordSubCall(edge, tool string, args []byte, start, end time.
 	}
 }
 
-// captureWriter tees the bytes written to the client into buf, so a recorded call
-// keeps the response the parent received. It forwards Flush so a streamed SSE
-// response still reaches the client immediately.
+// captureWriter tees response bytes into buf. It forwards Flush so a streamed
+// SSE response still reaches the client immediately.
 type captureWriter struct {
 	http.ResponseWriter
 	buf *bytes.Buffer

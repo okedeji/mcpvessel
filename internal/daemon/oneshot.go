@@ -16,13 +16,11 @@ import (
 	"github.com/okedeji/agentcage/internal/runtime"
 )
 
-// RunRequest is the POST /run body: one boot, one tool call, one teardown, the
-// daemon-side of `agentcage run` and `agentcage call`. The CLI resolves the
-// tool and authorizes it before sending; the daemon executes and owns the run.
+// RunRequest is the POST /run body: one boot, one tool call, one teardown.
+// The CLI resolves and authorizes the tool before sending.
 //
-// Secrets and Env travel from the CLI over the daemon's local Unix socket.
-// String and GoString redact both so a logged request never leaks them;
-// MarshalJSON stays real because it is the wire format the daemon injects from.
+// String and GoString redact Secrets and Env so a logged request never leaks
+// them; JSON marshaling stays real because it is the wire format.
 type RunRequest struct {
 	Ref       string            `json:"ref"`
 	Tool      string            `json:"tool"`
@@ -33,9 +31,9 @@ type RunRequest struct {
 	Resources config.Cap        `json:"resources,omitempty"`
 	NoCache   bool              `json:"no_cache,omitempty"`
 	Record    bool              `json:"record,omitempty"`
-	// TimeoutSeconds bounds the tool call, not the boot: the first run of an
-	// agent builds its image, which can take minutes and must not count against
-	// an eval case's max_duration_seconds. Zero means no deadline.
+	// TimeoutSeconds bounds the tool call, not the boot: a first-use image
+	// build can take minutes and must not count against the deadline. Zero
+	// means no deadline.
 	TimeoutSeconds int64 `json:"timeout_seconds,omitempty"`
 }
 
@@ -46,14 +44,10 @@ func (r RunRequest) String() string {
 
 func (r RunRequest) GoString() string { return r.String() }
 
-// runFrame is one line of the POST /run NDJSON stream: a chunk of the run's logs
-// (build progress and the agent's stderr), the final result, or a terminal
-// error. The CLI prints log frames as they arrive and the result at the end.
-//
-// The terminal result and error frames also carry the run's LLM spend and the
-// tool call's wall time, so a client (the eval runner) reads a run's cost and
-// duration off the wire without a follow-up query the best-effort history store
-// might not answer. Log and run_id frames leave both zero; omitempty drops them.
+// runFrame is one line of the POST /run NDJSON stream. Terminal frames (result
+// and error) also carry the run's LLM spend and the call's wall time: the wire
+// is the reliable channel for a one-shot's cost, since the best-effort history
+// store may never hold it.
 type runFrame struct {
 	Type         string `json:"type"` // "log" | "run_id" | "result" | "error"
 	Data         string `json:"data"`
@@ -61,13 +55,10 @@ type runFrame struct {
 	CallMS       int64  `json:"call_ms,omitempty"`
 }
 
-// handleRun boots a one-shot run, streams its logs while it works, and ends with
-// the tool result or an error. The run is held for its brief life so ps and stop
-// see it, and released when the call returns or the client disconnects. It binds
-// to the request context: a client that gives up cancels the boot and the call.
-//
-// Once the stream opens the status is 200 and success or failure rides in a
-// frame, not the HTTP status, because the boot can fail after the first log line
+// handleRun boots a one-shot run, streams its logs, and ends with the tool
+// result or an error. It binds to the request context: a client that gives up
+// cancels the boot and the call. Once the stream opens the status is 200 and
+// failure rides in a frame, because the boot can fail after the first log line
 // is already on the wire.
 func (d *Daemon) handleRun(w http.ResponseWriter, r *http.Request) {
 	var req RunRequest
@@ -113,22 +104,18 @@ func (d *Daemon) handleRun(w http.ResponseWriter, r *http.Request) {
 		stream.frame("error", err.Error())
 		return
 	}
-	// The client learns the run id up front, so `replay record` can fetch the
-	// artifact afterward. run/call ignore the frame.
 	stream.frame("run_id", session.RunID())
 
-	// Time the tool call alone, not the boot above it: a first-use image build
-	// dwarfs any call and would make an eval's per-case duration meaningless.
-	// The deadline wraps only the call for the same reason.
+	// The deadline and the timing below cover the tool call alone: a first-use
+	// image build dwarfs any call and would swamp both.
 	callCtx := r.Context()
 	if req.TimeoutSeconds > 0 {
 		var cancel context.CancelFunc
 		callCtx, cancel = context.WithTimeout(callCtx, time.Duration(req.TimeoutSeconds)*time.Second)
 		defer cancel()
 	}
-	// A no-argument call omits args over the wire, arriving as nil. Send an empty
-	// object, not null: a strict server rejects null for a tool whose schema is an
-	// (empty) object, which is exactly what a no-argument tool declares.
+	// Nil args must go out as {}, not null: a strict server rejects null for a
+	// tool whose schema is an (empty) object.
 	callArgs := req.Args
 	if callArgs == nil {
 		callArgs = map[string]any{}
@@ -140,15 +127,15 @@ func (d *Daemon) handleRun(w http.ResponseWriter, r *http.Request) {
 	if callErr != nil {
 		status = history.StatusFailed
 	}
-	// All gateway reads (replay payloads, then spend) happen before dropRuns tears
-	// the gateway down. writeReplay is a no-op unless this run recorded.
+	// All gateway reads (replay payloads, then spend) must happen before
+	// dropRuns tears the gateway down.
 	if req.Record {
 		d.writeReplay(session.RunID(), b, req, result, callErr, started)
 	}
 	cost := d.finish(session.RunID(), b.Display, status, callErr)
 	d.dropRuns([]*runtime.Session{session})
-	// The cost rides the error frame too: a case that overspent and failed still
-	// reports the money it burned.
+	// The cost rides the error frame too: a run that overspent and failed
+	// still reports what it burned.
 	if callErr != nil {
 		stream.endFrame("error", callErr.Error(), cost, callMS)
 		return
@@ -156,10 +143,9 @@ func (d *Daemon) handleRun(w http.ResponseWriter, r *http.Request) {
 	stream.endFrame("result", result, cost, callMS)
 }
 
-// runStream writes runFrames to the response, flushing each so the CLI sees logs
-// as they happen rather than in one burst at the end. Its frame method is
-// mutex-guarded because the agent's stderr (a copy goroutine) and the result
-// write race onto the same response.
+// runStream writes runFrames to the response, flushing each. Mutex-guarded:
+// the agent's stderr (a copy goroutine) and the result write race onto the
+// same response.
 type runStream struct {
 	mu      sync.Mutex
 	enc     *json.Encoder
@@ -177,8 +163,6 @@ func (s *runStream) frame(typ, data string) {
 	s.write(runFrame{Type: typ, Data: data})
 }
 
-// endFrame writes a terminal frame carrying the run's cost and call duration
-// alongside the result or error.
 func (s *runStream) endFrame(typ, data string, costMicroUSD, callMS int64) {
 	s.write(runFrame{Type: typ, Data: data, CostMicroUSD: costMicroUSD, CallMS: callMS})
 }

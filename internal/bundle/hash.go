@@ -12,15 +12,10 @@ import (
 	"strings"
 )
 
-// hashFiles walks root and returns a sha256 over a canonical encoding of
-// every regular file beneath it.
-//
-// The encoding is `<relpath>\0<content>\0` for each file, with files
-// sorted by relative path. Two equivalent source trees produce the same
-// hash; a renamed or modified file changes it.
-//
-// skip is checked against the path relative to root. It is meant for
-// excluding entries like ".git" and the build output itself.
+// hashFiles returns a sha256 over a canonical encoding of every regular file
+// under root: `<relpath>\0<content>\0`, sorted by relative path. Including
+// the path means a rename changes the hash even when content does not. skip
+// is checked against the root-relative path.
 func hashFiles(root string, skip func(rel string) bool) (string, error) {
 	paths, err := walkFiles(root, skip)
 	if err != nil {
@@ -30,8 +25,6 @@ func hashFiles(root string, skip func(rel string) bool) (string, error) {
 
 	h := sha256.New()
 	for _, rel := range paths {
-		// Path component: written before content so a rename changes
-		// the hash even if content is unchanged.
 		h.Write([]byte(rel))
 		h.Write([]byte{0})
 
@@ -53,8 +46,8 @@ func hashFiles(root string, skip func(rel string) bool) (string, error) {
 	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// walkFiles returns the relative paths (slash-separated, forward slashes
-// on every OS) of every regular file under root, filtered by skip.
+// walkFiles returns the slash-separated relative paths of every regular file
+// under root, filtered by skip.
 func walkFiles(root string, skip func(rel string) bool) ([]string, error) {
 	var out []string
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
@@ -65,8 +58,7 @@ func walkFiles(root string, skip func(rel string) bool) ([]string, error) {
 		if err != nil {
 			return err
 		}
-		// Normalize path separators so the same source tree hashes
-		// identically on macOS, Linux, and Windows.
+		// Slash-normalized so the same tree hashes identically on every OS.
 		rel = filepath.ToSlash(rel)
 		if rel == "." {
 			return nil
@@ -89,13 +81,11 @@ func walkFiles(root string, skip func(rel string) bool) ([]string, error) {
 	return out, nil
 }
 
-// defaultSkip excludes paths we never want in a bundle: VCS metadata,
-// the bundle output itself, and anything else that would bloat the
-// archive without being part of the agent's source.
+// defaultSkip excludes VCS metadata and the bundle output (plus its .tmp
+// staging file) when they live inside srcDir.
 func defaultSkip(outPath string) func(rel string) bool {
 	outName := filepath.Base(outPath)
 	return func(rel string) bool {
-		// Top-level VCS dirs.
 		switch rel {
 		case ".git", ".hg", ".svn":
 			return true
@@ -103,8 +93,6 @@ func defaultSkip(outPath string) func(rel string) bool {
 		if strings.HasPrefix(rel, ".git/") {
 			return true
 		}
-		// The output file, and the temp file writeBundle stages next to
-		// it, in case they live inside srcDir.
 		if rel == outName || rel == outName+".tmp" {
 			return true
 		}

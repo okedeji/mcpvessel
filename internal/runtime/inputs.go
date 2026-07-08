@@ -7,13 +7,10 @@ import (
 )
 
 // injectOperatorValues adds the operator's env overrides and secret values to
-// one agent's container env, scoped to what that agent declares: only an ENV
-// key or SECRETS name in the agent's own manifest is injected. An agent never
-// receives a value it did not declare, so the operator can supply one pool for
-// the whole run without a third-party sub-agent reading a secret meant for
-// another. A declared secret, or a value-less ENV input, with no value supplied
-// is a fail-closed error, since the agent asked for it and cannot work without
-// it.
+// one agent's container env, scoped to what that agent's manifest declares. An
+// undeclared value is never injected, so one pool serves the whole run without
+// a third-party sub-agent reading a secret meant for another. A declared
+// secret or value-less ENV input with nothing supplied fails closed.
 func injectOperatorValues(agentEnv map[string]string, m *bundle.Manifest, opEnv, opSecrets map[string]string) error {
 	if m == nil {
 		return nil
@@ -23,8 +20,8 @@ func injectOperatorValues(agentEnv map[string]string, m *bundle.Manifest, opEnv,
 			agentEnv[key] = v
 			continue
 		}
-		// An empty default marks a required input the image did not bake, so a
-		// missing operator value is fatal rather than a silently absent var.
+		// An empty default marks a required input the image did not bake;
+		// missing is fatal, not a silently absent var.
 		if def == "" {
 			return fmt.Errorf("declares required input %q but it was not provided: pass --env %s=VALUE", key, key)
 		}

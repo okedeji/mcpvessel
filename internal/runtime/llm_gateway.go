@@ -17,15 +17,14 @@ import (
 	"github.com/okedeji/agentcage/internal/secrets"
 )
 
-// llmGatewayName is the LLM gateway container's name and the host reasoning
-// agents reach it at on the run network.
+// llmGatewayName is the LLM gateway's container name, also its hostname on
+// the run network.
 func llmGatewayName(runID string) string { return runID + "-llm" }
 
-// SetRunBudget changes a running run's LLM budget. It execs the control client
-// inside the run's LLM gateway container, which POSTs to the gateway's loopback
-// control listener. Exec is the authorization: only the host can exec into the
-// container, and the listener is unreachable from the run network. It errors
-// when the run has no LLM gateway, which means it does not reason or has stopped.
+// SetRunBudget changes a running run's LLM budget by exec'ing the control
+// client inside the gateway container. Exec is the authorization: only the
+// host can exec in, and the loopback control listener is unreachable from the
+// run network. Errors when the run has no LLM gateway.
 func SetRunBudget(ctx context.Context, runID string, microUSD int64) error {
 	p, err := DefaultProvisioner()
 	if err != nil {
@@ -43,22 +42,19 @@ func SetRunBudget(ctx context.Context, runID string, microUSD int64) error {
 	return nil
 }
 
-// llmURL is the AGENTCAGE_LLM_URL one reasoning agent is injected with: the LLM
-// gateway at an unguessable per-agent token, so a sibling cannot forge another
-// agent's path to use its model or misattribute its spend.
+// llmURL is one reasoning agent's AGENTCAGE_LLM_URL: the gateway at an
+// unguessable per-agent token, so a sibling cannot forge another agent's path
+// to use its model or misattribute its spend.
 func llmURL(runID, token string) string {
 	return "http://" + llmGatewayName(runID) + ":" + env.DefaultLLMGatewayPort + "/" + token
 }
 
-// rootAgentKey is the agent key for a lone agent and for a tree's root: the
-// path segment in its AGENTCAGE_LLM_URL and its key in the gateway's per-agent
-// map.
+// rootAgentKey keys a lone agent or a tree's root in the gateway's per-agent
+// map and its AGENTCAGE_LLM_URL path.
 const rootAgentKey = "root"
 
-// manifestModel and manifestBudget read a manifest's advisory model and
-// budget, tolerating a nil manifest so a node that is not yet pulled, or a
-// test fixture without one, reads as "does not reason, no budget". nodeModel
-// and nodeBudget are the tree-node wrappers.
+// manifestModel and manifestBudget tolerate a nil manifest: an unpulled node
+// reads as "does not reason, no budget".
 func manifestModel(m *bundle.Manifest) string {
 	if m == nil {
 		return ""
@@ -88,9 +84,9 @@ func nodeBudget(n *agentNode) int64 {
 }
 
 // resolveBudget picks the run's shared budget: the operator's --budget when
-// set, otherwise the agent's advisory. It warns when a reasoning run has
-// neither, since that run is unbounded. It is called only on the reasoning
-// path, so the warning never fires for a tool collection.
+// set, otherwise the agent's advisory. A reasoning run with neither is
+// unbounded and gets a warning. Called only on the reasoning path, so the
+// warning never fires for a tool collection.
 func resolveBudget(operator, advisory int64, stderr io.Writer) int64 {
 	if operator > 0 {
 		return operator
@@ -101,11 +97,10 @@ func resolveBudget(operator, advisory int64, stderr io.Writer) int64 {
 	return advisory
 }
 
-// buildLLMConfig assembles the LLM gateway's config from the operator's
-// provider endpoints and secret store, plus the run's per-agent models and
-// shared budget. It fails closed: an endpoint that names a secret the store
-// does not have, or a run whose agents reason with no provider configured,
-// stops the boot rather than starting a gateway that can answer nothing.
+// buildLLMConfig assembles the gateway's config from the operator's provider
+// endpoints and secret store plus the run's per-agent models and shared
+// budget. Fails closed: a missing secret, or reasoning agents with no
+// provider configured, stops the boot.
 func buildLLMConfig(agents, tokens map[string]string, budgetMicroUSD int64) (llmgateway.Config, error) {
 	cfg, err := config.Load()
 	if err != nil {
@@ -140,8 +135,8 @@ func buildLLMConfig(agents, tokens map[string]string, budgetMicroUSD int64) (llm
 	if len(endpoints) == 0 {
 		return llmgateway.Config{}, fmt.Errorf("a reasoning agent needs an LLM provider: run 'agentcage config provider set'")
 	}
-	// The gateway routes by each agent's capability token but meters by its real
-	// key, so a forged path is unguessable and spend still attributes correctly.
+	// Route by capability token, meter by real key: paths stay unguessable
+	// and spend still attributes correctly.
 	routes := make(map[string]llmgateway.AgentRoute, len(agents))
 	for key, model := range agents {
 		routes[tokens[key]] = llmgateway.AgentRoute{Key: key, Model: model}
@@ -149,20 +144,18 @@ func buildLLMConfig(agents, tokens map[string]string, budgetMicroUSD int64) (llm
 	return llmgateway.Config{Endpoints: endpoints, Default: def, Agents: routes, BudgetMicroUSD: budgetMicroUSD}, nil
 }
 
-// startLLMGateway builds the LLM gateway container from llmCfg, ensures the
-// shared gateway image exists, starts it multi-homed across every reasoning
-// agent's network plus the egress network, and pushes its teardown. It is a
-// separate cage from the MCP gateway: it is the one component holding provider
-// keys and reaching out to a provider, kept off the gateway that brokers
-// hostile inter-agent traffic.
+// startLLMGateway starts the gateway multi-homed across every reasoning
+// agent's network plus the egress network, and pushes its teardown. A
+// separate cage from the MCP gateway: this is the one component holding
+// provider keys and reaching out, kept off the broker of hostile inter-agent
+// traffic.
 func startLLMGateway(ctx context.Context, sess *bootSession, runID string, agentNets []string, egressNetwork string, llmCfg llmgateway.Config, in bootInput, td *teardown) error {
 	cfgJSON, err := json.Marshal(llmCfg)
 	if err != nil {
 		return fmt.Errorf("encoding LLM gateway config: %w", err)
 	}
-	// On each reasoning agent's internal network (where that agent reaches it)
-	// plus the egress network (where it reaches the provider). The agent
-	// networks are internal, so this door is their only path to a model.
+	// The agent networks are internal, so this door is their only path to a
+	// model.
 	spec := ContainerSpec{
 		RunID:    llmGatewayName(runID),
 		ImageRef: GatewayImageRef(),
@@ -185,16 +178,14 @@ func startLLMGateway(ctx context.Context, sess *bootSession, runID string, agent
 		return err
 	}
 	td.push(func() error { return removeContainer(sess.provisioner, spec.RunID) })
-	// Pushed after the remove so it runs before it: the spend summary is read
-	// from the gateway's logs while the container is still there.
+	// Pushed after the remove so it runs before it: the spend summary reads
+	// the gateway's logs while the container is still there.
 	td.push(func() error { return printSpendSummary(sess.provisioner, spec.RunID, in.Stderr) })
 	return nil
 }
 
-// RunSpend reads a run's current LLM spend off its gateway, the structured
-// counterpart to printSpendSummary's operator text: the daemon serves it live
-// from the spend endpoint. Best-effort. A run that does not reason, or whose
-// gateway is already gone, reports !ok rather than erroring.
+// RunSpend reads a run's current LLM spend off its gateway logs. Best-effort:
+// a run that does not reason, or whose gateway is gone, reports !ok.
 func RunSpend(ctx context.Context, runID string) (llmgateway.SpendReport, bool) {
 	p, err := DefaultProvisioner()
 	if err != nil {
@@ -208,11 +199,10 @@ func RunSpend(ctx context.Context, runID string) (llmgateway.SpendReport, bool) 
 	return llmgateway.ParseSpendLine(log)
 }
 
-// RunTelemetry reads a run's final spend and its per-call events off the gateway
-// log in one pass, for the daemon's finish: the spend lands in the history, the
-// calls build the run's trace. ok reports whether a metered spend snapshot was
-// found; the calls come back regardless. Read before teardown removes the
-// gateway, the same constraint RunSpend has.
+// RunTelemetry reads a run's final spend and per-call events off the gateway
+// log in one pass. ok reports whether a metered spend snapshot was found; the
+// calls come back regardless. Must be read before teardown removes the
+// gateway.
 func RunTelemetry(ctx context.Context, runID string) (llmgateway.SpendReport, []llmgateway.CallEvent, bool) {
 	p, err := DefaultProvisioner()
 	if err != nil {
@@ -228,10 +218,8 @@ func RunTelemetry(ctx context.Context, runID string) (llmgateway.SpendReport, []
 }
 
 // RunReplay reads a recording run's full-payload call records off the gateway
-// log, for the daemon to assemble the .replay artifact. ok reports whether the
-// gateway log was readable at all; a non-recording run logs none and comes back
-// empty. Read before teardown removes the gateway, the same constraint RunSpend
-// has.
+// log. ok reports whether the log was readable at all; a non-recording run
+// comes back empty. Must be read before teardown removes the gateway.
 func RunReplay(ctx context.Context, runID string) ([]llmgateway.CallRecord, bool) {
 	p, err := DefaultProvisioner()
 	if err != nil {
@@ -245,8 +233,8 @@ func RunReplay(ctx context.Context, runID string) ([]llmgateway.CallRecord, bool
 	return llmgateway.ParseReplayLines(log), true
 }
 
-// readSpend reads the gateway's last logged spend snapshot. The gateway is
-// reaped with rm -f, so its logs are the source of truth while it is still up.
+// readSpend reads the gateway's last logged spend snapshot; its logs are the
+// source of truth while the container is still up.
 func readSpend(ctx context.Context, p Provisioner, name string) (llmgateway.SpendReport, bool) {
 	log, ok := readGatewayLog(ctx, p, name)
 	if !ok {
@@ -255,8 +243,8 @@ func readSpend(ctx context.Context, p Provisioner, name string) (llmgateway.Spen
 	return llmgateway.ParseSpendLine(log)
 }
 
-// readGatewayLog captures the gateway container's stdout, where it logs its
-// spend snapshots and per-call events.
+// readGatewayLog captures the gateway container's stdout, where it logs spend
+// snapshots and per-call events.
 func readGatewayLog(ctx context.Context, p Provisioner, name string) (string, bool) {
 	ctx, cancel := context.WithTimeout(ctx, containerStopTimeout)
 	defer cancel()
@@ -270,10 +258,9 @@ func readGatewayLog(ctx context.Context, p Provisioner, name string) (string, bo
 	return out.String(), true
 }
 
-// printSpendSummary reads the run's final spend off the LLM gateway's logs and
-// prints the operator's end-of-run summary. It is best-effort: a run that did no
-// metered call, or a log read that fails, prints nothing and never fails
-// teardown, which still has a container to remove.
+// printSpendSummary prints the operator's end-of-run spend summary.
+// Best-effort: no metered call, or a failed log read, prints nothing and
+// never fails teardown.
 func printSpendSummary(p Provisioner, name string, w io.Writer) error {
 	report, ok := readSpend(context.Background(), p, name)
 	if !ok {

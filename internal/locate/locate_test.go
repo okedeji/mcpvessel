@@ -63,7 +63,6 @@ func TestBundle_ContentHashMissing(t *testing.T) {
 }
 
 func TestBundle_BogusArgErrors(t *testing.T) {
-	// Not an existing file and not a parseable reference.
 	if _, err := Bundle(context.Background(), "not a ref and not a file"); err == nil {
 		t.Fatal("expected an error for an arg that is neither a file nor a ref")
 	}
@@ -71,7 +70,6 @@ func TestBundle_BogusArgErrors(t *testing.T) {
 
 func TestBundle_RefWithoutVersionErrors(t *testing.T) {
 	t.Setenv("AGENTCAGE_REGISTRY", "")
-	// A valid ref shape but no tag/digest: nothing to resolve in the store or pull.
 	if _, err := Bundle(context.Background(), "@anthropic/web-search"); err == nil {
 		t.Fatal("expected an error for a ref with no version")
 	}

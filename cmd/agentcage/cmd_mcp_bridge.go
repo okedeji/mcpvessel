@@ -16,24 +16,17 @@ import (
 	"github.com/okedeji/agentcage/internal/wrap"
 )
 
-// newMCPBridgeCmd builds the bridge that lets an imported stdio-only MCP server
-// serve as a USES sub-agent. An imported server speaks MCP over stdio, which is
-// all a root cage needs; a sub-agent is reached over streamable HTTP on the
-// address in AGENTCAGE_SERVE_HTTP. The bridge is the wrapped tool collection's
-// ENTRYPOINT and closes that gap: as a sub-agent it serves HTTP and forwards
-// every tool to the inner stdio server it spawns; as a root it execs the inner
-// server so the bridge never sits in the stdio path the daemon drives.
-//
-// It reuses agentcage's own MCP stack (the go-sdk client and streamable-HTTP
-// server), so it is one static binary that works in any base image, node or
-// python or otherwise, with no language runtime of its own.
+// newMCPBridgeCmd builds the ENTRYPOINT for imported stdio-only MCP servers.
+// With AGENTCAGE_SERVE_HTTP set (sub-agent) it serves streamable HTTP and
+// forwards every tool to the inner stdio server it spawns; unset (root) it
+// execs the inner server so the bridge never sits in the stdio path the
+// daemon drives. One static binary, so it works in any base image.
 func newMCPBridgeCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:    wrap.BridgeSubcommand + " -- SERVER [ARG...]",
 		Short:  "Serve an imported stdio MCP server over HTTP so it can be a USES sub-agent",
 		Hidden: true,
-		// The inner server carries its own flags (npx -y, ...). Parse none of them
-		// here; everything after `--` is the server command, forwarded verbatim.
+		// Everything after `--` is the inner server's command, forwarded verbatim.
 		DisableFlagParsing: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			inner, err := innerServerCommand(args)
@@ -49,8 +42,7 @@ func newMCPBridgeCmd() *cobra.Command {
 	}
 }
 
-// innerServerCommand returns the wrapped server's command, the tokens after the
-// `--` the ENTRYPOINT passes.
+// innerServerCommand returns the tokens after `--`.
 func innerServerCommand(args []string) ([]string, error) {
 	for i, a := range args {
 		if a == "--" {
@@ -63,9 +55,8 @@ func innerServerCommand(args []string) ([]string, error) {
 	return nil, fmt.Errorf("mcp-bridge: expected '-- <server command>'")
 }
 
-// execInner replaces the bridge process with the inner server. As a root the
-// daemon drives the cage over stdio, so the bridge must not sit in that path; it
-// hands its own stdin and stdout to the inner server wholesale.
+// execInner replaces the bridge process with the inner server, handing it
+// stdin and stdout wholesale; the daemon drives a root cage over stdio.
 func execInner(inner []string) error {
 	path, err := exec.LookPath(inner[0])
 	if err != nil {
@@ -77,10 +68,8 @@ func execInner(inner []string) error {
 	return nil
 }
 
-// serveBridge spawns the inner stdio server, mirrors its tools onto an HTTP MCP
-// server, and serves that on bind. Every tools/call is forwarded to the inner
-// session unchanged, so the sub-agent presents exactly the tools, and the same
-// results, the imported server does.
+// serveBridge spawns the inner stdio server and mirrors its tools onto an
+// HTTP MCP server on bind, forwarding every tools/call unchanged.
 func serveBridge(ctx context.Context, bind string, inner []string) error {
 	client := mcpsdk.NewClient(&mcpsdk.Implementation{Name: identity.Name, Version: identity.Version}, nil)
 	proc := exec.Command(inner[0], inner[1:]...)
@@ -107,10 +96,9 @@ func serveBridge(ctx context.Context, bind string, inner []string) error {
 		)
 	}
 
-	// The per-run gateway on a private network is the trust boundary in front of
-	// this port, and it forwards its own Host header; the SDK's DNS-rebinding
-	// guard would reject that mismatch. Nothing outside the run can reach the
-	// port, so turn the guard off rather than let it 403 the gateway.
+	// The per-run gateway forwards its own Host header, which the SDK's
+	// DNS-rebinding guard would 403. Only the private run network can reach
+	// this port, so the guard is safe to disable.
 	handler := mcpsdk.NewStreamableHTTPHandler(
 		func(*http.Request) *mcpsdk.Server { return server },
 		&mcpsdk.StreamableHTTPOptions{DisableLocalhostProtection: true},

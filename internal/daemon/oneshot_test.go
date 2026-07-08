@@ -34,7 +34,7 @@ func TestRunRequest_RedactsSecrets(t *testing.T) {
 }
 
 // rewriteTransport points a Client built for a Unix socket at an httptest
-// server instead, so RunOnce's streaming can be driven without booting a cage.
+// server instead.
 type rewriteTransport struct{ base *url.URL }
 
 func (rt rewriteTransport) RoundTrip(r *http.Request) (*http.Response, error) {
@@ -133,8 +133,8 @@ func TestRunOnceUsage_ErrorFrameStillReportsSpend(t *testing.T) {
 }
 
 func TestRunOnceUsage_OldDaemonFrameDecodesToZero(t *testing.T) {
-	// A daemon predating the cost/duration fields sends a bare result frame.
-	// The new client must decode it without error and report zero usage.
+	// A daemon predating the cost/duration fields sends a bare result frame;
+	// the client must decode it and report zero usage.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"type":"result","data":"ok"}` + "\n"))
 	}))

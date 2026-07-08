@@ -9,32 +9,24 @@ import (
 	"github.com/okedeji/agentcage/internal/mcp"
 )
 
-// elicitDeadline bounds how long an agent's mid-call question waits for the
-// operator before the call fails closed. A human is on the other end, so this
-// is minutes, not seconds. Past it the elicit errors, the tool call returns
-// that error, and the cage is freed rather than pinned forever on a question
-// nobody is going to answer.
+// elicitDeadline bounds a mid-call question's wait for the operator. A human
+// answers, so minutes, not seconds; past it the elicit errors and the cage is
+// freed rather than pinned forever on an unanswered question.
 const elicitDeadline = 3 * time.Minute
 
-// elicitRouter carries one served run's mid-call questions from the agent to
-// whoever is driving the current call. The agent's root MCP client routes a
-// question in through route; the serve front door binds the operator's answer
-// channel for the duration of each call through bind.
-//
-// MCP's elicitation channel carries no correlation back to the call that
-// triggered it, so a run answers one eliciting call at a time: bind blocks
-// until the previous call releases. That keeps an answer going to the caller
-// that asked rather than to whoever happened to bind last, at the cost of
-// serializing calls to a served interactive agent. We accept that.
+// elicitRouter carries one served run's mid-call questions to whoever is
+// driving the current call. MCP's elicitation channel carries no correlation
+// back to the triggering call, so a run answers one eliciting call at a time:
+// bind blocks until the previous call releases. That serializes calls to a
+// served interactive agent; accepted.
 type elicitRouter struct {
 	call   sync.Mutex // held for a call's duration; serializes eliciting calls
 	mu     sync.Mutex // guards target
 	target mcp.ElicitHandler
 
-	// onEvent and runID feed the daemon's live event feed. route is the single
-	// choke point for every question, root or sub-agent, so the asked/answered
-	// pair reports here once per elicitation regardless of depth. Nil off the
-	// daemon path.
+	// onEvent and runID feed the daemon's event feed. route is the single
+	// choke point, so asked/answered report once per elicitation regardless
+	// of depth. Nil off the daemon path.
 	onEvent func(Event)
 	runID   string
 }
@@ -42,7 +34,7 @@ type elicitRouter struct {
 func newElicitRouter() *elicitRouter { return &elicitRouter{} }
 
 // bind installs target as the run's current answer channel and returns a
-// release. It blocks until any in-flight call releases, so only one call's
+// release. It blocks until any in-flight call releases; only one call's
 // target is ever live.
 func (r *elicitRouter) bind(target mcp.ElicitHandler) func() {
 	r.call.Lock()
@@ -58,9 +50,7 @@ func (r *elicitRouter) bind(target mcp.ElicitHandler) func() {
 }
 
 // route delivers one question to the bound caller, bounded by elicitDeadline.
-// With nothing bound, no call in flight or a path with no live operator, it
-// errors, which surfaces to the agent as a failed elicit and fails the call
-// closed.
+// Nothing bound errors, failing the call closed.
 func (r *elicitRouter) route(ctx context.Context, q *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
 	r.mu.Lock()
 	target := r.target

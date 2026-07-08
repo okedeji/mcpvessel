@@ -121,7 +121,6 @@ several servers under one agent: a single brain reasons across all their tools.`
 	return cmd
 }
 
-// reasoningParams carry what a --reasoning import needs to build its bundles.
 type reasoningParams struct {
 	sources    []string // one SOURCE per tool collection the agent reasons over
 	entrypoint string   // OCI launch override, valid only for a single source
@@ -134,11 +133,8 @@ type reasoningParams struct {
 	noReuse    bool // skip discovery and always wrap fresh tool collections
 }
 
-// buildReasoningImport builds a --reasoning import: one reasoning agent (under
-// -t) that USES a tool collection per source. Each source is either an existing
-// wrapper the operator reuses or a fresh one built here; the agent's harness
-// aggregates every collection's tools into one menu, so a single brain reasons
-// across all of them. -t is required because each collection and the agent need
+// buildReasoningImport builds one reasoning agent (under -t) that USES a tool
+// collection per source. -t is required: each collection and the agent need
 // concrete refs.
 func buildReasoningImport(cmd *cobra.Command, p reasoningParams) error {
 	prefix, version, err := splitAgentTag(p.agentTag)
@@ -158,8 +154,8 @@ func buildReasoningImport(cmd *cobra.Command, p reasoningParams) error {
 		if err != nil {
 			return err
 		}
-		// Distinct refs feed distinct AGENTCAGE_USES_<ALIAS>_URL vars; a collision
-		// would silently hide one collection's tools from the harness.
+		// Distinct refs feed distinct AGENTCAGE_USES_<ALIAS>_URL vars; a
+		// collision would silently hide one collection's tools.
 		alias := refAlias(ref)
 		if usedAlias[alias] {
 			return fmt.Errorf("two tools resolve to the same USES name %q; give them distinct names or import one separately", alias)
@@ -181,9 +177,8 @@ func buildReasoningImport(cmd *cobra.Command, p reasoningParams) error {
 	})
 }
 
-// reuseOrWrapTool resolves one source to a USES-able tool-collection ref: an
-// existing wrapper the operator chose to reuse, or a fresh collection built
-// under <prefix><slug>-tools:<version> in its own directory beneath parent.
+// reuseOrWrapTool resolves one source to a tool-collection ref: an existing
+// wrapper the operator reuses, or a fresh <prefix><slug>-tools:<version> build.
 func reuseOrWrapTool(cmd *cobra.Command, p reasoningParams, arg, parent, prefix, version string, usedSlug map[string]bool) (string, error) {
 	source, launch := parseToolArg(arg)
 	src, err := resolveImportSource(cmd.Context(), source)
@@ -226,10 +221,7 @@ func reuseOrWrapTool(cmd *cobra.Command, p reasoningParams, arg, parent, prefix,
 	return toolTag, nil
 }
 
-// parseToolArg splits a tool source from an optional launch command carried
-// inline as "SOURCE -- cmd args". It is the per-tool counterpart to --entrypoint,
-// so an oci --tool (whose launch cannot be inferred) can state its own without a
-// flag that could only apply to one of several tools.
+// parseToolArg splits "SOURCE -- cmd args", the per-tool --entrypoint.
 func parseToolArg(arg string) (source string, launch []string) {
 	const sep = " -- "
 	if i := strings.Index(arg, sep); i >= 0 {
@@ -238,9 +230,7 @@ func parseToolArg(arg string) (source string, launch []string) {
 	return strings.TrimSpace(arg), nil
 }
 
-// writeToolCollection generates the wrapping Agentfile and drops the bridge
-// binary beside it, plus the offline launcher for an npm import, the files the
-// tool-collection image is built from.
+// writeToolCollection writes the files the tool-collection image is built from.
 func writeToolCollection(dir string, src wrap.Source) error {
 	if err := writeGeneratedAgentfile(dir, src); err != nil {
 		return err
@@ -257,9 +247,8 @@ func writeToolCollection(dir string, src wrap.Source) error {
 	return nil
 }
 
-// splitAgentTag pulls the namespace prefix and version off the reasoning agent's
-// ref so a per-tool collection can be named under the same namespace and version,
-// e.g. @me/agent:0.1 yields "@me/" and "0.1" for @me/<slug>-tools:0.1.
+// splitAgentTag pulls the namespace prefix and version off the agent's ref so
+// tool collections share them: @me/agent:0.1 yields "@me/" and "0.1".
 func splitAgentTag(agentTag string) (prefix, version string, err error) {
 	colon := strings.LastIndex(agentTag, ":")
 	if colon < 0 {
@@ -273,8 +262,7 @@ func splitAgentTag(agentTag string) (prefix, version string, err error) {
 	return name[:slash+1], version, nil
 }
 
-// toolSlug names a tool collection after the server it wraps: the last path
-// segment of the package identifier, reduced to a reference-safe slug.
+// toolSlug reduces the identifier's last path segment to a reference-safe slug.
 func toolSlug(src wrap.Source) string {
 	id := src.Identifier
 	if i := strings.LastIndex(id, "/"); i >= 0 {
@@ -287,8 +275,7 @@ func toolSlug(src wrap.Source) string {
 	return slug
 }
 
-// uniqueSlug disambiguates two sources whose names slug to the same thing, so
-// each tool collection gets a distinct ref and USES alias.
+// uniqueSlug disambiguates sources whose names slug identically.
 func uniqueSlug(slug string, used map[string]bool) string {
 	s := slug
 	for n := 2; used[s]; n++ {
@@ -298,9 +285,8 @@ func uniqueSlug(slug string, used map[string]bool) string {
 	return s
 }
 
-// refAlias mirrors the runtime's USES alias (the ref's last path segment) so the
-// import can detect when two collections would collide on one env var before it
-// builds an agent whose harness can only see one of them.
+// refAlias mirrors the runtime's USES alias (the ref's last path segment) so
+// an env-var collision is caught before the agent is built.
 func refAlias(ref string) string {
 	if i := strings.LastIndex(ref, ":"); i >= 0 {
 		ref = ref[:i]
@@ -325,8 +311,8 @@ func slugSanitize(s string) string {
 	return strings.Trim(b.String(), "-")
 }
 
-// writeReasoningAgent writes the reasoning agent's Agentfile and the harness
-// source into dir. A custom harness path overrides the built-in one.
+// writeReasoningAgent writes the reasoning agent's Agentfile and harness into
+// dir. A custom harness path overrides the built-in one.
 func writeReasoningAgent(dir string, params reasoner.Params, harnessPath string) error {
 	content, err := reasoner.Agentfile(params)
 	if err != nil {
@@ -356,9 +342,8 @@ func writeReasoningAgent(dir string, params reasoner.Params, harnessPath string)
 	return nil
 }
 
-// resolveImportSource turns the operator's SOURCE into a wrappable package. A
-// direct coordinate is parsed as-is; anything else is resolved against the MCP
-// Registry, which is also where a remote-only server is refused.
+// resolveImportSource parses a direct coordinate as-is; anything else resolves
+// against the MCP Registry.
 func resolveImportSource(ctx context.Context, source string) (wrap.Source, error) {
 	if src, ok, err := wrap.ParseCoordinate(source); err != nil {
 		return wrap.Source{}, err
@@ -374,9 +359,9 @@ func resolveImportSource(ctx context.Context, source string) (wrap.Source, error
 	return sourceFromServer(server)
 }
 
-// sourceFromServer picks a wrappable package off a registry entry. It refuses a
-// remote-only server by name, pointing at the supported path, and refuses one
-// that ships only package types agentcage cannot wrap rather than guessing.
+// sourceFromServer picks a wrappable stdio package off a registry entry,
+// refusing remote-only servers and unsupported package types rather than
+// guessing.
 func sourceFromServer(s *mcpregistry.Server) (wrap.Source, error) {
 	for _, p := range s.Packages {
 		if p.Transport.Type != "" && p.Transport.Type != "stdio" {
@@ -389,8 +374,8 @@ func sourceFromServer(s *mcpregistry.Server) (wrap.Source, error) {
 				Identifier: p.Identifier,
 				Version:    p.Version,
 				Env:        envFromInputs(p.EnvironmentVariables),
-				// The reverse-DNS name is the stable cross-user identity, so it,
-				// not the package coordinate, is the marker for a registry import.
+				// The reverse-DNS name, not the package coordinate, is the
+				// stable cross-user identity, so it is the import marker.
 				Origin: s.Name,
 			}, nil
 		}
@@ -402,8 +387,7 @@ func sourceFromServer(s *mcpregistry.Server) (wrap.Source, error) {
 	return wrap.Source{}, fmt.Errorf("%s ships no package agentcage can wrap (import supports npm, pypi, and oci over stdio)", s.Name)
 }
 
-// envFromInputs maps a package's declared environment variables onto the
-// Agentfile's inputs: a secret becomes SECRETS, a plain one ENV with its default.
+// envFromInputs maps declared env vars onto Agentfile inputs (SECRETS or ENV).
 func envFromInputs(vars []mcpregistry.KeyValueInput) []wrap.EnvVar {
 	out := make([]wrap.EnvVar, 0, len(vars))
 	for _, v := range vars {
@@ -418,9 +402,8 @@ func envFromInputs(vars []mcpregistry.KeyValueInput) []wrap.EnvVar {
 	return out
 }
 
-// printImportInputs tells the operator what the imported agent needs before they
-// run it: the ENV and SECRETS the wrapped server declares, each with its role and
-// description, plus how to supply them. Silent when the server declares none.
+// printImportInputs lists the ENV and SECRETS the wrapped server declares and
+// how to supply them. Silent when it declares none.
 func printImportInputs(w io.Writer, env []wrap.EnvVar) {
 	if len(env) == 0 {
 		return
@@ -449,10 +432,8 @@ func printImportInputs(w io.Writer, env []wrap.EnvVar) {
 	_, _ = fmt.Fprintln(w, "Give env at run with: agentcage run <agent> --env NAME=value")
 }
 
-// writeGeneratedAgentfile renders the wrapping Agentfile and writes it into dir.
-// It refuses to overwrite an existing Agentfile: an import that clobbered a
-// hand-edited one would erase exactly the customization the operator was told is
-// theirs to keep.
+// writeGeneratedAgentfile renders the wrapping Agentfile into dir. It refuses
+// to overwrite an existing Agentfile: a re-import must not clobber hand edits.
 func writeGeneratedAgentfile(dir string, src wrap.Source) error {
 	content, err := wrap.Agentfile(src)
 	if err != nil {
@@ -471,10 +452,9 @@ func writeGeneratedAgentfile(dir string, src wrap.Source) error {
 	return nil
 }
 
-// writeBridgeBinary copies the static linux agentcage binary beside the generated
-// Agentfile. The wrapped ENTRYPOINT runs it as the stdio->HTTP bridge (see
-// wrap.bridgeEntrypoint) so an imported stdio-only server can serve as a USES
-// sub-agent; COPY . /agent carries it into the image next to the WORKDIR.
+// writeBridgeBinary copies the static linux agentcage binary beside the
+// Agentfile; the wrapped ENTRYPOINT runs it as the stdio->HTTP bridge (see
+// wrap.bridgeEntrypoint) and COPY . /agent carries it into the image.
 func writeBridgeBinary(dir string) error {
 	bin, err := runtime.FindLinuxBinary()
 	if err != nil {
@@ -491,9 +471,7 @@ func writeBridgeBinary(dir string) error {
 	return nil
 }
 
-// defaultReasoningDir is the parent directory a --reasoning import writes into
-// when --dir is not given: ./<agent-name> from -t, holding one directory per tool
-// collection and the reasoning agent's own.
+// defaultReasoningDir is ./<agent-name> from -t.
 func defaultReasoningDir(agentTag string) string {
 	name := agentTag
 	if i := strings.LastIndex(name, ":"); i >= 0 {
@@ -509,8 +487,7 @@ func defaultReasoningDir(agentTag string) string {
 	return "." + string(filepath.Separator) + name
 }
 
-// defaultImportDir derives a directory name from the package's last path
-// segment, so 'import npm:@scope/server-fs' lands in ./server-fs.
+// defaultImportDir derives ./<name> from the package's last path segment.
 func defaultImportDir(src wrap.Source) string {
 	name := src.Identifier
 	if i := strings.LastIndex(name, "/"); i >= 0 {

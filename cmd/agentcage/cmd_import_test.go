@@ -24,8 +24,8 @@ func TestResolveImportSource_DirectCoordinate(t *testing.T) {
 	}
 }
 
-// stubRegistryServer serves one entry at /v0.1/servers so an import resolves a
-// reverse-DNS ref without the real registry.
+// stubRegistryServer serves one entry at /v0.1/servers so a reverse-DNS ref
+// resolves without the real registry.
 func stubRegistryServer(t *testing.T, entry map[string]any) {
 	t.Helper()
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

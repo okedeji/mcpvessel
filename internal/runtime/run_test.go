@@ -39,8 +39,6 @@ func TestDeriveRunID_StableForSameBundleAndHash(t *testing.T) {
 	}
 }
 
-// uniqueSuffix is what makes a full run id distinct per invocation even when
-// deriveRunID is identical, so repeated runs of one bundle do not collide.
 func TestUniqueSuffix_DiffersAcrossCalls(t *testing.T) {
 	seen := make(map[string]bool, 200)
 	for i := 0; i < 200; i++ {
@@ -87,7 +85,7 @@ func TestSanitizeRef(t *testing.T) {
 		{"my.agent", "my.agent"},
 		{"my agent", "my-agent"},
 		{"weird@name", "weird-name"},
-		{"日本語", "---"}, // three runes, each → one dash
+		{"日本語", "---"}, // one dash per rune
 		{"", "agent"},
 	}
 	for _, tc := range cases {

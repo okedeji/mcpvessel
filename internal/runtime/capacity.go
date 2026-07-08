@@ -8,9 +8,8 @@ import (
 	"github.com/okedeji/agentcage/internal/config"
 )
 
-// usableMemory applies the operator's machine.memory_gib to the machine's real
-// memory and warns when the setting asks for more than the machine has. Both the
-// tree and single-cage boot paths read it before admitting a run.
+// usableMemory applies machine.memory_gib to the machine's real memory,
+// warning when the setting asks for more than the machine has.
 func usableMemory(p Provisioner, machineMemCap int64, stderr io.Writer) (int64, error) {
 	avail, err := p.AvailableMemory()
 	if err != nil {
@@ -24,9 +23,9 @@ func usableMemory(p Provisioner, machineMemCap int64, stderr io.Writer) (int64, 
 	return usable, nil
 }
 
-// soloBaselineMemory is the always-on memory a single-cage run needs: the
-// agent's cage, plus the LLM gateway if it reasons and the egress proxy if it
-// declares allow:. There is no MCP gateway, since a lone agent has no USES tree.
+// soloBaselineMemory is a single-cage run's always-on memory: the cage, plus
+// the LLM gateway if it reasons and the egress proxy if it declares allow:.
+// No MCP gateway, a lone agent has no USES tree.
 func soloBaselineMemory(rootMem int64, reasons, egress bool) int64 {
 	total := rootMem
 	gw := defaultGatewayCap.MemBytes()
@@ -39,9 +38,8 @@ func soloBaselineMemory(rootMem int64, reasons, egress bool) int64 {
 	return total
 }
 
-// CageMemoryBytes is the memory one cage gets: its manifest's RESOURCES hint, or
-// the runtime default when it states none. inspect shows it per agent; the tree
-// view sums it across the compulsory set for a run's baseline.
+// CageMemoryBytes is the memory one cage gets: its manifest's RESOURCES hint,
+// or the runtime default when it states none.
 func CageMemoryBytes(m *bundle.Manifest) int64 {
 	if m != nil && m.Agentfile.Resources != nil {
 		if b := (config.Cap{Mem: m.Agentfile.Resources.Mem}).MemBytes(); b > 0 {
@@ -51,17 +49,15 @@ func CageMemoryBytes(m *bundle.Manifest) int64 {
 	return defaultAgentCap.MemBytes()
 }
 
-// treeBaselineMemory is the always-on memory a run of this tree needs: the root
-// cage, the gateway singletons the tree requires, and the egress sub-agent cages
-// (compulsory, since the egress proxy keys them by a stable IP). Elastic
-// sub-agents are not counted: they activate on demand, bounded by the live-cage
-// cap. It uses the authors' RESOURCES hints (or the default), an advisory
-// estimate the operator's config may adjust at run time.
+// treeBaselineMemory is the always-on memory a tree run needs: the root cage,
+// the gateway singletons the tree requires, and the egress sub-agent cages
+// (compulsory, the egress proxy keys them by a stable IP). Elastic sub-agents
+// activate on demand and are not counted.
 func treeBaselineMemory(tree *runTree) int64 {
 	total := CageMemoryBytes(tree.Nodes[tree.Root].Manifest)
 	gw := defaultGatewayCap.MemBytes()
 	if len(tree.Edges) > 0 {
-		total += gw // the MCP gateway is present in any USES tree
+		total += gw // MCP gateway, present in any USES tree
 	}
 	reasons, egress := false, false
 	for _, n := range tree.Nodes {
@@ -89,24 +85,19 @@ func treeBaselineMemory(tree *runTree) int64 {
 	return total
 }
 
-// hostMemoryReserve is held back from the machine's total when deciding whether a
-// run fits: the VM's own kernel, containerd, and buildkitd are not cages but they
-// occupy memory, so the cages get the rest. A flat gibibyte is a deliberate
-// over-estimate; better to refuse a run that would have just fit than to OOM the
-// host mid-run.
+// hostMemoryReserve is held back for the kernel, containerd, and buildkitd.
+// A flat gibibyte deliberately over-estimates: better to refuse a run that
+// would have just fit than to OOM the host mid-run.
 const hostMemoryReserve = 1 << 30
 
-// compulsoryMemory sums the memory a run's always-on cages need: the root, the
-// gateway singletons the tree requires, and every kept-warm sub-agent. This is
-// the baseline that must fit the machine before the run boots; the elastic cages
-// grow into whatever is left. Banned agents never boot and are already absent
-// from plan.Agents, so a BAN shrinks this; a tool-level DENY does not, since the
-// agent still runs.
+// compulsoryMemory sums the run's always-on cages: root, required gateway
+// singletons, kept-warm sub-agents. A BAN shrinks this (the agent is absent
+// from plan.Agents); a tool-level DENY does not, the agent still runs.
 func compulsoryMemory(plan *runPlan) int64 {
 	total := plan.RootCap.MemBytes()
 
 	gw := defaultGatewayCap.MemBytes()
-	total += gw // the MCP gateway is always present in a USES tree
+	total += gw // MCP gateway, always present in a USES tree
 	if len(plan.LLMAgents) > 0 {
 		total += gw
 	}
@@ -122,9 +113,8 @@ func compulsoryMemory(plan *runPlan) int64 {
 	return total
 }
 
-// maxElasticMem is the largest memory cap among the run's elastic cages, the
-// worst-case size one activation can take. Dividing the leftover memory by it
-// gives the most elastic cages that fit without risking OOM.
+// maxElasticMem is the largest cap among the run's elastic cages, the worst
+// case one activation can take.
 func maxElasticMem(plan *runPlan) int64 {
 	var max int64
 	for _, a := range plan.Agents {
@@ -138,12 +128,9 @@ func maxElasticMem(plan *runPlan) int64 {
 	return max
 }
 
-// effectiveAvailable applies the operator's machine.memory_gib to the machine's
-// real memory. A setting below it caps capacity, reserving the rest of the host
-// for other things. A setting above it asks for more than the machine has, so it
-// is ignored (the real amount is used) and flagged true, which lets the caller
-// tell the operator to recreate the VM (macOS) or lower the setting (Linux).
-// Zero means no setting: use the real memory as-is.
+// effectiveAvailable applies machine.memory_gib to the real memory. A setting
+// below it caps capacity; a setting above it is ignored and flagged true.
+// Zero means no setting.
 func effectiveAvailable(avail, configured int64) (int64, bool) {
 	if configured <= 0 {
 		return avail, false
@@ -154,10 +141,9 @@ func effectiveAvailable(avail, configured int64) (int64, bool) {
 	return configured, false
 }
 
-// fitElastic is the memory arithmetic the admission wraps, split out so it is
-// testable without a provisioner. The baseline must fit the usable memory; the
-// elastic cap is then bounded by the leftover so on-demand growth cannot OOM the
-// machine even when the configured cap is higher.
+// fitElastic is the admission arithmetic, split out to be testable without a
+// provisioner. The baseline must fit; the elastic cap is then bounded by the
+// leftover so on-demand growth cannot OOM the machine.
 func fitElastic(available int64, plan *runPlan, configuredMaxLive int) (int, error) {
 	usable := available - hostMemoryReserve
 	need := compulsoryMemory(plan)

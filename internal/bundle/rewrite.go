@@ -9,15 +9,12 @@ import (
 	"os"
 )
 
-// RewriteManifest rewrites a built bundle in place, replacing its manifest.json
-// with the result of applying mutate to the decoded manifest. Every files/
-// entry is copied through byte for byte, so files_hash is unchanged and the
-// bundle keeps the same content-addressed store key. This is how a full-suite
-// eval run stamps its results into a bundle that already shipped its source.
-//
-// Safe against a stale write: the rewrite stages a temp file next to the
-// bundle and renames on success, the same discipline as writeBundle, so an
-// interrupted rewrite never leaves a truncated bundle in the store.
+// RewriteManifest replaces a bundle's manifest.json in place, copying every
+// files/ entry through byte for byte so files_hash and the content-addressed
+// store key are unchanged. This is how a full-suite eval run stamps results
+// into a bundle that already shipped. Staged to a temp file and renamed on
+// success, same discipline as writeBundle, so an interrupted rewrite never
+// leaves a truncated bundle in the store.
 func RewriteManifest(bundlePath string, mutate func(*Manifest) error) error {
 	in, err := os.Open(bundlePath)
 	if err != nil {
@@ -98,8 +95,7 @@ func RewriteManifest(bundlePath string, mutate func(*Manifest) error) error {
 	return nil
 }
 
-// copyEntry writes a tar entry's header and body through unchanged. The header
-// is cloned so the copy carries the original mode, size, and modtime.
+// copyEntry writes a tar entry's header and body through unchanged.
 func copyEntry(tw *tar.Writer, tr *tar.Reader, hdr *tar.Header) error {
 	clone := *hdr
 	if err := tw.WriteHeader(&clone); err != nil {

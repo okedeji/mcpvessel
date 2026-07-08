@@ -6,9 +6,8 @@ import (
 	"github.com/okedeji/agentcage/internal/bundle"
 )
 
-// Server is the MCP Registry's server.json record. Field names and casing
-// follow the registry's v0.1 schema on the wire; this is the one place that
-// spelling lives, so a schema bump changes tags here and nowhere else.
+// Server is the MCP Registry's server.json record, spelled exactly as the
+// v0.1 wire schema; a schema bump changes tags here and nowhere else.
 type Server struct {
 	Schema      string         `json:"$schema,omitempty"`
 	Name        string         `json:"name"`
@@ -28,9 +27,8 @@ type Repository struct {
 	Source string `json:"source,omitempty"`
 }
 
-// Package is one way to obtain a server: an npm/PyPI/OCI artifact plus how to
-// launch it. import reads registryType and identifier to pick a wrapping
-// strategy; publish writes a single oci package pointing at the agent's bundle.
+// Package is one way to obtain a server: an npm/PyPI/OCI artifact plus how
+// to launch it.
 type Package struct {
 	RegistryType         string          `json:"registryType"`
 	RegistryBaseURL      string          `json:"registryBaseUrl,omitempty"`
@@ -44,23 +42,22 @@ type Package struct {
 	EnvironmentVariables []KeyValueInput `json:"environmentVariables,omitempty"`
 }
 
-// Transport is how a launched package speaks MCP. An agentcage agent is stdio;
-// a package that only offers streamable-http or sse cannot be wrapped as one.
+// Transport is how a launched package speaks MCP. Only stdio can be
+// wrapped as an agentcage agent.
 type Transport struct {
 	Type string `json:"type"`
 	URL  string `json:"url,omitempty"`
 }
 
-// Remote is a hosted MCP endpoint. An entry with only remotes and no packages
-// is code agentcage cannot run in a cage, which is why import refuses it.
+// Remote is a hosted MCP endpoint. An entry with only remotes has no code
+// to run in a cage.
 type Remote struct {
 	Type string `json:"type"`
 	URL  string `json:"url"`
 }
 
-// KeyValueInput is a declared input (an env var or argument). import maps these
-// onto the generated Agentfile's ENV and SECRETS so a wrapped server documents
-// the same inputs it always did.
+// KeyValueInput is a declared input (env var or argument), mapped onto the
+// generated Agentfile's ENV and SECRETS.
 type KeyValueInput struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
@@ -71,8 +68,8 @@ type KeyValueInput struct {
 	Placeholder string `json:"placeholder,omitempty"`
 }
 
-// Argument is a launch argument. import does not synthesize arguments, so only
-// the fields it may echo through are modeled.
+// Argument is a launch argument; only the fields import echoes through are
+// modeled.
 type Argument struct {
 	Type        string `json:"type,omitempty"`
 	Name        string `json:"name,omitempty"`
@@ -81,8 +78,7 @@ type Argument struct {
 	Description string `json:"description,omitempty"`
 }
 
-// serverList is the GET /servers envelope. Only the fields agentcage reads are
-// modeled; the registry may send more and the decoder ignores it.
+// serverList is the GET /servers envelope; unmodeled fields are ignored.
 type serverList struct {
 	Servers  []serverEnvelope `json:"servers"`
 	Metadata struct {
@@ -91,43 +87,38 @@ type serverList struct {
 	} `json:"metadata"`
 }
 
-// serverEnvelope is how the list endpoint wraps each entry: the server.json
-// under "server", and registry-assigned metadata (status, timestamps) under a
-// sibling "_meta". The publisher's own _meta, where an eval stamp rides, lives
-// inside the server object, so unwrapping Server keeps that signal.
+// serverEnvelope wraps each list entry: the server.json under "server",
+// registry-assigned metadata under a sibling "_meta". The publisher's own
+// _meta, where the eval stamp rides, lives inside the server object.
 type serverEnvelope struct {
 	Server Server         `json:"server"`
 	Meta   map[string]any `json:"_meta,omitempty"`
 }
 
 const (
-	// evalsMetaKey namespaces the eval signal agentcage stamps onto a public
-	// entry, reverse-DNS per the registry's _meta extension rule so it never
-	// collides with another publisher's fields.
+	// evalsMetaKey holds the eval signal agentcage stamps onto a public
+	// entry, reverse-DNS namespaced per the registry's _meta extension rule.
 	evalsMetaKey = "io.agentcage/evals"
 
 	// publisherMetaKey is the registry's standard slot for who published and
 	// with what tool.
 	publisherMetaKey = "io.modelcontextprotocol.registry/publisher-provided"
 
-	// importedFromMetaKey carries the wrapped server's canonical identity so a
-	// published wrapper is discoverable as "the wrapped X", the signal a later
-	// import filters on to offer cross-user reuse. Reverse-DNS namespaced like
-	// the eval key so it never collides with another publisher's fields.
+	// importedFromMetaKey carries the wrapped server's canonical identity so
+	// a published wrapper is discoverable as "the wrapped X". Namespaced like
+	// the eval key.
 	importedFromMetaKey = "io.agentcage/imported_from"
 
 	// maxDescription is the registry's server.json description ceiling.
 	maxDescription = 100
 
-	// schemaURI is the server.json schema the registry requires in the $schema
-	// field on publish. It is a required field, so publish 422s without it.
+	// schemaURI is required in $schema on publish; the registry 422s without it.
 	schemaURI = "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json"
 )
 
-// ServerJSONFromManifest builds the registry record for a public agent: name is
-// the reverse-DNS namespace the caller proved it owns, ociRef and version point
-// at the pushed bundle, and any eval stamp rides along under _meta so registry
-// browsers can show the quality signal.
+// ServerJSONFromManifest builds the registry record for a public agent:
+// name is the reverse-DNS namespace the caller proved it owns, ociRef and
+// version point at the pushed bundle, any eval stamp rides under _meta.
 func ServerJSONFromManifest(m bundle.Manifest, name, ociRef, version string) *Server {
 	meta := map[string]any{
 		publisherMetaKey: map[string]any{"tool": "agentcage"},
@@ -145,8 +136,8 @@ func ServerJSONFromManifest(m bundle.Manifest, name, ociRef, version string) *Se
 		Version:     version,
 		Packages: []Package{{
 			RegistryType: "oci",
-			// The registry requires an OCI package's version to ride in the
-			// identifier (ghcr.io/owner/name:tag), not a separate version field.
+			// The registry wants an OCI package's version in the identifier
+			// (ghcr.io/owner/name:tag), not the version field.
 			Identifier: ociRef + ":" + version,
 			Transport:  Transport{Type: "stdio"},
 		}},
@@ -154,10 +145,8 @@ func ServerJSONFromManifest(m bundle.Manifest, name, ociRef, version string) *Se
 	}
 }
 
-// OCIReference returns the OCI coordinates an entry's oci package points at, so
-// reverse-DNS resolution can hand a fully-qualified ref to the OCI client. It
-// reports false when the entry has no oci package, which is the case for a
-// server agentcage did not publish.
+// OCIReference returns the coordinates of the entry's oci package, or
+// ok=false when it has none (a server agentcage did not publish).
 func (s *Server) OCIReference() (ref, version string, ok bool) {
 	for _, p := range s.Packages {
 		if p.RegistryType == "oci" {
@@ -167,10 +156,9 @@ func (s *Server) OCIReference() (ref, version string, ok bool) {
 	return "", "", false
 }
 
-// EvalSummary renders the eval signal an author stamped onto the entry, as a
-// compact "47/50 j0.83" for a search row, or "" when none was stamped. It reads
-// the generic map the wire decodes into, so it survives a round-trip through the
-// registry that the typed publish side does not preserve.
+// EvalSummary renders the stamped eval signal as a compact "47/50 j0.83",
+// or "" when none. It reads the generic wire map, which survives the
+// registry round-trip where the typed publish shape does not.
 func (s *Server) EvalSummary() string {
 	raw, ok := s.Meta[evalsMetaKey].(map[string]any)
 	if !ok {
@@ -191,18 +179,15 @@ func (s *Server) EvalSummary() string {
 	return out
 }
 
-// ImportedFrom returns the canonical identity of the server this entry wraps, or
-// "" when the entry is not an agentcage wrapper. It reads the generic map the
-// wire decodes into, so it survives the registry round-trip, and is how import
-// filters search hits down to wrappers of the very server being imported.
+// ImportedFrom returns the canonical identity of the server this entry
+// wraps, or "" when the entry is not an agentcage wrapper.
 func (s *Server) ImportedFrom() string {
 	from, _ := s.Meta[importedFromMetaKey].(string)
 	return from
 }
 
-// description resolves the entry's required 1-100 char description from the
-// agent's META, falling back to a name-derived line so publish never fails the
-// registry's length rule on a missing META.
+// description resolves the required 1-100 char description from META, with
+// a name-derived fallback so publish never fails the length rule.
 func description(m bundle.Manifest, name string) string {
 	d := m.Agentfile.Meta["description"]
 	if d == "" {

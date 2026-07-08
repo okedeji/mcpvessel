@@ -28,7 +28,7 @@ vendor/
 *~
 .claude
 .docs
-DESIGN.md
+LAUNCH.md
 
 # OS
 .DS_Store

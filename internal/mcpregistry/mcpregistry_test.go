@@ -145,8 +145,7 @@ func TestServerJSONFromManifest_MapsFields(t *testing.T) {
 	if s.Schema == "" {
 		t.Error("$schema is required by the registry on publish but was not set")
 	}
-	// The OCI package embeds the version in the identifier, per the registry's
-	// rule, so no separate version comes back.
+	// The version rides in the identifier, per the registry's rule.
 	ref, version, ok := s.OCIReference()
 	if !ok || ref != "ghcr.io/a/fs:0.1" || version != "" {
 		t.Errorf("OCIReference = %q %q %v, want the version embedded in the identifier", ref, version, ok)
@@ -163,7 +162,7 @@ func TestServerJSONFromManifest_StampsImportedFrom(t *testing.T) {
 		t.Errorf("ImportedFrom = %q, want the marker stamped into _meta and read back", got)
 	}
 
-	// A non-wrapper carries no marker, so reuse discovery never matches it.
+	// A non-wrapper carries no marker.
 	plain := ServerJSONFromManifest(bundle.Manifest{}, "io.github.a/x", "ghcr.io/a/x", "0.1")
 	if got := plain.ImportedFrom(); got != "" {
 		t.Errorf("ImportedFrom = %q, want empty for a non-wrapper", got)

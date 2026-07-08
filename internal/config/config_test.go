@@ -108,7 +108,6 @@ func TestValidate_Rejects(t *testing.T) {
 }
 
 func TestCages_EffectiveResolvesZeroToDefault(t *testing.T) {
-	// Zero means "no operator value," so each knob falls to the runtime default.
 	var cg Cages
 	if cg.EffectiveMaxLive() != DefaultMaxLiveCages {
 		t.Errorf("EffectiveMaxLive = %d, want default %d", cg.EffectiveMaxLive(), DefaultMaxLiveCages)
@@ -119,7 +118,6 @@ func TestCages_EffectiveResolvesZeroToDefault(t *testing.T) {
 	if cg.EffectiveIdleTTL() != DefaultIdleTTLSeconds*time.Second {
 		t.Errorf("EffectiveIdleTTL = %v, want default", cg.EffectiveIdleTTL())
 	}
-	// A set value wins over the default.
 	set := Cages{MaxLive: 4, Prewarm: 2, IdleTTLSeconds: 60}
 	if set.EffectiveMaxLive() != 4 || set.EffectivePrewarm() != 2 || set.EffectiveIdleTTL() != 60*time.Second {
 		t.Errorf("set values not honored: %+v", set)
@@ -138,7 +136,7 @@ func TestCages_ValidateRejectsNegative(t *testing.T) {
 			t.Errorf("expected a cage policy error for %+v", c.Cages)
 		}
 	}
-	// Zero is valid (means default), not rejected.
+	// Zero means default, not rejected.
 	if err := (&Config{Cages: Cages{}}).Validate(); err != nil {
 		t.Errorf("zero cage policy rejected: %v", err)
 	}

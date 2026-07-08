@@ -49,8 +49,7 @@ func TestRunBuild_HappyPath(t *testing.T) {
 
 	out := filepath.Join(t.TempDir(), "researcher.agent")
 	var buf, errBuf bytes.Buffer
-	// --no-introspect: the packaging path under test does not boot the
-	// agent, so it needs no runtime.
+	// --no-introspect keeps the packaging path runtime-free.
 	if err := runBuild(context.Background(), &buf, &errBuf, buildConfig{srcDir: srcDir, outPath: out, mode: progress.ModePlain, noIntrospect: true}); err != nil {
 		t.Fatalf("runBuild: %v", err)
 	}
@@ -70,10 +69,6 @@ func TestRunBuild_HappyPath(t *testing.T) {
 	}
 }
 
-// TestBuildToStore_TagIndexed builds into a store rooted at a temp
-// AGENTCAGE_HOME and asserts the bundle lands content-addressed, the -t ref
-// resolves back to it, and the result line names the ref. --no-introspect
-// keeps it runtime-free.
 func TestBuildToStore_TagIndexed(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("AGENTCAGE_HOME", home)

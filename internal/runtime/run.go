@@ -20,105 +20,71 @@ import (
 	"github.com/okedeji/agentcage/internal/mcp"
 )
 
-// RunInput drives Acquire. Mostly mirrors the CLI's `agentcage run` and
-// `agentcage call` flags.
+// RunInput drives Acquire; it mirrors the CLI's run and call flags.
 type RunInput struct {
-	// BundlePath is the .agent file the operator wants to run.
 	BundlePath string
 
-	// Budget is the operator's concrete cap on the run's LLM spend, in
-	// micro-USD. It overrides the agent's advisory BUDGET; 0 means the
-	// operator set none and the advisory (or unbounded) applies.
+	// Budget caps LLM spend in micro-USD; 0 defers to the agent's advisory BUDGET.
 	Budget int64
 
-	// Env and Secrets are the operator's value pools for the run. The runtime
-	// injects into each agent only the names that agent's manifest declares,
-	// so a value is never visible to an agent that did not ask for it.
+	// Env and Secrets are operator value pools; each agent receives only the
+	// names its manifest declares.
 	Env     map[string]string
 	Secrets map[string]string
 
-	// Resources is the operator's --memory/--cpus/--pids cap for this run. It
-	// overrides the configured default cap per field; a per-agent config cap
-	// still wins, since it is the more specific choice. Empty fields leave the
-	// configured (then runtime) default in place.
+	// Resources overrides the default cap per field; a per-agent config cap
+	// still wins.
 	Resources config.Cap
 
-	// RunID names the containerd container; if empty Run derives one
-	// from Name plus a unique suffix.
+	// RunID names the container; empty derives one from Name plus a unique suffix.
 	RunID string
 
-	// Name is the friendly base the derived run id reads as, the agent's repo
-	// or file name (e.g. "echo") rather than the store's content-hash filename.
-	// Empty falls back to the bundle path's basename.
+	// Name is the friendly base for a derived run id; empty uses the bundle basename.
 	Name string
 
-	// Managed marks this as a daemon-managed run, labeling its containers and
-	// networks so a restarted daemon can sweep a crashed predecessor's orphans.
-	// The one-shot CLI leaves it false.
+	// Managed labels containers and networks for the daemon's orphan sweep.
 	Managed bool
 
-	// Interaction is the run's loopback mode, injected into the root agent as
-	// AGENTCAGE_INTERACTION: oneshot for run/call (no follow-up), interactive
-	// for a held or served run. Empty injects nothing.
+	// Interaction is injected as AGENTCAGE_INTERACTION; empty injects nothing.
 	Interaction string
 
-	// OnEvent observes the run's in-process lifecycle: a sub-agent activating or
-	// being reaped, a question asked of the operator. The daemon sets it to feed
-	// its live event feed; every other caller leaves it nil and pays nothing.
+	// OnEvent observes the run's lifecycle events. Nil off the daemon path.
 	OnEvent func(Event)
 
-	// Record turns on full-payload capture for replay: the LLM gateway logs each
-	// call's request and response so the daemon can write the run's .replay
-	// artifact. Off by default since it is heavy; `agentcage replay record` sets it.
+	// Record enables full-payload LLM capture for replay; heavy, off by default.
 	Record bool
 
-	// Stdout / Stderr receive provisioning progress, the agent's
-	// stderr stream, and the final tool result. Callers typically
-	// pass os.Stdout and os.Stderr; tests can capture into a buffer.
 	Stdout io.Writer
 	Stderr io.Writer
 
-	// Verbose, when true, streams the underlying provisioner output
-	// (Lima's stdout/stderr on macOS) directly to Stderr instead of
-	// the clean phase UI. Operators set this with `--verbose` when
-	// the polite renderer is hiding something they need to see.
+	// Verbose streams raw provisioner output to Stderr instead of the phase UI.
 	Verbose bool
 
-	// NoCache forces every image to rebuild from scratch, ignoring both an
-	// already-built content-addressed image and BuildKit's layer cache.
+	// NoCache forces rebuilds, bypassing content-addressed images and
+	// BuildKit's layer cache.
 	NoCache bool
 
-	// LogFile opens the run's durable log once the run id is known, so the agent's
-	// own stderr (its startup and its work) is teed there for `agentcage logs`.
-	// Build progress, emitted before the agent container starts, is not. The daemon
-	// sets it; every other caller leaves it nil and the run logs to Stderr alone.
+	// LogFile opens the run's durable log once the run id is known; the agent's
+	// stderr is teed there, build progress is not. Nil logs to Stderr alone.
 	LogFile func(runID string) io.WriteCloser
 }
 
-// Session is one booted run the caller holds: the root agent's open MCP session,
-// the working set that owns the run's cages and releases the whole graph
-// (containers, networks, gateways), and the run id that names it. A one-shot
-// run/call acquires one, calls once, and releases; a held or served run keeps it
-// across many calls, releasing on stop or daemon shutdown.
+// Session is one booted run: the root agent's open MCP session and the working
+// set that owns the run's cages. Release tears down the whole graph.
 type Session struct {
 	runID string
 	root  *mcp.Client
 	ws    *workingSet
 
-	// elicit carries the root agent's mid-call questions out to the operator
-	// driving the current call. It is set only for an interactive boot, the one
-	// the serve front door makes; a one-shot run/call leaves it nil and never
-	// advertises a question channel.
+	// elicit routes the root's mid-call questions to the operator; nil (any
+	// non-interactive boot) advertises no question channel.
 	elicit *elicitRouter
 }
 
-// RunID is the run's id: the daemon's registry key and what `agentcage stop`
-// names.
+// RunID returns the run's id, the daemon's registry key.
 func (s *Session) RunID() string { return s.runID }
 
-// Warnings are the boot-time notes the operator should see. A one-shot run
-// streams them on stderr already; serve reads them here because its boot's
-// stderr is the daemon log, not the operator's terminal.
+// Warnings returns the boot-time notes the operator should see.
 func (s *Session) Warnings() []string {
 	if s.ws == nil {
 		return nil
@@ -126,17 +92,13 @@ func (s *Session) Warnings() []string {
 	return s.ws.warnings
 }
 
-// Call dispatches one tool call on the root agent's session. A one-shot run/call
-// makes exactly one; a held run serves many across its lifetime.
+// Call dispatches one tool call on the root agent's session.
 func (s *Session) Call(ctx context.Context, tool string, args map[string]any) (string, error) {
 	return s.root.CallTool(ctx, tool, args)
 }
 
-// BindElicit installs target as the operator's answer channel for one call's
-// duration and returns a release the caller defers. The serve front door wraps
-// every call to an interactive agent in it so the agent can ask the caller a
-// question mid-call. A run with no router (one-shot, or a non-serve path with no
-// live operator) binds nothing and returns a no-op release.
+// BindElicit installs target as the operator's answer channel for one call and
+// returns a release. With no router it returns a no-op.
 func (s *Session) BindElicit(target mcp.ElicitHandler) func() {
 	if s.elicit == nil {
 		return func() {}
@@ -144,35 +106,26 @@ func (s *Session) BindElicit(target mcp.ElicitHandler) func() {
 	return s.elicit.bind(target)
 }
 
-// ListTools returns the tools the held agent advertises, descriptions and input
-// schemas included. The serve front door reads them to publish a filtered
-// tools/list, so an external caller sees only the agent's public tools.
+// ListTools returns the tools the held agent advertises.
 func (s *Session) ListTools(ctx context.Context) ([]mcp.Tool, error) {
 	return s.root.ListTools(ctx)
 }
 
-// StartWorkingSet starts the run's on-demand activation, the supervisor that
-// boots inactive sub-agents as the tree calls them. The caller owns ctx: a held
-// run passes a background context so activation outlives the request that booted
-// it, a one-shot the request context so it ends with the call. A single-cage
-// run has no tree and starts nothing. Release cancels whatever this starts.
+// StartWorkingSet starts on-demand activation of inactive sub-agents. The
+// caller owns ctx; Release cancels whatever this starts. A single-cage run
+// starts nothing.
 func (s *Session) StartWorkingSet(ctx context.Context) {
 	s.ws.start(ctx)
 }
 
-// Release tears the run down. The working set stops activation, then joins every
-// cleanup step's error, so a non-zero container exit or a failed network removal
-// surfaces here.
+// Release tears the run down, joining every cleanup step's error.
 func (s *Session) Release() error {
 	return s.ws.releaseAll()
 }
 
-// Acquire extracts the bundle, boots the run (provision, build the image, start
-// the container graph, open the root's MCP session over stdio), and returns a
-// held Session. The extracted source is only read while the image builds, so it
-// is removed before returning rather than held for the run's lifetime. A boot
-// that fails partway releases what it acquired inside bootRun, so Acquire leaks
-// nothing on error.
+// Acquire extracts the bundle, boots the run, and returns a held Session. The
+// extracted source is removed before returning; a boot that fails partway
+// releases what it acquired, so Acquire leaks nothing on error.
 func Acquire(ctx context.Context, in RunInput) (*Session, error) {
 	srcDir, err := os.MkdirTemp("", "agentcage-run-*")
 	if err != nil {
@@ -185,10 +138,8 @@ func Acquire(ctx context.Context, in RunInput) (*Session, error) {
 		return nil, err
 	}
 
-	// Reparse the Agentfile from the materialized source so we get the
-	// in-memory Agentfile struct the build path expects. The manifest's
-	// AgentfileSpec is the wire format; deriving back to the struct would
-	// mean carrying the conversion in two places.
+	// The manifest carries only the wire-format spec; reparse the Agentfile
+	// struct the build path expects.
 	af, err := agentfile.ParseFile(filepath.Join(srcDir, "Agentfile"))
 	if err != nil {
 		return nil, fmt.Errorf("re-parsing bundled Agentfile: %w", err)
@@ -200,17 +151,12 @@ func Acquire(ctx context.Context, in RunInput) (*Session, error) {
 		if name == "" {
 			name = strings.TrimSuffix(filepath.Base(in.BundlePath), filepath.Ext(in.BundlePath))
 		}
-		// A unique suffix makes every invocation distinct, so repeated runs of one
-		// bundle are separate rows in ps and the history rather than overwriting a
-		// single record, and two concurrent runs never share a container name. The
-		// content hash stays in the id so the name still reads as that agent's run.
+		// The suffix keeps repeated and concurrent runs of one bundle distinct.
 		runID = deriveRunID(name, manifest.FilesHash) + "-" + uniqueSuffix()
 	}
 
-	// An interactive boot gets a question channel: the serve front door binds the
-	// operator's answer side per call, and the root client routes the agent's
-	// questions through the router below. A one-shot boot leaves both nil, so the
-	// root never advertises elicitation and an agent that tries to ask fails closed.
+	// Only an interactive boot gets a question channel; a one-shot boot never
+	// advertises elicitation, so an agent that tries to ask fails closed.
 	var router *elicitRouter
 	if in.Interaction == env.InteractionInteractive {
 		router = newElicitRouter()
@@ -247,9 +193,9 @@ func Acquire(ctx context.Context, in RunInput) (*Session, error) {
 	return &Session{runID: runID, root: client, ws: ws, elicit: router}, nil
 }
 
-// bootInput carries everything bootAgent needs to build an agent's image
-// and start it speaking MCP. Manifest is optional and used only for the
-// image's provenance labels.
+// bootInput carries everything bootAgent needs to build an agent's image and
+// start it speaking MCP. Manifest is optional, used only for the image's
+// provenance labels.
 type bootInput struct {
 	Agentfile *agentfile.Agentfile
 	Manifest  *bundle.Manifest
@@ -257,67 +203,46 @@ type bootInput struct {
 	ImageRef  string
 	RunID     string
 
-	// Network and Env place the parent on a per-run container network and
-	// inject its sub-agent URLs when the orchestrator wires a USES tree.
-	// Both are empty for a single-cage run, which keeps the parent on
-	// the default network with no injected environment.
+	// Network and Env are set by the orchestrator when wiring a USES tree;
+	// empty for a single-cage run, which stays on the default network.
 	Network string
 	Env     map[string]string
 
-	// Budget is the operator's --budget override in micro-USD; 0 falls back
-	// to the agent's advisory BUDGET.
+	// Budget is the operator's override in micro-USD; 0 falls back to the
+	// agent's advisory BUDGET.
 	Budget int64
 
-	// Cap is the attached agent's resolved resource cap, already through the
-	// operator's config. Empty only when a caller bypasses bootRun, in which
-	// case startAttachedAgent falls back to the runtime default rather than
-	// running the agent uncapped.
+	// Cap is the attached agent's resolved cap. Empty only when a caller
+	// bypasses bootRun; startAttachedAgent then applies the runtime default.
 	Cap config.Cap
 
-	// MaxLive, HostMax, and IdleTTL are the resolved cage policy the working set
-	// enforces: the per-run and host live-cage caps and the idle reap threshold.
-	// Set by bootRun from the operator's config.
+	// MaxLive, HostMax, and IdleTTL are the cage policy the working set enforces.
 	MaxLive int
 	HostMax int
 	IdleTTL time.Duration
 
-	// MachineMemCap is the operator's machine.memory_gib in bytes, 0 when unset.
-	// It caps the memory the run admits against; a value above the machine's real
-	// memory is ignored and flagged so the operator is told to recreate the VM.
+	// MachineMemCap is machine.memory_gib in bytes, 0 when unset. A value
+	// above the machine's real memory is ignored and flagged.
 	MachineMemCap int64
 
-	// OpEnv and OpSecrets are the operator's value pools, injected into an
-	// agent only for the names it declares.
+	// OpEnv and OpSecrets are operator value pools, injected per declared name.
 	OpEnv     map[string]string
 	OpSecrets map[string]string
 
-	// NoCache forces every image to rebuild even when a content-addressed
-	// image of the same source is already present.
 	NoCache bool
-
-	// Managed labels this run's containers and networks as daemon-managed so a
-	// restarted daemon can sweep a crashed predecessor's orphans.
 	Managed bool
 
-	// Interaction injects AGENTCAGE_INTERACTION into the root agent so its LLM
-	// knows whether a follow-up turn is possible. Empty injects nothing.
+	// Interaction injects AGENTCAGE_INTERACTION; empty injects nothing.
 	Interaction string
 
-	// OnEvent observes the working set's activations and evictions for the daemon's
-	// live event feed. Nil off the daemon path.
+	// OnEvent observes activations and evictions. Nil off the daemon path.
 	OnEvent func(Event)
 
-	// Record turns on the LLM gateway's full-payload capture for replay.
 	Record bool
 
-	// LogFile opens the run's durable log once the run id is known; the agent
-	// container's stderr is teed there, excluding the earlier build progress.
 	LogFile func(runID string) io.WriteCloser
 
-	// ElicitHandler, when set, lets the root agent ask the operator a question
-	// mid-call: the root's MCP client advertises the elicitation capability and
-	// routes each question here. Set only for an interactive boot, so a one-shot
-	// run never advertises a channel it cannot answer.
+	// ElicitHandler routes the root's mid-call questions; interactive boots only.
 	ElicitHandler mcp.ElicitHandler
 
 	Stdout  io.Writer
@@ -325,10 +250,8 @@ type bootInput struct {
 	Verbose bool
 }
 
-// teardown accumulates cleanup steps and runs them in reverse on stop,
-// joining every error so one failed step never strands the rest. Boot
-// helpers push to it as they bring resources up, so a boot that fails
-// partway still releases what it already acquired.
+// teardown accumulates cleanup steps and runs them in reverse, joining every
+// error so one failed step never strands the rest.
 type teardown struct {
 	steps []func() error
 }
@@ -345,19 +268,16 @@ func (t *teardown) run() error {
 	return errors.Join(errs...)
 }
 
-// bootSession is the provisioned runtime a boot builds and starts
-// containers against: the platform provisioner and a BuildKit client. Both
-// the single-cage and the tree boot share it.
+// bootSession is the provisioned runtime a boot builds and starts containers
+// against: the platform provisioner and a BuildKit client.
 type bootSession struct {
 	provisioner Provisioner
 	bk          *BuildKit
 }
 
 // bootAgent provisions the runtime, builds the agent's image, starts its
-// container, and opens an MCP session to it. It returns the connected
-// client and a teardown the caller runs when finished. A boot that fails
-// partway runs the teardown it accumulated before returning, so a failed
-// boot leaks nothing.
+// container, and opens an MCP session to it. A boot that fails partway runs
+// the teardown it accumulated, so a failed boot leaks nothing.
 func bootAgent(ctx context.Context, in bootInput) (*mcp.Client, *workingSet, error) {
 	td := &teardown{}
 	booted := false
@@ -372,18 +292,15 @@ func bootAgent(ctx context.Context, in bootInput) (*mcp.Client, *workingSet, err
 		return nil, nil, err
 	}
 
-	// A lone agent with no USES still needs a per-run network when it reasons
-	// (a MODEL, so an LLM gateway to reach) or declares allow: egress (an
-	// egress proxy to route through). Either way the run network is internal
-	// and the gateways are its only doors out. Without either it stays on the
-	// default network, unchanged.
+	// A lone agent still needs a per-run internal network when it has a MODEL
+	// (LLM gateway) or allow: egress (egress proxy); the gateways are the run's
+	// only doors out. Without either it stays on the default network.
 	model := manifestModel(in.Manifest)
 	allowHosts := egressHosts(manifestEgress(in.Manifest))
 
-	// Refuse the run before starting anything if the agent's cage (plus its
-	// gateways) does not fit the machine, the same admission a USES tree gets.
-	// in.Cap is the operator's effective cap; a caller that bypassed bootRun
-	// (introspection) leaves it empty, so fall back to the runtime default.
+	// Refuse the run before starting anything if the cage plus gateways does
+	// not fit the machine, the same admission a USES tree gets. Empty Cap means
+	// a caller bypassed bootRun (introspection); use the runtime default.
 	rootMem := in.Cap.MemBytes()
 	if rootMem == 0 {
 		rootMem = defaultAgentCap.MemBytes()
@@ -397,10 +314,8 @@ func bootAgent(ctx context.Context, in bootInput) (*mcp.Client, *workingSet, err
 			HumanBytes(need), HumanBytes(usable))
 	}
 
-	// Count the cage and its gateways against the host cap so a served agent's
-	// instances are bounded host-wide. HostMax is 0 only when a caller bypasses
-	// bootRun (introspection's transient boot), which does not participate in
-	// host accounting, so skip the reservation there.
+	// Count the cage and its gateways against the host cap. HostMax is 0 only
+	// for introspection's transient boot, which skips host accounting.
 	if in.HostMax > 0 {
 		baseline := 1 // the agent's own cage
 		if model != "" {
@@ -457,9 +372,8 @@ func bootAgent(ctx context.Context, in bootInput) (*mcp.Client, *workingSet, err
 		}
 	}
 
-	// Operator env overrides and declared secrets, scoped to this agent's own
-	// declarations. Runs for a tool collection too, which may declare secrets
-	// without reasoning.
+	// Operator env and secrets, scoped to this agent's own declarations. Runs
+	// for a tool collection too, which may declare secrets without reasoning.
 	if in.Env == nil {
 		in.Env = map[string]string{}
 	}
@@ -472,8 +386,8 @@ func bootAgent(ctx context.Context, in bootInput) (*mcp.Client, *workingSet, err
 		return nil, nil, err
 	}
 
-	// The egress proxy keys its allow-list by the agent's address, available
-	// only once the container is running, so it starts after the agent.
+	// The egress proxy keys its allow-list by the agent's address, known only
+	// once the container is running, so it starts after the agent.
 	if len(allowHosts) > 0 {
 		if err := startEgressProxy(ctx, sess, in.RunID, egressNet, map[string]egressAgent{in.RunID: {Network: in.Network, Hosts: allowHosts}}, in, td); err != nil {
 			return nil, nil, err
@@ -485,9 +399,8 @@ func bootAgent(ctx context.Context, in bootInput) (*mcp.Client, *workingSet, err
 }
 
 // newBootSession brings up the provisioner and a BuildKit client, pushing
-// their Close onto td. On first run the provisioner provisions the macOS
-// Lima VM behind a phase-aware setup UI; when already ready it shows
-// nothing.
+// their Close onto td. First run provisions the macOS Lima VM behind the
+// setup UI; when already ready it shows nothing.
 func newBootSession(ctx context.Context, in bootInput, td *teardown) (*bootSession, error) {
 	provisioner, err := DefaultProvisioner()
 	if err != nil {
@@ -501,8 +414,8 @@ func newBootSession(ctx context.Context, in bootInput, td *teardown) (*bootSessi
 		}
 	}
 
-	// BuildKit's gRPC API works over the forwarded socket, which sidesteps
-	// the cross-host snapshot pain container lifecycle hits.
+	// BuildKit's gRPC API works over the forwarded socket, sidestepping the
+	// cross-host snapshot pain container lifecycle hits.
 	bk, err := DialBuildKit(ctx, provisioner.BuildKitAddress())
 	if err != nil {
 		return nil, err
@@ -512,10 +425,9 @@ func newBootSession(ctx context.Context, in bootInput, td *teardown) (*bootSessi
 	return &bootSession{provisioner: provisioner, bk: bk}, nil
 }
 
-// buildImage builds in.ImageRef unless it is already present. Image refs are
-// content-addressed, so an existing ref is provably the same source and the
-// BuildKit solve is skipped; noCache forces a rebuild regardless. This is
-// what keeps a repeated run from re-invoking BuildKit for an unchanged agent.
+// buildImage builds in.ImageRef unless already present. Refs are
+// content-addressed, so an existing ref is provably the same source; noCache
+// forces a rebuild regardless.
 func buildImage(ctx context.Context, sess *bootSession, in BuildInput, noCache bool, stderr io.Writer) error {
 	if !noCache && imageExists(ctx, sess.provisioner, in.ImageRef) {
 		return nil
@@ -525,10 +437,8 @@ func buildImage(ctx context.Context, sess *bootSession, in BuildInput, noCache b
 }
 
 // startAttachedAgent builds the agent's image and starts its container
-// attached over stdio, opening an MCP session the runtime drives. The
-// container's stdin EOF is its signal to exit, so this is the parent the
-// host speaks to; sub-agents start detached and speak HTTP instead. Its
-// cleanups push onto td.
+// attached over stdio, opening an MCP session. Stdin EOF is the container's
+// exit signal; sub-agents start detached and speak HTTP instead.
 func startAttachedAgent(ctx context.Context, sess *bootSession, in bootInput, td *teardown) (*mcp.Client, error) {
 	if err := buildImage(ctx, sess, BuildInput{
 		Agentfile: in.Agentfile,
@@ -539,16 +449,14 @@ func startAttachedAgent(ctx context.Context, sess *bootSession, in bootInput, td
 		return nil, err
 	}
 
-	// A caller that bypassed bootRun leaves Cap empty; fall back to the runtime
-	// default so the root is never started uncapped.
+	// Never start the root uncapped.
 	cap := in.Cap
 	if cap == (config.Cap{}) {
 		cap = defaultAgentCap
 	}
 
-	// Only the attached root carries the interaction mode: it is the agent whose
-	// turn ends when the run does. Sub-agents always have their parent as a live
-	// caller, so the question never reaches them.
+	// Only the attached root carries the interaction mode; sub-agents always
+	// have their parent as a live caller.
 	if in.Interaction != "" {
 		if in.Env == nil {
 			in.Env = map[string]string{}
@@ -556,8 +464,7 @@ func startAttachedAgent(ctx context.Context, sess *bootSession, in bootInput, td
 		in.Env[env.Interaction] = in.Interaction
 	}
 
-	// On macOS this enters the Lima VM's rootless mount namespace via
-	// limactl shell; on Linux it shells out to nerdctl directly.
+	// limactl shell into the Lima VM on macOS; nerdctl directly on Linux.
 	cmd := sess.provisioner.Nerdctl(ctx, nerdctlRunArgs(ContainerSpec{
 		RunID:    in.RunID,
 		ImageRef: in.ImageRef,
@@ -573,9 +480,8 @@ func startAttachedAgent(ctx context.Context, sess *bootSession, in bootInput, td
 	if err != nil {
 		return nil, fmt.Errorf("stdout pipe: %w", err)
 	}
-	// Tee the agent's own stderr to the run's durable log. This is the first byte
-	// the agent emits, so its startup and its work are captured; the build progress
-	// above went to in.Stderr alone and stays out of the log.
+	// Tee the agent's stderr to the durable log from its first byte; the build
+	// progress above went to in.Stderr alone and stays out of the log.
 	cmd.Stderr = in.Stderr
 	if in.LogFile != nil {
 		lf := in.LogFile(in.RunID)
@@ -586,11 +492,10 @@ func startAttachedAgent(ctx context.Context, sess *bootSession, in bootInput, td
 		return nil, fmt.Errorf("starting container subprocess: %w", err)
 	}
 	td.push(func() error {
-		// Closing stdin is the agent's signal to exit; --rm then removes
-		// the container and Wait reaps the subprocess. A signal kill here is the
-		// teardown doing its job (a held instance's attached process is killed as
-		// the run comes down), so only a non-zero exit code, the agent actually
-		// crashing, is worth surfacing.
+		// Closing stdin signals the agent to exit; --rm removes the container
+		// and Wait reaps the subprocess. A signal kill here is the teardown
+		// doing its job, so only a non-zero exit code (an actual crash) is
+		// worth surfacing.
 		_ = stdinPipe.Close()
 		if err := cmd.Wait(); err != nil && !killedBySignal(err) {
 			return fmt.Errorf("container subprocess exited with error: %w", err)
@@ -600,8 +505,8 @@ func startAttachedAgent(ctx context.Context, sess *bootSession, in bootInput, td
 
 	client, err := mcp.Connect(ctx, stdoutPipe, stdinPipe, mcp.WithElicitation(in.ElicitHandler))
 	if err != nil {
-		// The container is live but will not get its stdin EOF through the
-		// normal path; kill it so the deferred teardown's Wait reaps it.
+		// The live container will not get its stdin EOF through the normal
+		// path; kill it so the teardown's Wait reaps it.
 		_ = cmd.Process.Kill()
 		return nil, fmt.Errorf("MCP connect: %w", err)
 	}
@@ -610,21 +515,18 @@ func startAttachedAgent(ctx context.Context, sess *bootSession, in bootInput, td
 	return client, nil
 }
 
-// killedBySignal reports whether a process exited because a signal stopped it
-// rather than returning a status. ExitCode is -1 only for a signal kill once the
-// process has been waited on, which during teardown means we stopped it on
-// purpose, not that it crashed.
+// killedBySignal reports whether a process was stopped by a signal. ExitCode
+// is -1 only for a signal kill after Wait, which during teardown means we
+// stopped it on purpose.
 func killedBySignal(err error) bool {
 	var exit *exec.ExitError
 	return errors.As(err, &exit) && exit.ExitCode() == -1
 }
 
-// deriveImageRef is the local containerd image ref for an agent: its name
-// from the bundle basename, its tag the source files hash. Content in the
-// tag means an unchanged agent resolves to the same ref (so a build is
-// reused or skipped) while a changed one gets a new ref and rebuilds. It is
-// not a registry ref and never pushed, so the no-latest rule that governs
-// USES does not apply; the hash tag is the point.
+// deriveImageRef returns the local containerd ref for an agent: the bundle
+// basename tagged with the source files hash, so an unchanged agent reuses its
+// image and a changed one rebuilds. Never pushed; the no-latest rule for USES
+// does not apply.
 func deriveImageRef(bundlePath, filesHash string) string {
 	base := filepath.Base(bundlePath)
 	base = strings.TrimSuffix(base, filepath.Ext(base))
@@ -638,7 +540,7 @@ func deriveImageRef(bundlePath, filesHash string) string {
 	return "agentcage/" + sanitizeRef(base) + ":" + tag
 }
 
-// shortDigest is the first 12 hex chars of a sha256 ("sha256:abc..." -> "abc").
+// shortDigest returns the first 12 hex chars of a sha256 digest.
 func shortDigest(s string) string {
 	s = strings.TrimPrefix(s, "sha256:")
 	if len(s) > 12 {
@@ -647,11 +549,8 @@ func shortDigest(s string) string {
 	return s
 }
 
-// deriveRunID names the containerd container for one run: the agent's friendly
-// name plus a suffix of its content hash for uniqueness across simultaneous
-// runs. Operators see this ID in `agentcage ps`, `stop`, and trace tooling, so
-// name is the repo or file basename ("echo"), not the store's content-hash
-// filename.
+// deriveRunID names the run's container: the agent's friendly name plus a
+// content-hash suffix. Operators see this id in ps, stop, and trace tooling.
 func deriveRunID(name, filesHash string) string {
 	if name == "" {
 		name = "agent"
@@ -663,10 +562,8 @@ func deriveRunID(name, filesHash string) string {
 	return sanitizeRef(name) + "-" + suffix
 }
 
-// uniqueSuffix is a short random token that disambiguates one invocation's run id
-// from the next of the same bundle. Random rather than a clock so two runs in the
-// same instant cannot collide; the time fallback only matters if the OS RNG is
-// unavailable, which it never is in practice.
+// uniqueSuffix is random rather than a clock so two runs in the same instant
+// cannot collide; the time fallback only matters if the OS RNG is unavailable.
 func uniqueSuffix() string {
 	var b [4]byte
 	if _, err := rand.Read(b[:]); err == nil {
@@ -675,9 +572,8 @@ func uniqueSuffix() string {
 	return fmt.Sprintf("%x", time.Now().UnixNano())
 }
 
-// sanitizeRef converts a bundle basename into a fragment that is safe
-// to use as an OCI ref component or a containerd container ID: ASCII
-// letters, digits, dot, dash, underscore.
+// sanitizeRef reduces s to characters safe in an OCI ref component or
+// containerd container id.
 func sanitizeRef(s string) string {
 	var b strings.Builder
 	for _, r := range s {

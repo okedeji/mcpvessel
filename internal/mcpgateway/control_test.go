@@ -15,8 +15,8 @@ import (
 	"time"
 )
 
-// flakyRoundTripper fails its first call with failFirst (if set) and succeeds
-// after, so a test can drive the retry transport's reactivate-and-retry path.
+// flakyRoundTripper fails its first call with failFirst (if set) and
+// succeeds after.
 type flakyRoundTripper struct {
 	mu        sync.Mutex
 	calls     int
@@ -40,8 +40,7 @@ func (f *flakyRoundTripper) count() int {
 	return f.calls
 }
 
-// ackActivations answers every activate request with an OK verdict, the daemon's
-// side of the control stream for tests that need reactivation to succeed.
+// ackActivations answers every activate request with an OK verdict.
 func ackActivations(conn net.Conn) {
 	dec := json.NewDecoder(conn)
 	enc := json.NewEncoder(conn)
@@ -94,9 +93,8 @@ func TestRetryTransport_DoesNotRetryOtherErrors(t *testing.T) {
 	}
 }
 
-// readActivate reads the control stream until an activate request arrives,
-// skipping the opening resync and any pin/unpin events the gateway emits around
-// a forward.
+// readActivate reads to the first activate, skipping the opening resync and
+// any pin/unpin events.
 func readActivate(t *testing.T, dec *json.Decoder) string {
 	t.Helper()
 	for {
@@ -110,9 +108,8 @@ func readActivate(t *testing.T, dec *json.Decoder) string {
 	}
 }
 
-// daemonEnd drives the control stream the way the real daemon does: it reads to
-// the activation request and answers it with the given verdict, returning the
-// edge it saw so a test can assert the gateway asked for the right one.
+// daemonEnd reads to the activation request, answers with the given verdict,
+// and returns the edge it saw.
 func daemonEnd(t *testing.T, conn net.Conn, ok bool) string {
 	t.Helper()
 	edge := readActivate(t, json.NewDecoder(conn))
@@ -141,8 +138,8 @@ func TestGateway_ActivatesInactiveEdgeThenProxies(t *testing.T) {
 	go func() { _ = gw.ServeControl(gwEnd) }()
 	defer func() { _ = daemon.Close() }()
 
-	// The call to an inactive edge blocks until the daemon activates it, so the
-	// daemon side and the call run concurrently.
+	// The call blocks until activation, so it runs concurrently with the
+	// daemon side.
 	type result struct{ body string }
 	resCh := make(chan result, 1)
 	go func() {
@@ -165,7 +162,7 @@ func TestGateway_ActivatesInactiveEdgeThenProxies(t *testing.T) {
 		t.Fatal("call did not return after activation")
 	}
 
-	// A second call to the now-live edge proxies directly, no activation needed.
+	// A second call to the now-live edge proxies directly.
 	_ = postJSON(t, srv.URL+"/web/mcp", `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"search"}}`)
 	if hits != 2 {
 		t.Errorf("second call to a live edge not forwarded (upstream hits = %d)", hits)
@@ -210,8 +207,8 @@ func TestGateway_FailedActivationFailsClosed(t *testing.T) {
 	}
 }
 
-// daemonEndAddr answers the activate with an address, the way the real daemon
-// hands the gateway the booted cage's IP, and returns the edge it activated.
+// daemonEndAddr answers the activate with an address, as the real daemon
+// hands over the booted cage's IP.
 func daemonEndAddr(t *testing.T, conn net.Conn, addr string) string {
 	t.Helper()
 	edge := readActivate(t, json.NewDecoder(conn))
@@ -230,9 +227,9 @@ func TestGateway_ForwardsToActivatedAddress(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	// The configured target is a dead address; only the address the daemon hands
-	// over on activation can make the forward land. That is the whole point: the
-	// gateway's /etc/hosts cannot name a cage that started after it.
+	// The configured target is dead; only the activation address can make the
+	// forward land, since the gateway's /etc/hosts cannot name a cage that
+	// started after it.
 	gw := New(Config{Edges: map[string]Edge{
 		"web": {Target: "http://127.0.0.1:1/mcp", Inactive: true},
 	}})
@@ -282,8 +279,8 @@ func TestGateway_DeactivateForcesReactivation(t *testing.T) {
 	go func() { _ = gw.ServeControl(gwEnd) }()
 	defer func() { _ = daemon.Close() }()
 
-	// One writer and one reader own the daemon conn, coordinated by channels, so
-	// the test never races two encoders on the pipe.
+	// One writer and one reader own the daemon conn so the test never races
+	// two encoders on the pipe.
 	out := make(chan ControlMessage, 8)
 	activates := make(chan string, 4)
 	go func() {
@@ -316,8 +313,8 @@ func TestGateway_DeactivateForcesReactivation(t *testing.T) {
 	waitActivate(t, activates)
 	<-done
 
-	// A reaped cage's edge is deactivated; the next call must re-activate rather
-	// than proxy to whatever cage next takes the freed address.
+	// After a deactivate the next call must re-activate rather than proxy to
+	// whatever cage next takes the freed address.
 	out <- ControlMessage{Type: MsgDeactivate, Edge: "web"}
 
 	go call(2)
@@ -339,9 +336,9 @@ func waitActivate(t *testing.T, activates <-chan string) {
 }
 
 func TestGateway_ForwardFailureCarriesRequestID(t *testing.T) {
-	// Both the configured target and the activation address are dead, so the
-	// forward fails past the retry and lands in the ErrorHandler. Its response
-	// must still echo the request id; a null id is unparseable to an MCP client.
+	// Both target and activation address are dead, so the forward lands in
+	// the ErrorHandler. Its response must still echo the request id; a null
+	// id is unparseable to an MCP client.
 	defer func(b time.Duration) { coldStartBudget = b }(coldStartBudget)
 	coldStartBudget = 50 * time.Millisecond
 
@@ -383,8 +380,8 @@ func TestGateway_DisconnectFailsBlockedCallClosed(t *testing.T) {
 		resCh <- postJSON(t, srv.URL+"/web/mcp", `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"search"}}`)
 	}()
 
-	// Read to the activate so the call is genuinely blocked, then drop the stream
-	// without answering: the blocked call must fail closed, not hang.
+	// Read to the activate so the call is genuinely blocked, then drop the
+	// stream without answering: the call must fail closed, not hang.
 	readActivate(t, json.NewDecoder(daemon))
 	_ = daemon.Close()
 

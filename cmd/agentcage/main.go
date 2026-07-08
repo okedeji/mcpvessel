@@ -20,9 +20,7 @@ func main() {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	// Groups organize the commands in --help without nesting them: every command
-	// stays a top-level verb, the way the Docker-mirrored shape wants, but the help
-	// reads by purpose instead of one long list.
+	// Groups shape --help by purpose; every command stays a top-level verb, Docker-style.
 	root.AddGroup(
 		&cobra.Group{ID: "setup", Title: "Setup:"},
 		&cobra.Group{ID: "ship", Title: "Build & distribute:"},
@@ -42,8 +40,7 @@ func main() {
 	add("observe", newPsCmd(), newLogsCmd(), newSpendCmd(), newEventsCmd(), newTraceCmd(), newStatsCmd(), newReplayCmd())
 	add("configure", newConfigCmd(), newSecretsCmd())
 
-	// Internal commands the runtime execs inside the gateway and cage containers.
-	// Hidden from help, so they need no group.
+	// Hidden internal commands the runtime execs inside gateway and cage containers.
 	root.AddCommand(newMCPGatewayCmd(), newMCPControlCmd(), newLLMGatewayCmd(), newLLMControlCmd(), newEgressCmd(), newMCPBridgeCmd())
 
 	if err := root.Execute(); err != nil {

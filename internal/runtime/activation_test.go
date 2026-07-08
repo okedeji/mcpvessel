@@ -9,9 +9,8 @@ import (
 	"github.com/okedeji/agentcage/internal/mcpgateway"
 )
 
-// cageTracker stands in for the container runtime: it records which cages were
-// started and stopped, can fail a named start, and can block a start on a gate
-// so a test can force two activations to overlap.
+// cageTracker stands in for the container runtime: records starts and stops,
+// can fail a named start, and can block a start on a gate to force overlap.
 type cageTracker struct {
 	mu        sync.Mutex
 	started   []string
@@ -50,8 +49,8 @@ func (c *cageTracker) startedCount() int {
 	return len(c.started)
 }
 
-// newActivationWS builds a working set wired to a cageTracker, with the host
-// counter reset so one test's reservations do not leak into the next.
+// newActivationWS builds a working set wired to a cageTracker, resetting the
+// package-level host counter so tests do not leak reservations into each other.
 func newActivationWS(maxLive int) (*workingSet, *cageTracker) {
 	hostCages = &hostCounter{}
 	tr := &cageTracker{startErr: map[string]error{}, startGate: map[string]chan struct{}{}}
@@ -78,20 +77,15 @@ func newActivationWS(maxLive int) (*workingSet, *cageTracker) {
 	return ws, tr
 }
 
-// addPlain registers a non-reasoning planned cage and a free plain-pool network
-// for it to draw.
+// addPlain registers a non-reasoning planned cage and a free plain-pool network.
 func (w *workingSet) addPlain(node, net string) {
 	w.specByNode[node] = plannedAgent{Node: &agentNode{Key: node}, Spec: ContainerSpec{RunID: "run-" + node, Memory: "512m"}}
 	w.plainFree = append(w.plainFree, net)
 }
 
-// TestReserveBaseline_CountsAgainstHostCap proves the Level-1 fix: a run's
-// always-on baseline (root + gateways) reserves host slots, fails closed when it
-// does not fit, never leaks a partial reservation, and releases cleanly.
 func TestReserveBaseline_CountsAgainstHostCap(t *testing.T) {
 	hostCages = &hostCounter{}
 
-	// Three baseline cages fit a host cap of four.
 	if err := reserveBaseline(3, 4); err != nil {
 		t.Fatalf("baseline of 3 should fit host cap 4: %v", err)
 	}
@@ -99,8 +93,8 @@ func TestReserveBaseline_CountsAgainstHostCap(t *testing.T) {
 		t.Fatalf("host counter = %d, want 3", hostCages.n)
 	}
 
-	// A second baseline of two does not fit the one remaining slot, and leaves
-	// the counter untouched (no partial reservation leaked).
+	// Two more do not fit the one remaining slot; a failed reservation must not
+	// leak a partial count.
 	if err := reserveBaseline(2, 4); err == nil {
 		t.Fatal("baseline of 2 should not fit one remaining slot")
 	}
@@ -108,7 +102,6 @@ func TestReserveBaseline_CountsAgainstHostCap(t *testing.T) {
 		t.Fatalf("a failed reservation leaked: host counter = %d, want 3", hostCages.n)
 	}
 
-	// Releasing the baseline frees its slots, so a later run admits.
 	_ = releaseBaseline(3)()
 	if hostCages.n != 0 {
 		t.Fatalf("host counter = %d after release, want 0", hostCages.n)
@@ -134,7 +127,7 @@ func TestActivate_BootsAndAssignsNetwork(t *testing.T) {
 	if len(tr.started) != 1 || tr.started[0] != "a" {
 		t.Errorf("started = %v, want [a]", tr.started)
 	}
-	// A second activate of a live node is a no-op: no second start.
+	// Re-activating a live node must not start a second container.
 	if err := ws.activate(context.Background(), "a"); err != nil || tr.startedCount() != 1 {
 		t.Errorf("re-activate started again: started=%v err=%v", tr.started, err)
 	}
@@ -152,7 +145,7 @@ func TestActivate_SingleFlightCollapsesConcurrentCalls(t *testing.T) {
 	for i := 0; i < callers; i++ {
 		go func() { defer wg.Done(); _ = ws.activate(context.Background(), "a") }()
 	}
-	// Let the callers pile up on the single in-flight boot, then release it.
+	// Let callers pile up on the in-flight boot, then release it.
 	time.Sleep(50 * time.Millisecond)
 	close(gate)
 	wg.Wait()
@@ -170,7 +163,7 @@ func TestActivate_EvictsLRUWhenAtCap(t *testing.T) {
 	if err := ws.activate(context.Background(), "a"); err != nil {
 		t.Fatalf("activate a: %v", err)
 	}
-	// b needs the only slot; a is idle and unpinned, so it is evicted for b.
+	// b needs the only slot; idle unpinned a is the LRU victim.
 	if err := ws.activate(context.Background(), "b"); err != nil {
 		t.Fatalf("activate b: %v", err)
 	}
@@ -183,7 +176,6 @@ func TestActivate_EvictsLRUWhenAtCap(t *testing.T) {
 	if len(tr.stopped) != 1 || tr.stopped[0] != "run-a" {
 		t.Errorf("stopped = %v, want [run-a]", tr.stopped)
 	}
-	// a's network returned to the pool and was reused (or is free again).
 	if _, held := ws.netOf["a"]; held {
 		t.Error("evicted a still holds a network")
 	}
@@ -198,7 +190,7 @@ func TestActivate_FailsClosedWhenAllPinned(t *testing.T) {
 	if err := ws.activate(context.Background(), "a"); err != nil {
 		t.Fatalf("activate a: %v", err)
 	}
-	ws.pins["a"] = 1 // a is mid-call, so it cannot be evicted
+	ws.pins["a"] = 1 // mid-call, not evictable
 
 	if err := ws.activate(context.Background(), "b"); err == nil {
 		t.Error("activate b should fail closed when the only slot stays pinned")
@@ -220,13 +212,13 @@ func TestActivate_QueuesThenSucceedsWhenSlotFrees(t *testing.T) {
 	if err := ws.activate(context.Background(), "a"); err != nil {
 		t.Fatalf("activate a: %v", err)
 	}
-	ws.pins["a"] = 1 // a is mid-call, so b must wait rather than evict it
+	ws.pins["a"] = 1 // mid-call, so b must wait rather than evict it
 
 	done := make(chan error, 1)
 	go func() { done <- ws.activate(context.Background(), "b") }()
 
-	// b is now queued on the one pinned slot. Finish a's call: the unpin frees the
-	// slot, and b should wake, evict the now-idle a, and boot.
+	// Finish a's call: the unpin frees the slot; b should wake, evict the
+	// now-idle a, and boot.
 	time.Sleep(50 * time.Millisecond)
 	ws.onUnpin("a-edge")
 

@@ -12,29 +12,15 @@ import (
 type dockerfileInput struct {
 	Agentfile *agentfile.Agentfile
 
-	// Labels are written as OCI image labels so external tools
-	// (`nerdctl inspect`, registry UIs) can read the agent's provenance
-	// without unpacking the bundle. Empty values are skipped.
+	// Labels become OCI image labels; empty values are skipped.
 	Labels map[string]string
 }
 
-// generateDockerfile produces the Dockerfile string that BuildKit's
-// dockerfile.v0 frontend will parse. The Agentfile directives (FROM, RUN,
-// ENV) pass through unchanged; the only real translation is on ENTRYPOINT,
-// which becomes the JSON-array form:
-//
-//	ENTRYPOINT cmd → ENTRYPOINT ["sh", "-c", "cmd"]
-//
-// On top of the author's input, the codegen injects:
-//
-//   - WORKDIR /agent
-//   - COPY . /agent (bundle's source tree)
-//   - OCI labels for spec_version, files_hash, built_with, built_at so
-//     the image carries the bundle's provenance
-//
-// The output is deterministic. Given the same Agentfile and the same
-// labels map, this returns byte-identical bytes, important because
-// BuildKit's cache key hashes the input.
+// generateDockerfile produces the Dockerfile the dockerfile.v0 frontend
+// parses. Agentfile directives pass through; ENTRYPOINT cmd becomes
+// ENTRYPOINT ["sh", "-c", "cmd"], and codegen injects WORKDIR /agent,
+// COPY . /agent, and provenance labels. Output is byte-deterministic for the
+// same input: BuildKit's cache key hashes it.
 func generateDockerfile(in dockerfileInput) string {
 	af := in.Agentfile
 	var b strings.Builder
@@ -45,46 +31,31 @@ func generateDockerfile(in dockerfileInput) string {
 	fmt.Fprintf(&b, "FROM %s\n", af.From)
 	fmt.Fprintf(&b, "WORKDIR /agent\n")
 
-	// RUNs come BEFORE the source COPY. The common case is
-	// "RUN pip install mcp anthropic", a dependency
-	// declaration whose inputs are entirely in the line itself,
-	// not in the agent's source tree. Putting RUN first means
-	// editing agent.py only busts the cheap COPY layer, not the
-	// expensive pip install. Build times after the first one stay
-	// in the seconds-not-minutes range.
-	//
-	// Trade-off: this breaks "RUN pip install -r requirements.txt"
-	// (and equivalent Node / Cargo patterns) because the file is
-	// not in the image yet when RUN executes. Authors that need
-	// that pattern either inline the deps in RUN (the agentcage
-	// convention) or, when M2 ships smarter codegen, declare a
-	// dependency-manifest file explicitly.
+	// RUNs come before the source COPY: deps like "RUN pip install mcp" have
+	// no inputs in the source tree, so editing agent.py busts only the cheap
+	// COPY layer, not the expensive install. Trade-off: "RUN pip install -r
+	// requirements.txt" breaks (the file is not in the image yet); the
+	// agentcage convention is to inline deps in RUN.
 	for _, cmd := range af.Run {
 		fmt.Fprintf(&b, "RUN %s\n", cmd)
 	}
 
-	// COPY the agent's source tree last so changes to it only
-	// invalidate cache from this layer onward, not the RUN layers
-	// above.
 	fmt.Fprintf(&b, "COPY . /agent\n")
 
-	// ENV is ordered for determinism. BuildKit cares about the order
-	// only for the cache key, not for runtime semantics, but a stable
-	// order makes the cache stable across rebuilds with the same input.
+	// Stable ENV order keeps BuildKit's cache key stable across rebuilds.
 	keys := sortedKeys(af.Env)
 	for _, k := range keys {
-		// An empty value is an operator-required input with no default, not a
-		// default of empty. Baking it would mask the fail-closed check, so the
-		// runtime injects it from the operator pool instead.
+		// An empty value is a required operator input, not a default of
+		// empty. Baking it would mask the fail-closed check; the runtime
+		// injects it from the operator pool instead.
 		if af.Env[k] == "" {
 			continue
 		}
 		fmt.Fprintf(&b, "ENV %s=%s\n", k, dockerfileEscapeEnv(af.Env[k]))
 	}
 
-	// OCI image labels for provenance. LABEL keys are namespaced under
-	// io.agentcage.* so they do not collide with conventional OCI image
-	// labels (org.opencontainers.image.* etc).
+	// LABEL keys are namespaced io.agentcage.* to stay clear of conventional
+	// OCI labels (org.opencontainers.image.*).
 	for _, k := range sortedKeys(in.Labels) {
 		v := in.Labels[k]
 		if v == "" {
@@ -93,10 +64,8 @@ func generateDockerfile(in dockerfileInput) string {
 		fmt.Fprintf(&b, "LABEL %s=%s\n", k, dockerfileQuote(v))
 	}
 
-	// ENTRYPOINT goes last by convention. Using shell form (sh -c "...")
-	// because the Agentfile's ENTRYPOINT is a single command string,
-	// not a JSON array. Shell form interprets it identically to how a
-	// shell would.
+	// sh -c because the Agentfile's ENTRYPOINT is a single command string,
+	// not a JSON array.
 	fmt.Fprintf(&b, "ENTRYPOINT [\"sh\", \"-c\", %s]\n", dockerfileQuote(af.Entrypoint))
 
 	return b.String()
@@ -114,18 +83,15 @@ func sortedKeys(m map[string]string) []string {
 	return out
 }
 
-// dockerfileQuote produces a JSON-string-quoted form of s, the shape
-// the Dockerfile parser accepts for LABEL values and JSON-form ENTRYPOINT
-// arguments. Uses Go's strconv via fmt's %q verb which is exactly
-// JSON-string syntax for ASCII content.
+// dockerfileQuote returns s in JSON-string form (Go's %q matches JSON syntax
+// for ASCII), the shape the Dockerfile parser accepts for LABEL values and
+// JSON-form ENTRYPOINT arguments.
 func dockerfileQuote(s string) string {
 	return fmt.Sprintf("%q", s)
 }
 
-// dockerfileEscapeEnv handles the rare case where an ENV value contains
-// whitespace or special characters. Dockerfile's KEY=value form treats
-// the value as a string until newline, so we only need to escape
-// backslashes and wrap in quotes when whitespace is present.
+// dockerfileEscapeEnv quotes an ENV value only when it contains whitespace or
+// specials; Dockerfile's KEY=value form otherwise reads the value to newline.
 func dockerfileEscapeEnv(v string) string {
 	if !strings.ContainsAny(v, " \t\"\\") {
 		return v

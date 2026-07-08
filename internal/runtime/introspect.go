@@ -11,18 +11,15 @@ import (
 	"github.com/okedeji/agentcage/internal/mcp"
 )
 
-// listToolsTimeout bounds the tools/list call. The agent has already
-// booted and completed the MCP handshake by then, so listing its tools is
-// a metadata round-trip that should return in well under a second; a
-// minute is generous headroom that still stops a wedged agent from hanging
-// the build forever. The handshake itself is not bounded here: the MCP
-// client library ties the session's lifetime to its connect context, so
-// timing that out would kill the session we are about to use.
+// listToolsTimeout bounds tools/list, a metadata round-trip after the
+// handshake; a minute is generous headroom that still stops a wedged agent
+// hanging the build. The handshake itself is unbounded here: the MCP client
+// ties the session's lifetime to its connect context, so timing that out
+// would kill the session we are about to use.
 const listToolsTimeout = 60 * time.Second
 
-// IntrospectInput drives Introspect. ImageRef should be the same ref the
-// later run derives (deriveImageRef of the bundle), so the image this
-// builds is reused rather than rebuilt at run time.
+// IntrospectInput drives Introspect. ImageRef should match the ref the later
+// run derives so the image is reused rather than rebuilt.
 type IntrospectInput struct {
 	Agentfile *agentfile.Agentfile
 	SourceDir string
@@ -34,14 +31,13 @@ type IntrospectInput struct {
 }
 
 // Introspect builds the agent's image, boots it, and returns the tools its
-// MCP server advertises. It is metadata-only: it lists tools and never
-// calls one, so no tool body runs and the agent's LLM is never invoked.
-// The only thing that executes is the agent's own server startup.
+// MCP server advertises. Metadata only: no tool is called and the agent's LLM
+// is never invoked; only the agent's own server startup executes.
 func Introspect(ctx context.Context, in IntrospectInput) ([]mcp.Tool, error) {
 	client, ws, err := bootAgent(ctx, bootInput{
 		Agentfile: in.Agentfile,
-		// Labels are provenance only and the authoritative manifest is
-		// sealed later by the bundle build, so a nil manifest is fine here.
+		// Labels are provenance only; the authoritative manifest is sealed
+		// later by the bundle build.
 		Manifest:  nil,
 		SourceDir: in.SourceDir,
 		ImageRef:  in.ImageRef,
@@ -69,17 +65,15 @@ func Introspect(ctx context.Context, in IntrospectInput) ([]mcp.Tool, error) {
 }
 
 // introspectRunID names the short-lived introspection container. The PID
-// keeps two concurrent builds of the same agent from claiming the same
-// container name, and the -introspect tag keeps it distinct from a run of
-// the same agent.
+// keeps concurrent builds of the same agent from claiming one name; the
+// -introspect tag keeps it distinct from a run.
 func introspectRunID(imageRef string) string {
 	return fmt.Sprintf("%s-introspect-%d", sanitizeRef(imageRef), os.Getpid())
 }
 
-// ImageRef is the local image ref a bundle builds and runs under. Build
-// introspection and a later run derive the same content-addressed ref from
-// the same source files hash, so the image is built once and the run reuses
-// it. Callers pass bundle.HashSource of the source tree.
+// ImageRef is the local image ref a bundle builds and runs under,
+// content-addressed from the source files hash so build introspection and a
+// later run share one image. Callers pass bundle.HashSource of the tree.
 func ImageRef(bundlePath, filesHash string) string {
 	return deriveImageRef(bundlePath, filesHash)
 }

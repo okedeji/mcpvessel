@@ -11,9 +11,8 @@ import (
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// TestGateway_RecordsSubAgentCall drives a real tools/call through the gateway
-// and proves the capture: the metadata hook fires once for the call (not the
-// handshake), and recording captures the call's arguments and response.
+// TestGateway_RecordsSubAgentCall drives a real tools/call through the
+// gateway and checks the metadata hook and the payload capture.
 func TestGateway_RecordsSubAgentCall(t *testing.T) {
 	sub := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "sub", Version: "0"}, nil)
 	mcpsdk.AddTool(sub, &mcpsdk.Tool{Name: "search"}, okTool)
@@ -43,8 +42,7 @@ func TestGateway_RecordsSubAgentCall(t *testing.T) {
 		t.Fatalf("CallTool: %v", err)
 	}
 
-	// Only the tools/call is recorded; the initialize handshake and any tools/list
-	// are not.
+	// Only the tools/call is recorded, not the handshake or tools/list.
 	if len(calls) != 1 || calls[0].Tool != "search" || calls[0].Edge != "sub" {
 		t.Fatalf("call events = %+v, want one search call on edge sub", calls)
 	}

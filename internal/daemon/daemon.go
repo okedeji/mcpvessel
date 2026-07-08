@@ -1,13 +1,7 @@
-// Package daemon is agentcage's long-lived host process: it owns every running
-// agent and answers two listeners. The control plane (a Unix socket) serves the
-// CLI's run, ps, stop, and budget calls; the serve front door (a TCP port)
-// serves external MCP clients the agents an operator exposed.
-//
-// It runs on the host, not in the Lima VM, and holds each run by keeping the
-// root attached over the stdio of a long-lived nerdctl subprocess, the same way
-// a one-shot run does but kept alive across calls. Handler is the control-plane
-// route set; server.go binds it to the socket, front.go opens the front door,
-// and client.go dials the socket.
+// Package daemon is agentcage's long-lived host process. It owns every running
+// agent and answers two listeners: the control plane on a Unix socket and the
+// serve front door on TCP. It runs on the host, not in the Lima VM, holding
+// each run over the stdio of a long-lived nerdctl subprocess.
 package daemon
 
 import (
@@ -28,12 +22,10 @@ import (
 	"github.com/okedeji/agentcage/internal/runtime"
 )
 
-// socketName is the daemon's control socket under the agentcage home dir. Lima
-// forwards it to the host on macOS; on Linux the daemon binds it directly.
 const socketName = "agentcage.sock"
 
-// SocketPath is the daemon's control socket, ~/.agentcage/agentcage.sock,
-// honoring AGENTCAGE_HOME. The daemon binds it; the CLI dials it.
+// SocketPath returns the control socket path, ~/.agentcage/agentcage.sock,
+// honoring AGENTCAGE_HOME.
 func SocketPath() (string, error) {
 	home, err := env.HomeDir()
 	if err != nil {
@@ -42,9 +34,8 @@ func SocketPath() (string, error) {
 	return filepath.Join(home, socketName), nil
 }
 
-// RunInfo is one tracked run as the control plane reports it: enough for ps and
-// stop, not the live handle the runtime holds. EndedAt and CostMicroUSD are set
-// only for a finished run read back from history; a live run leaves them zero.
+// RunInfo is one tracked run as the control plane reports it. EndedAt and
+// CostMicroUSD are set only for finished runs read back from history.
 type RunInfo struct {
 	ID           string    `json:"id"`
 	Ref          string    `json:"ref"`
@@ -54,48 +45,32 @@ type RunInfo struct {
 	CostMicroUSD int64     `json:"cost_micro_usd,omitempty"`
 }
 
-// Daemon holds the run registry and serves the control-plane HTTP API. The
-// registry is the live set, in memory; hist is the durable run log that outlives
-// it, so ps shows finished runs and a restart can reconcile crashed ones. hist
-// is best-effort: it may be nil (tests, or an open that failed), and every write
-// through it tolerates that, because a wedged history must never wedge a run.
+// Daemon holds the run registry and serves the control-plane HTTP API.
+// hist may be nil (tests, or an open that failed); every write through it
+// tolerates that. A wedged history must never wedge a run.
 type Daemon struct {
 	mu   sync.Mutex
 	runs map[string]*heldRun
 	hist *history.Store
-	// fronts are the serve front doors the daemon has opened, each tied to the
-	// runs it exposes. Stopping the last run behind a front closes its listener so
-	// the port frees; shutdown closes whatever remains.
+	// fronts are open serve front doors; each closes when its last run stops.
 	fronts []*front
-	// shutdown is closed to ask the serve loop to stop, the in-process equivalent
-	// of a SIGTERM, so `init --recreate` can take the daemon down cleanly before
-	// the VM is rebuilt under it. shutdownOnce keeps a second request from closing
-	// an already-closed channel.
+	// shutdown is the in-process SIGTERM equivalent, closed at most once.
 	shutdown     chan struct{}
 	shutdownOnce sync.Once
-	// events is the live lifecycle feed behind `agentcage events`. It is the one
-	// sink the run lifecycle publishes through, independent of history.
-	events *eventBus
+	events       *eventBus
 }
 
-// front is one serve front door: its HTTP server and the runs it exposes. The
-// door stays open while any of its runs is live and closes when the last one
-// stops, so a stopped serve frees its port instead of holding it for the
-// daemon's life.
+// front is one serve front door: an HTTP server and the runs it exposes.
 type front struct {
 	srv  *http.Server
 	runs map[string]bool
 }
 
-// heldRun is one run the daemon holds: its reportable info and the live Session
-// whose stdio the daemon keeps open. The Session stays held across calls until
-// stop releases it; the daemon dying drops the Session's subprocess and with it
-// the run, the same coupling a one-shot run has to the CLI process.
+// heldRun is one run the daemon holds. Exactly one field is set: session for a
+// run held over stdio, manager for a serve entry owning a pool of per-client
+// instances.
 type heldRun struct {
-	info RunInfo
-	// session is set for a run/call/start run the daemon holds over stdio.
-	// manager is set instead for a serve-managed exposed agent, which owns a pool
-	// of per-client instances rather than one held session. Exactly one is set.
+	info    RunInfo
 	session *runtime.Session
 	manager *instanceManager
 }
@@ -105,25 +80,20 @@ func New() *Daemon {
 	return &Daemon{runs: map[string]*heldRun{}, shutdown: make(chan struct{}), events: newEventBus()}
 }
 
-// hold records a booted run and its Session under the run id.
 func (d *Daemon) hold(info RunInfo, session *runtime.Session) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.runs[info.ID] = &heldRun{info: info, session: session}
 }
 
-// holdServe records a serve-managed exposed agent: a registry entry whose
-// instances the manager owns, so ps lists it and stop releases the whole pool.
 func (d *Daemon) holdServe(info RunInfo, mgr *instanceManager) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.runs[info.ID] = &heldRun{info: info, manager: mgr}
 }
 
-// session returns the live Session for a run, or false when no run by that id is
-// held over stdio. A serve entry has no single session (it owns a pool), so it
-// reports false here: the control-plane call/budget routes target run/call/start
-// runs, not a serve front door.
+// session returns the live Session for a run held over stdio. A serve entry
+// owns a pool, not a single session, and reports false.
 func (d *Daemon) session(id string) (*runtime.Session, bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -134,8 +104,8 @@ func (d *Daemon) session(id string) (*runtime.Session, bool) {
 	return r.session, true
 }
 
-// take removes a run from the registry and returns its held entry, so a stop
-// releases exactly once even if two arrive at the same time.
+// take removes a run from the registry and returns its entry; concurrent stops
+// release at most once.
 func (d *Daemon) take(id string) (*heldRun, bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -147,9 +117,8 @@ func (d *Daemon) take(id string) (*heldRun, bool) {
 	return r, true
 }
 
-// release tears down a held entry, whichever kind it is. The run's durable log is
-// closed by the runtime's teardown, which owns the handle it teed the agent's
-// stderr to.
+// release tears down a held entry. The run's durable log is closed by the
+// runtime's teardown, which owns the handle.
 func (r *heldRun) release() error {
 	if r.manager != nil {
 		return r.manager.releaseAll()
@@ -160,12 +129,12 @@ func (r *heldRun) release() error {
 	return nil
 }
 
-// nowFunc is overridable so StartedAt stays testable without a real clock.
+// nowFunc is overridable in tests.
 var nowFunc = time.Now
 
-// releaseAll tears down every held run, joining errors. Serve calls it on
-// shutdown so a graceful stop releases runs properly instead of leaking their
-// detached sub-agents and networks to the next reconciliation sweep.
+// releaseAll tears down every held run, joining errors. A graceful stop must
+// release runs here or their detached sub-agents and networks leak to the next
+// reconciliation sweep.
 func (d *Daemon) releaseAll() error {
 	d.mu.Lock()
 	held := make([]*heldRun, 0, len(d.runs))
@@ -177,8 +146,8 @@ func (d *Daemon) releaseAll() error {
 
 	var errs []error
 	for _, r := range held {
-		// A clean shutdown is a stop, not a crash: record it so the next startup's
-		// reconcile leaves it alone. Read before release, while the gateway is up.
+		// A clean shutdown is a stop, not a crash; record it before release,
+		// while the gateway is still up to answer the spend read.
 		if r.session != nil {
 			d.finish(r.info.ID, r.info.Ref, history.StatusStopped, nil)
 		}
@@ -189,9 +158,9 @@ func (d *Daemon) releaseAll() error {
 	return errors.Join(errs...)
 }
 
-// recordStart writes a run's opening history entry as running, so a daemon that
-// dies before the run finishes leaves a record the next startup reconciles to
-// crashed. Best-effort: a history write never blocks a boot.
+// recordStart writes a run's opening history entry as running; a daemon that
+// dies mid-run leaves it for the next startup to reconcile to crashed.
+// Best-effort: a history write never blocks a boot.
 func (d *Daemon) recordStart(info RunInfo) {
 	if d.hist == nil {
 		return
@@ -206,17 +175,12 @@ func (d *Daemon) recordStart(info RunInfo) {
 	}
 }
 
-// finish closes out a run: it reads the run's final spend off the gateway (while
-// the gateway is still up, so the caller invokes it before teardown), escalates
-// a failed call to over_budget when that spend shows the budget was exhausted,
-// writes the terminal history record, and publishes the run.ended event. The
-// event fires even with history off; the history write is best-effort. Callers
-// are one-shot runs and served per-client instances; a serve front door owns a
-// pool rather than a run, so it never finishes here and stays off the feed.
-//
-// It returns the run's final spend in micro-USD (0 when the run made no metered
-// call) so handleRun can stamp it onto the run frame, the honest channel for a
-// one-shot's cost since the best-effort history store may never hold it.
+// finish closes out a run: reads its final spend off the gateway, escalates a
+// failed call to over_budget when the spend shows the budget was exhausted,
+// writes the terminal history record, and publishes run.ended. Must run before
+// teardown, while the gateway is still up. The event fires even with history
+// off; the history write is best-effort. Returns the final spend in micro-USD
+// (0 when the run made no metered call).
 func (d *Daemon) finish(runID, ref, status string, callErr error) int64 {
 	report, calls, ok := runtime.RunTelemetry(context.Background(), runID)
 	if status == history.StatusFailed && ok && report.BudgetMicroUSD > 0 && report.TotalMicroUSD >= report.BudgetMicroUSD {
@@ -257,7 +221,6 @@ func (d *Daemon) finish(runID, ref, status string, callErr error) int64 {
 	return report.TotalMicroUSD
 }
 
-// runInfoFromRecord projects a stored record onto the ps wire shape.
 func runInfoFromRecord(r history.Record) RunInfo {
 	return RunInfo{
 		ID:           r.RunID,
@@ -269,8 +232,7 @@ func runInfoFromRecord(r history.Record) RunInfo {
 	}
 }
 
-// addFront records a serve front door and the runs it exposes, so shutdown can
-// close it and a stop can close it once its last run is gone.
+// addFront records a serve front door and the runs it exposes.
 func (d *Daemon) addFront(srv *http.Server, runIDs []string) {
 	f := &front{srv: srv, runs: make(map[string]bool, len(runIDs))}
 	for _, id := range runIDs {
@@ -281,9 +243,9 @@ func (d *Daemon) addFront(srv *http.Server, runIDs []string) {
 	d.mu.Unlock()
 }
 
-// releaseFrontFor drops a stopped run from its front door and closes the door
-// once no run behind it remains, freeing the listener's port. A run reached by
-// `run` or `call` fronts nothing, so this is a no-op for it.
+// releaseFrontFor drops a stopped run from its front door, closing the door
+// (and freeing its listener port) once no run behind it remains. No-op for a
+// run that fronts nothing.
 func (d *Daemon) releaseFrontFor(id string) {
 	d.mu.Lock()
 	kept := make([]*front, 0, len(d.fronts))
@@ -301,8 +263,8 @@ func (d *Daemon) releaseFrontFor(id string) {
 	shutdownFronts(closing)
 }
 
-// closeFronts shuts every front door within shutdownTimeout, stopping external
-// MCP traffic before the runs behind it release.
+// closeFronts shuts every front door, stopping external MCP traffic before the
+// runs behind it release.
 func (d *Daemon) closeFronts() {
 	d.mu.Lock()
 	fronts := d.fronts
@@ -319,8 +281,7 @@ func shutdownFronts(fronts []*front) {
 	}
 }
 
-// Handler returns the control-plane routes. Split from Serve so tests drive the
-// API without binding a socket.
+// Handler returns the control-plane routes.
 func (d *Daemon) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /version", d.handleVersion)
@@ -341,9 +302,8 @@ func (d *Daemon) Handler() http.Handler {
 	return mux
 }
 
-// handleShutdown asks the daemon to stop. It acks first, then signals the serve
-// loop, so the caller's request finishes before the daemon goes down. The serve
-// loop's graceful path then releases every held run.
+// handleShutdown acks first, then signals the serve loop: the caller's request
+// finishes before the daemon goes down.
 func (d *Daemon) handleShutdown(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 	d.shutdownOnce.Do(func() { close(d.shutdown) })
@@ -353,10 +313,9 @@ func (d *Daemon) handleVersion(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"version": identity.Version})
 }
 
-// handleListRuns reports the durable history overlaid by the live set: a record
-// for every run that ever ran, with a live run's in-flight info winning over its
-// stored running entry. With no history (nil store) it falls back to the live
-// set.
+// handleListRuns reports the durable history overlaid by the live set: a live
+// run's in-flight info wins over its stored running entry. With no history it
+// falls back to the live set.
 func (d *Daemon) handleListRuns(w http.ResponseWriter, _ *http.Request) {
 	d.mu.Lock()
 	live := make(map[string]RunInfo, len(d.runs))

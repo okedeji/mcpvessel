@@ -12,13 +12,9 @@ import (
 )
 
 // newMCPControlCmd bridges the daemon's activation stream into the MCP gateway
-// container. It is hidden: the daemon exec's it via nerdctl, never an operator.
-// Running inside the container, it dials the gateway's loopback control listener
-// that nothing on the run network can reach, then copies the daemon's stream
-// (its stdin/stdout) straight through. It carries no protocol of its own; the
-// activation logic lives in the gateway and the daemon, and this is the wire
-// between them, the same way the LLM gateway's control client reaches its
-// loopback listener.
+// container. Hidden: the daemon exec's it via nerdctl, never an operator. It
+// dials the gateway's loopback-only control listener, unreachable from the run
+// network, and copies its stdin/stdout straight through.
 func newMCPControlCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:    "mcp-control",
@@ -32,8 +28,7 @@ func newMCPControlCmd() *cobra.Command {
 			}
 			defer func() { _ = conn.Close() }()
 
-			// Daemon -> gateway on one goroutine, gateway -> daemon on this one.
-			// Either direction closing ends the bridge so the daemon re-execs it.
+			// Either direction closing ends the bridge; the daemon re-execs it.
 			errc := make(chan error, 2)
 			go func() {
 				_, err := io.Copy(conn, os.Stdin)

@@ -31,7 +31,7 @@ func TestReplayEvents_MapsRecordsInOrder(t *testing.T) {
 	if events[1].Type != replay.EventLLMStream {
 		t.Errorf("streamed record should be llm.stream: %+v", events[1])
 	}
-	// A non-JSON streamed body is embedded as a JSON string, keeping the artifact valid.
+	// A non-JSON streamed body embeds as a JSON string, keeping the artifact valid.
 	var s string
 	if err := json.Unmarshal(events[1].Response, &s); err != nil || s != "data: chunk\n\n" {
 		t.Errorf("streamed response = %s, want a JSON string", events[1].Response)

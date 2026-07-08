@@ -16,7 +16,7 @@ import (
 )
 
 // buildStoredBundle writes a minimal agent into the store and returns its
-// files_hash, the tagging half done by the caller.
+// files_hash; the caller tags it.
 func buildStoredBundle(t *testing.T, st *store.Store) string {
 	t.Helper()
 	src := t.TempDir()

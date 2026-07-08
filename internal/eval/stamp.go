@@ -7,12 +7,8 @@ import (
 )
 
 // Stamp writes a full-suite run's results into the bundle's manifest so the
-// score travels with the agent and inspect can show it. at is the run time,
-// passed in so the caller controls the clock.
-//
-// Only a full-suite run may stamp: a partial --case run would misrepresent the
-// suite's pass/fail counts. The caller enforces that; Stamp trusts the report
-// it is handed covers every case.
+// score travels with the agent. Only a full-suite run may stamp (a --case
+// run would misrepresent the counts); the caller enforces that.
 func Stamp(bundlePath string, r *Report, at time.Time) error {
 	passed, failed := r.Passed, r.Failed
 	stampedAt := at.UTC()

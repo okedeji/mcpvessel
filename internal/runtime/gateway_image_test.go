@@ -29,9 +29,8 @@ func TestGatewayDockerfile_ScratchEntersBareBinary(t *testing.T) {
 }
 
 func TestFindLinuxBinary_MissingNamesArchAndBuildTarget(t *testing.T) {
-	// In the test binary's tree there is no companion linux binary, so the
-	// lookup fails. The error has to name the arch-qualified file and point at
-	// the make target, or an operator cannot tell what to build.
+	// The test binary's tree has no companion linux binary, so the lookup
+	// fails; the error must name the arch-qualified file and the make target.
 	_, err := FindLinuxBinary()
 	if err == nil {
 		t.Fatal("FindLinuxBinary succeeded with no companion binary present")

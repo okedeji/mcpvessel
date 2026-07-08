@@ -6,10 +6,7 @@ import (
 	"testing"
 )
 
-// TestPullCmd_RequiresVersion locks the one piece of pull that runs
-// before any network call: a bare @org/name with no tag or digest is
-// rejected, so the command never reaches the registry without knowing
-// what to fetch.
+// A bare @org/name must be rejected before any network call.
 func TestPullCmd_RequiresVersion(t *testing.T) {
 	cmd := newPullCmd()
 	cmd.SilenceUsage = true

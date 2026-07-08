@@ -15,23 +15,20 @@ import (
 	"github.com/okedeji/agentcage/internal/telemetry"
 )
 
-// Client talks to a running daemon over its Unix socket. The CLI commands that
-// need the daemon (ps, logs, stop) are thin wrappers over it.
+// Client talks to a running daemon over its Unix socket.
 type Client struct {
 	http *http.Client
 }
 
-// Unreachable wraps the error from failing to reach the daemon at all, so a
-// caller can tell "no daemon is running" apart from an error the daemon itself
-// returned and hint accordingly.
+// Unreachable wraps a failure to reach the daemon at all, distinct from an
+// error the daemon itself returned.
 type Unreachable struct{ Err error }
 
 func (u *Unreachable) Error() string { return u.Err.Error() }
 func (u *Unreachable) Unwrap() error { return u.Err }
 
-// Dial returns a client for the daemon at socketPath. It does not connect yet;
-// the first request does, and a connection-refused there means no daemon is
-// running.
+// Dial returns a client for the daemon at socketPath. It does not connect
+// until the first request.
 func Dial(socketPath string) *Client {
 	return &Client{
 		http: &http.Client{
@@ -45,8 +42,7 @@ func Dial(socketPath string) *Client {
 	}
 }
 
-// Version returns the running daemon's version, the cheapest call to confirm a
-// daemon is up and answering.
+// Version returns the running daemon's version.
 func (c *Client) Version(ctx context.Context) (string, error) {
 	var body struct {
 		Version string `json:"version"`
@@ -57,7 +53,7 @@ func (c *Client) Version(ctx context.Context) (string, error) {
 	return body.Version, nil
 }
 
-// ListRuns returns the runs the daemon is tracking, the data behind ps.
+// ListRuns returns the runs the daemon is tracking.
 func (c *Client) ListRuns(ctx context.Context) ([]RunInfo, error) {
 	var body struct {
 		Runs []RunInfo `json:"runs"`
@@ -68,47 +64,38 @@ func (c *Client) ListRuns(ctx context.Context) ([]RunInfo, error) {
 	return body.Runs, nil
 }
 
-// RunUsage is what a completed run cost and how long its tool call took, read
-// off the terminal run frame. CallDuration times the tool call alone, not the
-// boot the first run of an agent pays for.
+// RunUsage is what a completed run cost and how long its tool call took.
+// CallDuration times the call alone, excluding boot.
 type RunUsage struct {
 	RunID        string
 	CostMicroUSD int64
 	CallDuration time.Duration
 }
 
-// RunOnce runs an agent to completion through the daemon: it streams the run's
-// logs to logs as they arrive and returns the final tool result. It is the
-// daemon-client behind `agentcage run` and `agentcage call`.
-//
-// A failure to reach the daemon is reported distinctly from a failure the run
-// itself returned, so the CLI hints "is the daemon running?" only for the former.
+// RunOnce runs an agent to completion through the daemon, streaming its logs
+// to logs and returning the final tool result. A failure to reach the daemon
+// comes back as *Unreachable.
 func (c *Client) RunOnce(ctx context.Context, req RunRequest, logs io.Writer) (string, error) {
 	result, _, err := c.runStream(ctx, req, logs)
 	return result, err
 }
 
-// RunOnceUsage runs an agent to completion like RunOnce and also returns what
-// the run cost and how long its call took. It is the client behind the eval
-// runner, which checks a case's output against its cost and duration ceilings.
-// The usage is populated even when the run returns an error, so a case that
-// overspent and failed still reports its spend.
+// RunOnceUsage is RunOnce plus the run's cost and call duration. Usage is
+// populated even when the run returns an error.
 func (c *Client) RunOnceUsage(ctx context.Context, req RunRequest, logs io.Writer) (string, RunUsage, error) {
 	return c.runStream(ctx, req, logs)
 }
 
-// RecordRun runs an agent with replay recording on and returns the run id as
-// well as the result, so the caller can fetch the run's .replay afterward. It is
-// the client behind `agentcage replay record`.
+// RecordRun runs an agent with replay recording on, returning the run id
+// needed to fetch the .replay afterward.
 func (c *Client) RecordRun(ctx context.Context, req RunRequest, logs io.Writer) (runID, result string, err error) {
 	req.Record = true
 	result, usage, err := c.runStream(ctx, req, logs)
 	return usage.RunID, result, err
 }
 
-// runStream drives one /run request: it streams the run's logs to logs and
-// returns the final result plus the run's usage (id, cost, call duration).
-// RunOnce, RunOnceUsage, and RecordRun are thin wrappers.
+// runStream drives one /run request, streaming logs and returning the final
+// result plus usage.
 func (c *Client) runStream(ctx context.Context, req RunRequest, logs io.Writer) (result string, usage RunUsage, err error) {
 	body, err := json.Marshal(req)
 	if err != nil {
@@ -154,8 +141,7 @@ func (c *Client) runStream(ctx context.Context, req RunRequest, logs io.Writer) 
 	}
 }
 
-// FetchReplay returns a recorded run's .replay artifact bytes, the daemon-side
-// file `agentcage replay record` saves a host copy of.
+// FetchReplay returns a recorded run's .replay artifact bytes.
 func (c *Client) FetchReplay(ctx context.Context, id string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://unix/runs/"+id+"/replay", nil)
 	if err != nil {
@@ -172,9 +158,8 @@ func (c *Client) FetchReplay(ctx context.Context, id string) ([]byte, error) {
 	return io.ReadAll(resp.Body)
 }
 
-// Logs streams a run's logs to w. With follow it tails a live run until the run
-// ends; without it, it writes the run's log to date and returns. It is the
-// client behind `agentcage logs`.
+// Logs streams a run's logs to w. With follow it tails a live run until the
+// run ends; without it, it writes the log to date and returns.
 func (c *Client) Logs(ctx context.Context, id string, follow bool, w io.Writer) error {
 	path := "/runs/" + id + "/logs"
 	if follow {
@@ -197,8 +182,7 @@ func (c *Client) Logs(ctx context.Context, id string, follow bool, w io.Writer) 
 }
 
 // Events streams the daemon's lifecycle feed, calling onEvent for each event
-// until the caller's context is cancelled or the daemon closes the stream. It is
-// the client behind `agentcage events`.
+// until ctx is cancelled or the daemon closes the stream.
 func (c *Client) Events(ctx context.Context, onEvent func(Event)) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://unix/events", nil)
 	if err != nil {
@@ -225,8 +209,7 @@ func (c *Client) Events(ctx context.Context, onEvent func(Event)) error {
 	}
 }
 
-// Stats returns a live snapshot of every cage's resource usage, the data behind
-// `agentcage stats`.
+// Stats returns a live snapshot of every cage's resource usage.
 func (c *Client) Stats(ctx context.Context) ([]runtime.CageStat, error) {
 	var body struct {
 		Cages []runtime.CageStat `json:"cages"`
@@ -237,8 +220,8 @@ func (c *Client) Stats(ctx context.Context) ([]runtime.CageStat, error) {
 	return body.Cages, nil
 }
 
-// Trace returns a finished run's trace, the data behind `agentcage trace`. It
-// errors when the run made no LLM call (no trace was built) or is unknown.
+// Trace returns a finished run's trace. It errors when the run made no LLM
+// call (no trace was built) or is unknown.
 func (c *Client) Trace(ctx context.Context, id string) (*telemetry.Trace, error) {
 	var tr telemetry.Trace
 	if err := c.get(ctx, "/runs/"+id+"/trace", &tr); err != nil {
@@ -247,8 +230,8 @@ func (c *Client) Trace(ctx context.Context, id string) (*telemetry.Trace, error)
 	return &tr, nil
 }
 
-// Spend returns a live run's current LLM spend, the data behind `agentcage
-// spend`. It errors when the run is not reasoning or no longer running.
+// Spend returns a live run's current LLM spend. It errors when the run is not
+// reasoning or no longer running.
 func (c *Client) Spend(ctx context.Context, id string) (llmgateway.SpendReport, error) {
 	var report llmgateway.SpendReport
 	if err := c.get(ctx, "/runs/"+id+"/spend", &report); err != nil {
@@ -257,8 +240,7 @@ func (c *Client) Spend(ctx context.Context, id string) (llmgateway.SpendReport, 
 	return report, nil
 }
 
-// StartRun asks the daemon to boot and hold an agent, returning the run id the
-// held run is tracked under.
+// StartRun asks the daemon to boot and hold an agent, returning its run id.
 func (c *Client) StartRun(ctx context.Context, ref string) (string, error) {
 	var out struct {
 		ID string `json:"id"`
@@ -285,23 +267,23 @@ func (c *Client) SetBudget(ctx context.Context, id string, microUSD int64) error
 	return c.post(ctx, "/runs/"+id+"/budget", map[string]int64{"micro_usd": microUSD}, nil)
 }
 
-// ServedAgent is one endpoint the front door opened: the address it answers on
-// under /agents/ and the public tools it exposes.
+// ServedAgent is one endpoint the front door opened: its /agents/ address and
+// the public tools it exposes.
 type ServedAgent struct {
 	Address string   `json:"address"`
 	Tools   []string `json:"tools"`
 }
 
-// ServeResult is the front door the daemon opened for a serve request, plus any
-// boot-time notes the operator should see (a clamped live-cage cap, say).
+// ServeResult is the front door the daemon opened for a serve request, plus
+// any boot-time warnings for the operator.
 type ServeResult struct {
 	Listen   string        `json:"listen"`
 	Agents   []ServedAgent `json:"agents"`
 	Warnings []string      `json:"warnings,omitempty"`
 }
 
-// Serve asks the daemon to boot an agent's exposed set and open an MCP front
-// door bound to listen, returning the endpoints it opened.
+// Serve asks the daemon to register an agent's exposed set and open an MCP
+// front door bound to listen.
 func (c *Client) Serve(ctx context.Context, ref, listen string, expose, noExpose []string) (ServeResult, error) {
 	var out ServeResult
 	err := c.post(ctx, "/serve", map[string]any{
@@ -319,8 +301,8 @@ func (c *Client) StopRun(ctx context.Context, id string) error {
 }
 
 // Shutdown asks the daemon to stop. The daemon acks before going down, but the
-// connection may still race the shutdown, so a transport error here is not
-// treated as failure by Stop, which confirms via a poll instead.
+// connection may still race the shutdown; a transport error here does not mean
+// the request was lost.
 func (c *Client) Shutdown(ctx context.Context) error {
 	return c.post(ctx, "/shutdown", nil, nil)
 }
@@ -344,8 +326,8 @@ func (c *Client) get(ctx context.Context, path string, out any) error {
 	return nil
 }
 
-// post sends a JSON body (or none) and decodes a JSON response into out when
-// one is expected. A 200 with out decodes; a 204 (stop) carries no body.
+// post sends a JSON body (or none); out decodes a 200 response, a 204 carries
+// no body.
 func (c *Client) post(ctx context.Context, path string, body, out any) error {
 	var rdr io.Reader
 	if body != nil {
@@ -377,7 +359,7 @@ func (c *Client) post(ctx context.Context, path string, body, out any) error {
 }
 
 // errorBody extracts the JSON error message from a non-200 response, falling
-// back to the status text when the body is not the expected shape.
+// back to the status text.
 func errorBody(resp *http.Response) string {
 	var body struct {
 		Error string `json:"error"`

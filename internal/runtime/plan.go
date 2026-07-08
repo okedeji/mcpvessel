@@ -16,82 +16,70 @@ import (
 )
 
 const (
-	// agentServePort is the port every sub-agent serves streamable-HTTP on
-	// inside the run network. Each agent is its own cage, so they all
-	// share one port without colliding.
+	// agentServePort is the streamable-HTTP port every sub-agent serves on.
+	// Each agent is its own cage, so the port never collides.
 	agentServePort = "8000"
 
-	// mcpServePath is where a sub-agent serves MCP and where the MCP gateway
-	// forwards an edge to. Both sides have to agree: the agent binds it,
-	// the MCP gateway targets it.
+	// mcpServePath is where a sub-agent serves MCP: the agent binds it, the
+	// MCP gateway targets it.
 	mcpServePath = "/mcp"
 )
 
-// agentTarget is the gateway's forward URL for a sub-agent reachable at host:
-// a container name for a prewarmed cage, or the IP the daemon resolves once the
-// cage activates. One owner of the URL shape so both ends always agree.
+// agentTarget is the gateway's forward URL for a sub-agent reachable at host.
+// One owner of the URL shape so both ends always agree.
 func agentTarget(host string) string {
 	return "http://" + host + ":" + agentServePort + mcpServePath
 }
 
-// runPlan is everything the orchestrator needs to start a USES tree: a network
-// per agent, a detached container spec for each non-root agent and for the
-// MCP gateway, the MCP gateway's routing table, and the sub-agent URLs the root parent
-// gets injected. It is derived purely from the resolved tree, so the
-// security-load-bearing wiring (which agent sits on which network, which edge
-// denies what) is unit tested without starting a container.
+// runPlan is everything the orchestrator needs to start a USES tree. Derived
+// purely from the resolved tree, so the security-load-bearing wiring (which
+// agent sits on which network, which edge denies what) is unit tested without
+// starting a container.
 type runPlan struct {
 	MCPGatewayCfg mcpgateway.Config
 	MCPGateway    ContainerSpec
 	Agents        []plannedAgent
 	RootEnv       map[string]string
 
-	// AgentNets maps each agent with a dedicated network to it: the root and the
-	// always-warm cages (whose networks live for the whole run). Pooled cages are
-	// not here; they draw a network from a pool at activation. RootNet is the
-	// attached root's, carried out because the root starts outside the sub-agent
-	// loop. Each cage alone on its own network, dedicated or pooled, is what stops
-	// it from reaching a sibling directly and bypassing the MCP gateway's deny.
+	// AgentNets maps agents with a dedicated network: the root and the
+	// always-warm cages. Pooled cages draw a network at activation instead.
+	// Each cage alone on its own network is what stops it reaching a sibling
+	// and bypassing the MCP gateway's deny. RootNet is carried out because the
+	// root starts outside the sub-agent loop.
 	AgentNets map[string]string
 	RootNet   string
 
-	// ReasonPool and PlainPool are the reusable networks pooled cages draw from:
-	// the reasoning pool the LLM gateway joins (so reasoning cages reach it) and
-	// the plain pool it does not (so a non-reasoning cage never shares a network
-	// with the key holder). Each is sized to the per-run live cap, capped by how
-	// many cages of that kind the tree even has. One cage occupies a pool network
-	// at a time, returned on eviction, so sibling isolation holds across reuse.
+	// ReasonPool and PlainPool are the reusable networks pooled cages draw
+	// from. The LLM gateway joins only the reasoning pool, so a non-reasoning
+	// cage never shares a network with the key holder. Each is sized to the
+	// per-run live cap; one cage occupies a pool network at a time, so sibling
+	// isolation holds across reuse.
 	ReasonPool []string
 	PlainPool  []string
 
-	// LLMNets are the networks the LLM gateway joins: the dedicated networks of
-	// reasoning always-warm cages and the root, plus the whole reasoning pool.
+	// LLMNets are the networks the LLM gateway joins: the dedicated networks
+	// of reasoning cages plus the whole reasoning pool.
 	LLMNets []string
 
-	// LLMAgents maps each reasoning agent's key to its advisory model. Empty
-	// when nothing in the tree reasons, which tells the orchestrator no LLM
-	// gateway is needed. LLMTokens maps each reasoning agent's key to the
-	// unguessable token its AGENTCAGE_LLM_URL carries, so the LLM gateway routes
-	// by the token, not the guessable agent key. Budget is the root's advisory cap
-	// in micro-USD, the run's shared pool unless the operator overrides it.
+	// LLMAgents maps each reasoning agent's key to its advisory model; empty
+	// means no LLM gateway is needed. LLMTokens holds the unguessable token
+	// each agent's AGENTCAGE_LLM_URL carries; the gateway routes by token, not
+	// the guessable agent key. Budget is the root's advisory cap in micro-USD.
 	LLMAgents map[string]string
 	LLMTokens map[string]string
 	Budget    int64
 
 	// EgressAgents maps each allow: agent's container name to its network and
-	// the hosts it may reach. The egress proxy multi-homes onto each network and
-	// keys its allow-list by the agent's address on it. Empty when nothing in
-	// the tree declares allow:, which tells the orchestrator no proxy is needed.
+	// permitted hosts; empty means no egress proxy is needed.
 	EgressAgents map[string]egressAgent
 
-	// EdgeNodes maps a gateway edge's capability token to the sub-agent node key
-	// it routes to. The activation manager folds an activate request (which names
-	// an edge, all the gateway knows) back to the node it must boot.
+	// EdgeNodes folds a gateway edge's capability token back to the sub-agent
+	// node it routes to, which is how an activate request (naming only an
+	// edge) finds the node to boot.
 	EdgeNodes map[string]string
 
-	// RootCap is the attached root's resolved resource cap. The root runs
-	// outside the sub-agent loop, so its cap is resolved here too rather than
-	// left to the runtime default, which would silently ignore the operator.
+	// RootCap is the attached root's resolved cap, resolved here because the
+	// root runs outside the sub-agent loop.
 	RootCap config.Cap
 }
 
@@ -102,11 +90,9 @@ type egressAgent struct {
 	Hosts   []string
 }
 
-// plannedAgent pairs a non-root tree node with the detached container spec that
-// runs it. The node carries the bundle and manifest the orchestrator builds the
-// image from. Prewarm marks an agent the skeleton boots up front (the root's
-// direct children plus the pinned-warm ones); the rest activate on first call.
-// AlwaysWarm marks an agent that, once warm, is never reaped or evicted.
+// plannedAgent pairs a non-root tree node with its detached container spec.
+// Prewarm boots with the skeleton; the rest activate on first call. AlwaysWarm
+// is never reaped or evicted.
 type plannedAgent struct {
 	Node       *agentNode
 	Spec       ContainerSpec
@@ -114,11 +100,11 @@ type plannedAgent struct {
 	AlwaysWarm bool
 }
 
-// buildRunPlan turns a resolved tree into the containers, network, and
-// MCP gateway routing for a run. runID scopes every name so concurrent runs do
-// not collide. Each USES edge becomes one MCP gateway route (target plus deny)
-// and one injected AGENTCAGE_USES_<ALIAS>_URL on the caller pointing at the
-// MCP gateway, so every call in the tree passes the referee that enforces deny.
+// buildRunPlan turns a resolved tree into the containers, networks, and MCP
+// gateway routing for a run. runID scopes every name so concurrent runs do not
+// collide. Each USES edge becomes one gateway route (target plus deny) and one
+// injected AGENTCAGE_USES_<ALIAS>_URL on the caller, so every call in the tree
+// passes the referee that enforces deny.
 func buildRunPlan(tree *runTree, runID string, ops operatorInputs) (*runPlan, error) {
 	mcpGatewayName := runID + "-gw"
 
@@ -148,11 +134,9 @@ func buildRunPlan(tree *runTree, runID string, ops operatorInputs) (*runPlan, er
 		return nil, err
 	}
 
-	// pinnedWarm names the nodes kept warm for the run's life: those declaring
-	// EGRESS allow: (the egress proxy keys them by an IP that must exist at boot
-	// and stay put, so they cannot be lazy or reaped) and those the operator
-	// listed in keep_warm. They are booted with the skeleton and never reaped or
-	// evicted.
+	// pinnedWarm: nodes kept warm for the run's life. EGRESS allow: agents
+	// cannot be lazy or reaped (the egress proxy keys them by an IP that must
+	// exist at boot and stay put); operator keep_warm entries join them.
 	keepWarm := map[string]bool{}
 	for _, ref := range ops.keepWarm {
 		keepWarm[ref] = true
@@ -167,12 +151,11 @@ func buildRunPlan(tree *runTree, runID string, ops operatorInputs) (*runPlan, er
 		}
 	}
 
-	// Pooled cages (everything not pinned-warm, the root, or banned) draw a
-	// network from one of two pools instead of holding a dedicated one. Each pool
-	// is sized to the live cap, capped by how many cages of that kind the tree has,
-	// so a small tree pre-creates few networks and a huge one stays bounded well
-	// under the CNI wall. Reasoning cages (those with a MODEL) use the reasoning
-	// pool the LLM gateway joins; the rest use the plain pool it does not.
+	// Pooled cages (not pinned-warm, root, or banned) draw from one of two
+	// pools sized to the live cap, capped by how many cages of that kind the
+	// tree has, keeping network count bounded well under the CNI wall.
+	// Reasoning cages (a MODEL) use the pool the LLM gateway joins; the rest
+	// the plain pool.
 	poolNet := func(kind string, i int) string {
 		return runID + "-" + kind + "pool-" + strconv.Itoa(i)
 	}
@@ -194,12 +177,10 @@ func buildRunPlan(tree *runTree, runID string, ops operatorInputs) (*runPlan, er
 		plan.PlainPool = append(plan.PlainPool, poolNet("p", i))
 	}
 
-	// The skeleton boots the root's direct children up front (the hot path), up
-	// to the operator's prewarm count, plus every pinned-warm node; the rest
-	// activate on first call. An edge to a non-prewarmed node is marked inactive,
-	// so the gateway holds the first call to it while the daemon boots its
-	// sub-agent. Direct children are taken in sorted key order so the prewarmed
-	// set is deterministic when the count is below the fan-out.
+	// Prewarm the root's direct children (the hot path, up to the operator's
+	// count, in sorted order for determinism) plus every pinned-warm node. The
+	// rest get inactive edges: the gateway holds their first call while the
+	// daemon boots the sub-agent.
 	prewarmed := map[string]bool{}
 	for key := range pinnedWarm {
 		prewarmed[key] = true
@@ -240,8 +221,8 @@ func buildRunPlan(tree *runTree, runID string, ops operatorInputs) (*runPlan, er
 		plan.MCPGatewayCfg.Edges[edgeKey] = edge
 		plan.EdgeNodes[edgeKey] = e.Sub
 
-		// A banned edge still gets its URL injected, so the caller reaches the
-		// MCP gateway and gets a clean banned error rather than a missing variable.
+		// A banned edge still gets its URL injected: the caller reaches the
+		// gateway and gets a clean banned error rather than a missing variable.
 		url := "http://" + mcpGatewayName + ":" + env.DefaultMCPGatewayPort + "/" + edgeKey + mcpServePath
 		if e.Caller == tree.Root {
 			plan.RootEnv[env.UsesURL(e.Alias)] = url
@@ -263,8 +244,8 @@ func buildRunPlan(tree *runTree, runID string, ops operatorInputs) (*runPlan, er
 			agentEnv[k] = v
 		}
 		node := tree.Nodes[key]
-		// A pinned-warm cage holds a dedicated network for the run's life; a pooled
-		// cage gets none here and draws one from a pool when it activates.
+		// Pinned-warm cages hold a dedicated network; pooled cages draw one
+		// at activation.
 		var nets []string
 		if pinnedWarm[key] {
 			plan.AgentNets[key] = nodeNet(key)
@@ -303,8 +284,7 @@ func buildRunPlan(tree *runTree, runID string, ops operatorInputs) (*runPlan, er
 		})
 	}
 
-	// The root reasons over its own LLM URL too. It is not in the sub-agent
-	// loop above (it runs attached, not detached), so inject it here.
+	// The root runs attached, outside the loop above; wire it here.
 	plan.AgentNets[tree.Root] = nodeNet(tree.Root)
 	plan.RootNet = nodeNet(tree.Root)
 	if model := nodeModel(tree.Nodes[tree.Root]); model != "" {
@@ -327,9 +307,8 @@ func buildRunPlan(tree *runTree, runID string, ops operatorInputs) (*runPlan, er
 		return nil, fmt.Errorf("agent %s: %w", tree.Root, err)
 	}
 
-	// The LLM gateway joins the dedicated networks of reasoning cages (the root
-	// and any reasoning always-warm cage) plus the whole reasoning pool, so every
-	// reasoning cage can reach it wherever it lands and no plain cage can.
+	// The LLM gateway joins the dedicated networks of reasoning cages plus the
+	// whole reasoning pool: every reasoning cage reaches it, no plain cage can.
 	for _, key := range sortedStringKeys(plan.LLMAgents) {
 		if net, ok := plan.AgentNets[key]; ok {
 			plan.LLMNets = append(plan.LLMNets, net)
@@ -342,9 +321,8 @@ func buildRunPlan(tree *runTree, runID string, ops operatorInputs) (*runPlan, er
 	if err != nil {
 		return nil, fmt.Errorf("encoding MCP gateway routing table: %w", err)
 	}
-	// The MCP gateway joins every dedicated network plus both pools, so it is the
-	// only host that can reach every cage and the only one a caller resolves its
-	// USES URLs to. Ordered for a deterministic, testable arg list.
+	// The MCP gateway joins every dedicated network plus both pools: the only
+	// host that can reach every cage. Ordered for a deterministic arg list.
 	mcpGatewayNets := make([]string, 0, len(plan.AgentNets)+len(plan.ReasonPool)+len(plan.PlainPool))
 	for _, key := range sortedStringKeys(plan.AgentNets) {
 		mcpGatewayNets = append(mcpGatewayNets, plan.AgentNets[key])
@@ -366,12 +344,11 @@ func buildRunPlan(tree *runTree, runID string, ops operatorInputs) (*runPlan, er
 	return plan, nil
 }
 
-// classifyBans reads the root's BAN directives and splits them per node:
-// wholeBanned names agents banned outright (not started, every edge to them
-// rejected); toolBanned names the tools to merge into every edge reaching an
-// agent. A BAN matches a node when the pinned ref shares its registry and
-// repository, so a ban takes out the agent whatever version a dependency
-// pinned. Only the root's bans apply, and the root itself is never a target.
+// classifyBans splits the root's BAN directives per node: wholeBanned agents
+// never start, toolBanned tools merge into every edge reaching the agent. A
+// BAN matches by registry and repository, so it takes out the agent whatever
+// version a dependency pinned. Only the root's bans apply; the root itself is
+// never a target.
 func classifyBans(tree *runTree) (wholeBanned map[string]bool, toolBanned map[string][]string, err error) {
 	wholeBanned = map[string]bool{}
 	toolBanned = map[string][]string{}
@@ -420,10 +397,9 @@ func mergeDeny(a, b []string) []string {
 	return out
 }
 
-// agentImageRef is the local containerd image ref a tree node builds into:
-// its name from the agent's repository, its tag the locked digest. The
-// digest in the tag keeps two pins of the same agent distinct and lets an
-// already-built image be reused or skipped.
+// agentImageRef is the local image ref a tree node builds into: the repository
+// name tagged with the locked digest, so two pins of the same agent stay
+// distinct and a built image is reused.
 func agentImageRef(node *agentNode) string {
 	name := node.Ref.Repository
 	if i := strings.LastIndex(name, "/"); i >= 0 {
@@ -437,11 +413,10 @@ func agentImageRef(node *agentNode) string {
 }
 
 // capabilityToken is the unguessable path a caller addresses one gateway route
-// by, a USES edge or an LLM route. It replaces a guessable key: a gateway's
-// table holds every route in the run and authenticates no caller, so a
-// predictable key let any cage reach a route by enumerating keys. The token
-// goes only into the owning caller's injected URL, and per-agent networks keep
-// a sibling from observing it, so a route is reachable only by its grantee.
+// by. The gateway holds every route and authenticates no caller, so a
+// predictable key would let any cage enumerate routes. The token goes only
+// into the owning caller's injected URL; per-agent networks keep siblings from
+// observing it.
 func capabilityToken() (string, error) {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {

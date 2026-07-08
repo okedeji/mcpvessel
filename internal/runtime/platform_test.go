@@ -7,9 +7,8 @@ import (
 	"testing"
 )
 
-// Defensively make sure the two Provisioner types stay assignable to
-// the interface. A change that breaks this would silently break the
-// CLI wiring downstream.
+// Keep both Provisioner types assignable to the interface; a break here
+// silently breaks the CLI wiring downstream.
 var (
 	_ Provisioner = (*NativeProvisioner)(nil)
 	_ Provisioner = (*LimaProvisioner)(nil)
@@ -61,8 +60,7 @@ func TestNerdctlRunArgs_DetachedNetworkedWithEnv(t *testing.T) {
 			"AGENTCAGE_USES_ECHO_URL": "http://gw/echo/mcp",
 		},
 	}), " ")
-	// Env keys are sorted, so the order is deterministic regardless of map
-	// iteration. With no mode args the image ref is last.
+	// Env keys are sorted; with no mode args the image ref is last.
 	want := "run --name cg-sub -d --network run-net " +
 		"--env AGENTCAGE_SERVE_HTTP=:8000 " +
 		"--env AGENTCAGE_USES_ECHO_URL=http://gw/echo/mcp " +
@@ -101,8 +99,7 @@ func TestNerdctlRunArgs_ModeArgsFollowImage(t *testing.T) {
 }
 
 func TestNerdctlRunArgs_MultiHomed(t *testing.T) {
-	// A gateway joins many networks in order: the run's per-agent nets plus the
-	// egress door. Each becomes one --network, preserving order.
+	// Each network becomes one --network, preserving order.
 	got := strings.Join(nerdctlRunArgs(ContainerSpec{
 		RunID:    "run-llm",
 		ImageRef: "agentcage/gateway:0.1.0",

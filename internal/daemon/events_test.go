@@ -30,14 +30,10 @@ func TestEventBus_UnsubscribeClosesChannel(t *testing.T) {
 	if _, ok := <-ch; ok {
 		t.Fatal("channel should be closed after unsubscribe")
 	}
-	// Publishing after the last unsubscribe is a no-op, never a send on a closed
-	// channel.
+	// Publishing after the last unsubscribe must not send on a closed channel.
 	b.publish(Event{Type: EventRunEnded, RunID: "x"})
 }
 
-// TestEventBus_DropsForSlowSubscriber locks the fail-safe: a watcher that never
-// drains must not block the publisher, so a stuck `agentcage events` client
-// cannot wedge a run's lifecycle.
 func TestEventBus_DropsForSlowSubscriber(t *testing.T) {
 	b := newEventBus()
 	_, unsub := b.subscribe() // never drained
@@ -57,8 +53,8 @@ func TestEventBus_DropsForSlowSubscriber(t *testing.T) {
 	}
 }
 
-// TestFinish_PublishesEndedEvent locks that a run's close-out emits its event
-// even with history off and no gateway to read spend from.
+// The ended event must fire even with history off and no gateway to read
+// spend from.
 func TestFinish_PublishesEndedEvent(t *testing.T) {
 	d := New()
 	ch, unsub := d.events.subscribe()

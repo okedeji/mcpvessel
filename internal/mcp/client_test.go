@@ -12,12 +12,9 @@ import (
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// testServer starts an in-memory MCP server on one end of a net.Pipe,
-// hands the other end to a Connect-driven Client, and returns both.
-// The server is configured by the addTools callback; passing nil
-// produces a server with no tools registered.
-//
-// Cleanup is registered with t.Cleanup so callers do not have to defer.
+// testServer starts an in-memory MCP server on one end of a net.Pipe and a
+// connected Client on the other. addTools configures the server; nil means
+// no tools. Cleanup is registered via t.Cleanup.
 func testServer(t *testing.T, addTools func(s *mcpsdk.Server)) (*Client, *mcpsdk.Server) {
 	t.Helper()
 
@@ -60,9 +57,6 @@ func TestConnect_HandshakeSucceeds(t *testing.T) {
 	// Reaching here means the MCP initialize round-trip completed.
 }
 
-// TestConnectHTTP_CallsToolOverHTTP exercises the transport a detached cage
-// serves and the daemon dials: a real streamable-HTTP MCP server at /mcp,
-// reached by ConnectHTTP rather than a stdio pipe.
 func TestConnectHTTP_CallsToolOverHTTP(t *testing.T) {
 	server := mcpsdk.NewServer(&mcpsdk.Implementation{
 		Name:    "agentcage-test-server",
@@ -93,9 +87,9 @@ func TestConnectHTTP_CallsToolOverHTTP(t *testing.T) {
 	}
 }
 
-// TestConnectHTTP_RetriesThenDeadline pins the cold-start contract: with nothing
-// listening, ConnectHTTP keeps retrying and returns an error when the context
-// deadline passes rather than hanging or failing on the first refusal.
+// TestConnectHTTP_RetriesThenDeadline pins the cold-start contract:
+// ConnectHTTP keeps retrying rather than failing on the first refusal, and
+// errors out when the deadline passes rather than hanging.
 func TestConnectHTTP_RetriesThenDeadline(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
@@ -104,10 +98,6 @@ func TestConnectHTTP_RetriesThenDeadline(t *testing.T) {
 	}
 }
 
-// TestConnect_AnswersElicitation proves the agent-facing wiring: a client built
-// with WithElicitation advertises the capability, so the server can ask a
-// question mid-call, and the question reaches the handler whose answer the
-// server then folds into its result.
 func TestConnect_AnswersElicitation(t *testing.T) {
 	srvConn, cliConn := net.Pipe()
 	t.Cleanup(func() {
@@ -149,9 +139,8 @@ func TestConnect_AnswersElicitation(t *testing.T) {
 	}
 }
 
-// TestConnect_ElicitationUnadvertisedByDefault is the gate: a plain client never
-// advertises elicitation, so a server that tries to ask fails the call closed.
-// This is what keeps a one-shot run/call from offering a question channel.
+// A plain client never advertises elicitation, so a server that tries to
+// ask fails the call closed.
 func TestConnect_ElicitationUnadvertisedByDefault(t *testing.T) {
 	client, _ := testServer(t, registerAskTool)
 
@@ -222,8 +211,7 @@ func TestListTools_CapturesInputSchema(t *testing.T) {
 	if echo.Schema == nil {
 		t.Fatal("echo tool's input schema was not captured")
 	}
-	// AddTool infers the schema from echoInput{Message string}, so the
-	// captured schema must describe a "message" property.
+	// AddTool infers the schema from echoInput{Message string}.
 	props, ok := echo.Schema["properties"].(map[string]any)
 	if !ok {
 		t.Fatalf("schema has no properties object: %+v", echo.Schema)
@@ -272,7 +260,6 @@ func TestCallTool_UnknownTool(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected error for unknown tool, got nil")
 	}
-	// Error must name the tool so the operator can see which call failed.
 	if !errorContains(err, "nonexistent") {
 		t.Errorf("error does not name the tool: %v", err)
 	}
@@ -361,8 +348,8 @@ func registerGreetTool(s *mcpsdk.Server) {
 	})
 }
 
-// registerAskTool exposes a tool that asks the caller a question mid-call and
-// folds the answer into its result, the server side of an elicitation round trip.
+// registerAskTool is the server side of an elicitation round trip: it asks
+// the caller a question mid-call and folds the answer into its result.
 func registerAskTool(s *mcpsdk.Server) {
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name:        "ask",
@@ -388,8 +375,6 @@ func registerFailingTool(s *mcpsdk.Server) {
 	})
 }
 
-// errorContains is a thin shim around strings.Contains for use in
-// table-driven error-message assertions.
 func errorContains(err error, needle string) bool {
 	return err != nil && contains(err.Error(), needle)
 }

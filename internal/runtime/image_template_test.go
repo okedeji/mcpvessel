@@ -49,10 +49,8 @@ func TestGenerateDockerfile_RunStepsInOrder(t *testing.T) {
 }
 
 func TestGenerateDockerfile_RunPrecedesCopy(t *testing.T) {
-	// Cache-friendly ordering: RUN before COPY. Editing the agent's
-	// source busts the COPY layer; the expensive dependency install
-	// stays cached. Regressing this would push rebuild times from
-	// seconds back into the 20–30s range.
+	// RUN before COPY keeps the dependency install cached across source
+	// edits; regressing this pushes rebuilds from seconds back to 20-30s.
 	af := &agentfile.Agentfile{
 		From:       "python:3.12-slim",
 		Entrypoint: "python3 agent.py",
@@ -81,9 +79,8 @@ func TestGenerateDockerfile_EnvDeterministic(t *testing.T) {
 			"TIMEOUT":   "30",
 		},
 	}
-	// Run codegen twice; output must be byte-identical regardless of
-	// Go's map iteration order, otherwise BuildKit's cache key thrashes
-	// on every build.
+	// Output must be byte-identical regardless of map iteration order, or
+	// BuildKit's cache key thrashes on every build.
 	first := generateDockerfile(dockerfileInput{Agentfile: af})
 	for i := 0; i < 10; i++ {
 		if got := generateDockerfile(dockerfileInput{Agentfile: af}); got != first {
@@ -170,9 +167,7 @@ func TestGenerateDockerfile_EmptyLabelsSkipped(t *testing.T) {
 }
 
 func TestGenerateDockerfile_EntrypointQuoting(t *testing.T) {
-	// Multi-token entrypoint with spaces must be quoted as a single
-	// shell -c argument so Dockerfile parses it as JSON-form ENTRYPOINT
-	// with three elements: sh, -c, the full command string.
+	// A multi-token entrypoint must land as one quoted sh -c argument.
 	af := &agentfile.Agentfile{
 		From:       "python:3.12-slim",
 		Entrypoint: `python3 -m agent --flag "value"`,
@@ -189,8 +184,8 @@ func TestGenerateDockerfile_SyntaxDirectivePresent(t *testing.T) {
 		Entrypoint: "python3 main.py",
 	}
 	got := generateDockerfile(dockerfileInput{Agentfile: af})
-	// The "# syntax=" parser directive must appear early so BuildKit
-	// pulls the named frontend before processing the rest of the file.
+	// The "# syntax=" directive must appear early so BuildKit pulls the named
+	// frontend before processing the rest of the file.
 	if !strings.HasPrefix(got, "# Auto-generated") {
 		t.Errorf("expected auto-generated header")
 	}

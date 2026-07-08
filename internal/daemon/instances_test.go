@@ -10,9 +10,7 @@ import (
 	"github.com/okedeji/agentcage/internal/mcp"
 )
 
-// fakeSession is a managedSession that records whether it was released, standing
-// in for a real per-client instance so the manager is testable without booting a
-// container.
+// fakeSession is a managedSession that records whether it was released.
 type fakeSession struct {
 	id       string
 	released atomic.Bool
@@ -28,8 +26,8 @@ func (f *fakeSession) Release() error {
 }
 
 // newTestManager builds a manager whose boot hands out fakeSessions and counts
-// boots. The boot blocks on gate when gate is non-nil, so a test can force
-// concurrent first-calls to overlap.
+// boots. A non-nil gate blocks each boot so a test can force concurrent
+// first-calls to overlap.
 func newTestManager(t *testing.T, maxClients int, idleTTL time.Duration, gate chan struct{}) (*instanceManager, *int32) {
 	t.Helper()
 	var boots int32
@@ -62,7 +60,6 @@ func TestInstanceManager_PerSessionInstancesAndReuse(t *testing.T) {
 		t.Fatalf("boots = %d, want 2 (one per distinct session)", *boots)
 	}
 
-	// The same session reuses its instance: no new boot, same underlying session.
 	a2, ra2, err := m.acquire(ctx, "client-a")
 	if err != nil {
 		t.Fatalf("re-acquire a: %v", err)
@@ -92,8 +89,7 @@ func TestInstanceManager_SingleFlightConcurrentFirstCalls(t *testing.T) {
 			}
 		}()
 	}
-	// Let all callers reach the boot before unblocking it, so they would each
-	// boot if single-flight did not collapse them.
+	// Let every caller reach the boot before unblocking it.
 	time.Sleep(50 * time.Millisecond)
 	close(gate)
 	wg.Wait()
@@ -140,7 +136,6 @@ func TestInstanceManager_EvictsPastTTLAtCap(t *testing.T) {
 	old, rOld, _ := m.acquire(ctx, "old")
 	rOld() // idle at base
 
-	// Past the TTL, a new client at the cap reclaims the abandoned instance.
 	nowFunc = func() time.Time { return base.Add(2 * time.Minute) }
 	_, rNew, err := m.acquire(ctx, "new")
 	if err != nil {
@@ -169,7 +164,6 @@ func TestInstanceManager_FailsClosedWhenFullOfLiveClients(t *testing.T) {
 	}
 	defer rLive() // held in flight: not reapable, within TTL
 
-	// A newcomer cannot evict a live client, so it waits then fails closed.
 	if _, _, err := m.acquire(ctx, "newcomer"); err == nil {
 		t.Fatal("expected a capacity error when full of live clients")
 	}
@@ -208,7 +202,6 @@ func TestInstanceManager_LifecycleHooksRecordEachInstanceOnce(t *testing.T) {
 		t.Errorf("clientCount = %d, want 1", got)
 	}
 
-	// Reusing a live instance is not a new boot, so onStart must not re-fire.
 	_, ra2, _ := m.acquire(ctx, "client-a")
 	ra2()
 	mu.Lock()

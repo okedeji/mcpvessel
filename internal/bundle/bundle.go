@@ -16,23 +16,17 @@ import (
 	"github.com/okedeji/agentcage/internal/agentfile"
 )
 
-// AgentfileName is the name the parser expects to find at the root of a
-// source directory.
+// AgentfileName is the filename expected at the root of a source directory.
 const AgentfileName = "Agentfile"
 
-// builtWith identifies which agentcage release produced a bundle. It is
-// set by the CLI via SetBuiltWith before any Build call.
-//
-// Embedding the version in the manifest lets future tooling correlate
-// bundle behavior with a specific release if a bug ever needs
-// triangulating across versions.
+// builtWith identifies the agentcage release that produced a bundle,
+// recorded in the manifest. The CLI sets it via SetBuiltWith before Build.
 var builtWith = "agentcage dev"
 
-// SetBuiltWith sets the identifier recorded in every manifest produced
-// by subsequent Build calls. The CLI passes the current binary version.
+// SetBuiltWith sets the version recorded in manifests from subsequent Builds.
 func SetBuiltWith(s string) { builtWith = s }
 
-// nowFunc is overridable so tests can pin BuiltAt without flakiness.
+// nowFunc is overridable so tests can pin BuiltAt.
 var nowFunc = time.Now
 
 // Option configures one Build invocation.
@@ -45,39 +39,33 @@ type options struct {
 	introspectSet bool
 }
 
-// IntrospectedTool is one tool as the agent's MCP server reported it
-// during build-time introspection: its name, plus the description and
-// input schema that enrich the catalog entry. The bundle package does not
-// know how to boot an agent; the caller introspects and supplies these.
+// IntrospectedTool is one tool as the agent's MCP server reported it during
+// build-time introspection. This package cannot boot an agent; the caller
+// introspects and supplies these.
 type IntrospectedTool struct {
 	Name        string
 	Description string
 	Schema      map[string]any
 }
 
-// WithProgress registers a callback fired before each major step of the
-// build. step is 1-indexed; total is fixed at the number of steps the
-// current Build implementation runs (currently 3).
+// WithProgress registers a callback fired before each build step. step is
+// 1-indexed.
 func WithProgress(fn func(step, total int, message string)) Option {
 	return Option(func(o *options) { o.onStep = fn })
 }
 
-// WithUsesResolver registers the function that resolves each USES
-// dependency's tag to the digest locked into the manifest. The bundle
-// package does not know how to reach a registry; the caller supplies a
-// closure over its registry client. Without this option no digests are
-// recorded. A resolver that returns an error fails the build: a bundle
-// that cannot pin its dependencies must not ship claiming it did.
+// WithUsesResolver registers the function that resolves each USES tag to the
+// digest locked into the manifest. Without it no digests are recorded. A
+// resolver error fails the build: a bundle that cannot pin its dependencies
+// must not ship claiming it did.
 func WithUsesResolver(fn func(u agentfile.Use) (string, error)) Option {
 	return Option(func(o *options) { o.resolveDigest = fn })
 }
 
 // WithIntrospectedTools supplies the tools introspected from the running
-// agent so the catalog carries descriptions, schemas, and the agent's
-// private tools, not just the MAIN and EXPOSE declarations. Visibility is
-// still classified from the Agentfile. Passing this option (even with an
-// empty slice) switches the catalog to the introspected path; without it,
-// the catalog is built from the Agentfile directives alone.
+// agent. Passing the option (even with an empty slice) switches the catalog
+// to the introspected path; visibility is still classified from the
+// Agentfile.
 func WithIntrospectedTools(tools []IntrospectedTool) Option {
 	return Option(func(o *options) {
 		o.introspected = tools
@@ -87,15 +75,10 @@ func WithIntrospectedTools(tools []IntrospectedTool) Option {
 
 const buildSteps = 3
 
-// Build packages the source tree at srcDir into a .agent file written
-// to outPath.
-//
-// srcDir must contain an Agentfile at its root. The Agentfile is parsed
-// and validated; if it does not parse, no output is written.
-//
-// The resulting .agent file is a gzip-tar with a manifest.json at the
-// root and a files/ directory holding every file from srcDir (except
-// VCS metadata and the output file itself).
+// Build packages the source tree at srcDir into a .agent file at outPath: a
+// gzip-tar with manifest.json at the root and a files/ directory holding
+// every source file except VCS metadata and the output itself. srcDir must
+// contain an Agentfile at its root; a parse failure writes no output.
 func Build(srcDir, outPath string, opts ...Option) error {
 	cfg := options{}
 	for _, opt := range opts {
@@ -136,11 +119,10 @@ func Build(srcDir, outPath string, opts ...Option) error {
 	return writeBundle(outAbs, srcDir, skip, manifest)
 }
 
-// HashSource returns the sha256 over srcDir's canonical file tree, with
-// outPath (the bundle being written) excluded. It is the same files_hash the
-// manifest records, exported so the build's introspection step and a later
-// run derive the same content-addressed image tag from the same source, and
-// the agent is built once rather than rebuilt per command.
+// HashSource returns the sha256 over srcDir's canonical file tree, outPath
+// excluded: the same files_hash the manifest records. Exported so the build's
+// introspection step and a later run derive the same content-addressed image
+// tag and the agent is built once, not per command.
 func HashSource(srcDir, outPath string) (string, error) {
 	srcDir = filepath.Clean(srcDir)
 	outAbs, err := filepath.Abs(outPath)
@@ -154,7 +136,6 @@ func HashSource(srcDir, outPath string) (string, error) {
 	return hash, nil
 }
 
-// readAgentfile locates and parses the Agentfile at the root of srcDir.
 func readAgentfile(srcDir string) (*agentfile.Agentfile, error) {
 	path := filepath.Join(srcDir, AgentfileName)
 	info, err := os.Stat(path)
@@ -174,9 +155,8 @@ func readAgentfile(srcDir string) (*agentfile.Agentfile, error) {
 	return af, nil
 }
 
-// bundleSkip returns the path filter used during walks: defaultSkip plus
-// the output file when it lives inside srcDir. The output's absolute path
-// is compared against each walked path's absolute path.
+// bundleSkip is the walk filter: defaultSkip plus the output file when it
+// lives inside srcDir.
 func bundleSkip(srcDir, outAbs string) func(rel string) bool {
 	base := defaultSkip(outAbs)
 	return func(rel string) bool {
@@ -184,12 +164,10 @@ func bundleSkip(srcDir, outAbs string) func(rel string) bool {
 			return true
 		}
 		abs := filepath.Join(srcDir, rel)
-		// The output file, or the temp file writeBundle stages next to it,
-		// might live inside srcDir (building into the source dir). The temp
-		// exists during the tar walk but not the earlier hash walk, so
-		// without this it leaks into the archive and disagrees with
-		// files_hash. Compare absolute paths so we exclude both wherever
-		// they sit.
+		// The .tmp file writeBundle stages exists during the tar walk but
+		// not the earlier hash walk; without excluding it the archive
+		// disagrees with files_hash. Compare absolute paths so it and the
+		// output are caught wherever they sit.
 		absResolved, err := filepath.Abs(abs)
 		if err == nil && (absResolved == outAbs || absResolved == outAbs+".tmp") {
 			return true
@@ -243,10 +221,8 @@ func buildManifest(af *agentfile.Agentfile, hash string, cfg options) (*Manifest
 	}, nil
 }
 
-// buildCatalog returns the tool catalog. With introspected tools it merges
-// the agent's real tools (descriptions, schemas, private tools) against
-// the Agentfile's declared visibility; without them it falls back to the
-// declared-only catalog.
+// buildCatalog merges introspected tools against the Agentfile's declared
+// visibility, or falls back to the declared-only catalog.
 func buildCatalog(af *agentfile.Agentfile, cfg options) ([]Tool, error) {
 	if cfg.introspectSet {
 		return catalogFromIntrospection(af, cfg.introspected)
@@ -254,11 +230,10 @@ func buildCatalog(af *agentfile.Agentfile, cfg options) ([]Tool, error) {
 	return catalogFromAgentfile(af), nil
 }
 
-// catalogFromIntrospection builds the catalog from the agent's actual
-// tools, classifying each one's visibility from the Agentfile: MAIN is
-// main, an EXPOSE'd tool is public, and anything else the agent serves is
-// private. It errors if a MAIN or EXPOSE directive names a tool the agent
-// does not actually serve, the check the parser deferred to build time.
+// catalogFromIntrospection classifies each served tool's visibility from the
+// Agentfile: MAIN is main, EXPOSE'd is public, everything else private. A
+// MAIN or EXPOSE naming a tool the agent does not serve is an error, the
+// check the parser deferred to build time.
 func catalogFromIntrospection(af *agentfile.Agentfile, introspected []IntrospectedTool) ([]Tool, error) {
 	served := make(map[string]bool, len(introspected))
 	for _, t := range introspected {
@@ -268,9 +243,9 @@ func catalogFromIntrospection(af *agentfile.Agentfile, introspected []Introspect
 		return nil, fmt.Errorf("MAIN %q is not one of the agent's tools", af.Main)
 	}
 
-	// EXPOSE * makes every served tool public. It is how a wrapped tool
-	// collection (import) opts its whole surface in without naming tools it
-	// only learns at introspection; a name check would be meaningless on it.
+	// EXPOSE * makes every served tool public: a wrapped tool collection
+	// only learns its tools at introspection, so a name check would be
+	// meaningless on it.
 	exposeAll := false
 	exposed := make(map[string]bool, len(af.Expose))
 	for _, name := range af.Expose {
@@ -341,10 +316,8 @@ func bansToSpec(bans []agentfile.Ban) []BanSpec {
 	return out
 }
 
-// catalogFromAgentfile builds the tool catalog from the Agentfile's MAIN
-// and EXPOSE directives: names and visibility, nothing more. Build-time
-// introspection later enriches each entry with a description and schema
-// and adds the private tools the agent serves.
+// catalogFromAgentfile builds the declared-only catalog: names and visibility
+// from MAIN and EXPOSE, nothing more.
 func catalogFromAgentfile(af *agentfile.Agentfile) []Tool {
 	if af.Main == "" && len(af.Expose) == 0 {
 		return nil
@@ -354,8 +327,8 @@ func catalogFromAgentfile(af *agentfile.Agentfile) []Tool {
 		tools = append(tools, Tool{Name: af.Main, Visibility: VisibilityMain})
 	}
 	for _, name := range af.Expose {
-		// EXPOSE * expands only against introspected tools, which the
-		// declared-only path does not have, so it names no tool here.
+		// EXPOSE * expands only against introspected tools, so it names
+		// nothing here.
 		if name == "*" {
 			continue
 		}
@@ -364,11 +337,7 @@ func catalogFromAgentfile(af *agentfile.Agentfile) []Tool {
 	return tools
 }
 
-// writeBundle creates the .agent file at outAbs and streams the manifest
-// followed by the source tree into it.
 func writeBundle(outAbs, srcDir string, skip func(rel string) bool, manifest *Manifest) error {
-	// MkdirAll is fine: the parent already exists in the common case and
-	// MkdirAll is a noop then.
 	if err := os.MkdirAll(filepath.Dir(outAbs), 0o755); err != nil {
 		return fmt.Errorf("creating output directory: %w", err)
 	}
@@ -378,8 +347,8 @@ func writeBundle(outAbs, srcDir string, skip func(rel string) bool, manifest *Ma
 	if err != nil {
 		return fmt.Errorf("creating bundle: %w", err)
 	}
-	// Rename-on-success keeps a half-written bundle from masquerading
-	// as a real one if the build is interrupted.
+	// Rename-on-success: an interrupted build never leaves a half-written
+	// bundle masquerading as a real one.
 	committed := false
 	defer func() {
 		_ = out.Close()
@@ -442,8 +411,8 @@ func writeFilesEntries(tw *tar.Writer, srcDir string, skip func(rel string) bool
 	if err != nil {
 		return fmt.Errorf("listing source files: %w", err)
 	}
-	// Sort for deterministic archive ordering. Two builds of the same
-	// source tree produce byte-identical archives modulo timestamps.
+	// Sorted for deterministic archive ordering: two builds of the same
+	// tree are byte-identical modulo timestamps.
 	for _, rel := range paths {
 		if err := addFileEntry(tw, srcDir, rel); err != nil {
 			return err

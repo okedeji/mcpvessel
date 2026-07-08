@@ -14,21 +14,16 @@ import (
 	"github.com/okedeji/agentcage/internal/identity"
 )
 
-// GatewayImageRef is the containerd image the in-run gateway container
-// starts from. It is tagged by build version so a new agentcage rebuilds
-// the image instead of reusing a stale gateway from an older binary.
+// GatewayImageRef is the gateway container's image ref, tagged by build
+// version so a new agentcage rebuilds it rather than reuse a stale gateway.
 func GatewayImageRef() string {
 	return "agentcage/gateway:" + identity.Version
 }
 
-// FindLinuxBinary returns the path to the linux agentcage binary that runs
-// inside the VM: baked into the gateway image and run by the in-VM daemon. It
-// is the same agentcage compiled for the VM's linux arch (the VM matches the
-// host CPU).
-//
-// Lookup mirrors FindLimactl: next to the running executable first, where an
-// installed agentcage ships it, then ./bin in a dev tree. The error names every
-// path tried so an operator knows what to build.
+// FindLinuxBinary returns the path to the linux agentcage binary baked into
+// the gateway image (the VM matches the host CPU, hence GOARCH). Lookup
+// mirrors FindLimactl: next to the running executable, then ./bin in a dev
+// tree; the error names every path tried.
 func FindLinuxBinary() (string, error) {
 	name := "agentcage-linux-" + runtime.GOARCH
 	var tried []string
@@ -52,9 +47,8 @@ func FindLinuxBinary() (string, error) {
 }
 
 // BuildGatewayImage bakes the linux agentcage binary into a scratch image
-// registered under GatewayImageRef in containerd. The image is the static
-// binary as its only layer, with `agentcage gateway` as the entrypoint;
-// BuildKit caches the COPY so an unchanged binary rebuilds instantly.
+// under GatewayImageRef. BuildKit caches the COPY, so an unchanged binary
+// rebuilds instantly.
 func BuildGatewayImage(ctx context.Context, bk *BuildKit, noCache bool, w io.Writer) error {
 	binaryPath, err := FindLinuxBinary()
 	if err != nil {
@@ -67,8 +61,8 @@ func BuildGatewayImage(ctx context.Context, bk *BuildKit, noCache bool, w io.Wri
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
 
-	// COPY reads from the build context, so the binary has to sit inside
-	// the temp dir under the name the definition references.
+	// COPY reads from the build context, so the binary must sit inside the
+	// temp dir under the name the definition references.
 	data, err := os.ReadFile(binaryPath)
 	if err != nil {
 		return fmt.Errorf("reading gateway binary %s: %w", binaryPath, err)
@@ -103,18 +97,17 @@ func BuildGatewayImage(ctx context.Context, bk *BuildKit, noCache bool, w io.Wri
 	return err
 }
 
-// gatewayDockerfile is the definition the gateway image builds from: the
-// static binary on an empty base, plus the system CA bundle. The entrypoint
-// is the bare binary; the runtime passes the mode (mcp-gateway, llm-gateway,
-// egress) as container args, so one image serves all three. The certs are for
-// the llm-gateway mode, which makes an HTTPS request to the provider and on
-// scratch would have no trust roots; the cert-builder stage is discarded, so
-// the final image stays the binary plus one file, no shell or package surface.
-// gatewayBinaryPath is where the agentcage binary lands in the gateway image.
-// The Dockerfile copies it here and the daemon execs it here to drive a
-// gateway's control surface; one owner so the two cannot drift.
+// gatewayBinaryPath is where the binary lands in the gateway image. The
+// Dockerfile copies it here and the daemon execs it here; one owner so the
+// two cannot drift.
 const gatewayBinaryPath = "/agentcage"
 
+// gatewayDockerfile builds the static binary onto scratch plus the system CA
+// bundle. The mode (mcp-gateway, llm-gateway, egress) arrives as container
+// args, so one image serves all three. The certs exist for llm-gateway's
+// HTTPS call to the provider, which on bare scratch would have no trust
+// roots; the cert-builder stage is discarded, leaving no shell or package
+// surface.
 func gatewayDockerfile() string {
 	return "FROM alpine:3 AS certs\n" +
 		"RUN apk add --no-cache ca-certificates\n" +

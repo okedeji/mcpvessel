@@ -12,11 +12,8 @@ import (
 )
 
 // TTY renders BuildKit-style live-updating output. It expects a real
-// terminal as the writer; redirecting it to a file leaves ANSI escape
-// sequences in the output (use Plain there).
-//
-// The renderer owns a ticker goroutine that refreshes the dashboard at
-// tickInterval so durations update smoothly while a step runs.
+// terminal; redirected output keeps the ANSI escapes (use Plain there). A
+// ticker goroutine refreshes the dashboard until Done.
 type TTY struct {
 	w     io.Writer
 	mu    sync.Mutex
@@ -26,13 +23,13 @@ type TTY struct {
 	width int
 }
 
-// state holds everything render() needs. Guarded by TTY.mu.
+// state is everything render() needs, guarded by TTY.mu.
 type state struct {
 	started  time.Time
 	total    int
 	steps    []ttyStep
 	finished bool
-	lines    int // number of lines the previous render emitted
+	lines    int // lines the previous render emitted
 }
 
 type ttyStep struct {
@@ -42,17 +39,13 @@ type ttyStep struct {
 	finished  bool
 }
 
-// tickInterval controls how often the live dashboard refreshes. 100ms
-// keeps the displayed timer feeling smooth without consuming visible
-// CPU on the parent process.
+// tickInterval: 100ms keeps the displayed timer smooth without visible CPU.
 const tickInterval = 100 * time.Millisecond
 
-// fallbackWidth is used when term.GetSize cannot determine the actual
-// terminal width (e.g. tests, weird PTY shapes).
+// fallbackWidth applies when term.GetSize fails (tests, odd PTY shapes).
 const fallbackWidth = 80
 
-// NewTTY constructs a TTY renderer writing to w and starts its refresh
-// loop in the background. Done must be called to stop the loop.
+// NewTTY starts the refresh loop; Done must be called to stop it.
 func NewTTY(w io.Writer) *TTY {
 	t := &TTY{
 		w:     w,
@@ -131,9 +124,8 @@ func (t *TTY) render() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	// Move the cursor back to the top of the previously-rendered region
-	// so the next batch of lines overwrites it in place. This is the
-	// heart of "live updating" output: instead of scrolling, we rewrite.
+	// Move the cursor back to the top of the previous render so the new
+	// lines overwrite it in place rather than scrolling.
 	if t.state.lines > 0 {
 		_, _ = fmt.Fprintf(t.w, "\033[%dA", t.state.lines)
 	}
@@ -172,9 +164,8 @@ func (t *TTY) writeStep(n, total int, s ttyStep) {
 	t.writeLineWithRight(prefix, duration)
 }
 
-// writeLine writes s padded or truncated to the terminal width, ending
-// with the clear-to-end-of-line code (\033[K) so any leftover characters
-// from a previous, longer render get wiped.
+// writeLine truncates to terminal width and clears to end of line so a
+// previous, longer render does not bleed through.
 func (t *TTY) writeLine(s string) {
 	if len(s) > t.width {
 		s = s[:t.width]
@@ -183,7 +174,7 @@ func (t *TTY) writeLine(s string) {
 }
 
 // writeLineWithRight emits a left-aligned prefix and a right-aligned
-// trailer (e.g. a duration) on the same line, padded to terminal width.
+// trailer on one line, padded to terminal width.
 func (t *TTY) writeLineWithRight(left, right string) {
 	pad := t.width - len(left) - len(right)
 	if pad < 1 {

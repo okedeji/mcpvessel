@@ -12,9 +12,8 @@ import (
 	"github.com/okedeji/agentcage/internal/runtime"
 )
 
-// startMetrics binds the Prometheus scrape endpoint on addr and returns a stop to
-// defer, or nil when the address will not bind (warned, not fatal: a wedged
-// metrics port must not stop the daemon serving runs).
+// startMetrics binds the Prometheus scrape endpoint on addr and returns a stop
+// to defer, or nil when the address will not bind (warned, not fatal).
 func (d *Daemon) startMetrics(addr string) func() {
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -33,10 +32,8 @@ func (d *Daemon) startMetrics(addr string) func() {
 	}
 }
 
-// handleMetrics serves the daemon's Prometheus metrics: run counts by status and
-// total spend from the history, plus live run, cage, and serve-client gauges. It
-// is served on a separate TCP listener (Prometheus scrapes TCP, not the control
-// socket), only when the operator sets telemetry.metrics_addr.
+// handleMetrics serves the daemon's Prometheus metrics on a separate TCP
+// listener; Prometheus scrapes TCP, not the control socket.
 func (d *Daemon) handleMetrics(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 	var b strings.Builder
@@ -66,9 +63,9 @@ func (d *Daemon) writeMetrics(b *strings.Builder) {
 	}
 	d.mu.Unlock()
 
-	// Sum the per-client instances outside d.mu: clientCount takes each manager's
-	// own lock, and an onEnd hook takes d.mu, so holding d.mu here would invert
-	// that order.
+	// Sum per-client instances outside d.mu: clientCount takes each manager's
+	// own lock and an onEnd hook takes d.mu, so holding d.mu here would invert
+	// the lock order.
 	serveClients := 0
 	for _, m := range managers {
 		serveClients += m.clientCount()

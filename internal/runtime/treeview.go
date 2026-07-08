@@ -10,10 +10,9 @@ import (
 	"github.com/okedeji/agentcage/internal/bundle"
 )
 
-// PrintTree walks the transitive USES tree from a local root bundle and
-// writes an indented view of every agent that would run, so an author can
-// see the full surface and decide what to BAN. Each dependency is pulled by
-// its locked digest, the same walk a run resolves the tree with.
+// PrintTree writes an indented view of every agent a root bundle would run,
+// so an author can see the full surface and decide what to BAN. Same
+// digest-locked walk a run resolves the tree with.
 func PrintTree(ctx context.Context, rootBundlePath, rootDisplay string, w io.Writer) error {
 	root, err := bundle.ReadManifest(rootBundlePath)
 	if err != nil {
@@ -47,9 +46,8 @@ func PrintTree(ctx context.Context, rootBundlePath, rootDisplay string, w io.Wri
 }
 
 // renderTreeChildren prints the USES edges out of caller, recursing into each
-// sub-agent. onPath carries the keys from the root to here so a back-edge in
-// a malformed graph prints "(cycle)" instead of recursing forever; a
-// well-formed tree is a DAG and never hits it.
+// sub-agent. onPath makes a malformed graph's back-edge print "(cycle)"
+// instead of recursing forever.
 func renderTreeChildren(tree *runTree, caller, prefix string, onPath map[string]bool, w io.Writer) {
 	var edges []usesEdge
 	for _, e := range tree.Edges {
@@ -80,10 +78,8 @@ func renderTreeChildren(tree *runTree, caller, prefix string, onPath map[string]
 	}
 }
 
-// nodeGlance is the one-line, operationally important summary of an agent for
-// the tree view: its advisory model, budget, resource hint, egress policy, the
-// env and secret names it declares (so the operator knows what to provide),
-// and how many tools it exposes. Full per-agent detail stays in `inspect`.
+// nodeGlance is the one-line operational summary of an agent for the tree
+// view; full per-agent detail stays in inspect.
 func nodeGlance(m *bundle.Manifest) string {
 	if m == nil {
 		return ""
@@ -143,8 +139,8 @@ func resourcesGlance(r *bundle.ResourcesSpec) string {
 	return strings.Join(parts, ",")
 }
 
-// envGlanceNames lists declared ENV keys, marking a value-less required input
-// (empty default) with a trailing * so the operator sees what it has to supply.
+// envGlanceNames lists declared ENV keys, marking a required input (empty
+// default) with a trailing *.
 func envGlanceNames(envs map[string]string) []string {
 	keys := sortedStringKeys(envs)
 	for i, k := range keys {
@@ -174,8 +170,8 @@ func exposedToolCount(tools []bundle.Tool) int {
 	return n
 }
 
-// nodeLabel identifies a sub-agent: its @org/name and a short digest, the
-// form an author writes back into a BAN.
+// nodeLabel identifies a sub-agent as @org/name plus a short digest, the form
+// an author writes back into a BAN.
 func nodeLabel(node *agentNode) string {
 	label := "@" + node.Ref.Repository
 	short := strings.TrimPrefix(node.Ref.Digest, "sha256:")

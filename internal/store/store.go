@@ -1,14 +1,7 @@
-// Package store keeps built .agent bundles on disk, addressed by content
-// hash and indexed by reference, so build writes a bundle and push, run, and
-// call read it back without a file having to line up in the working directory.
-//
-// Two addresses point at the same bytes. A bundle lives under bundles/ keyed
-// by its manifest files_hash, the content hash build already computes. A ref
-// like @okedeji/researcher:0.1 is an entry under refs/ whose contents are that
-// files_hash, so resolving a ref is one small read followed by a content
-// lookup. The store sits next to the registry pull cache under ~/.agentcage,
-// and like the cache it needs no running daemon: build writes it and push,
-// run, and call read it directly.
+// Package store keeps built .agent bundles under ~/.agentcage/store.
+// Bundles are content-addressed by manifest files_hash under bundles/;
+// refs/ maps a reference to that hash. No daemon involved: build writes,
+// push/run/call read directly.
 package store
 
 import (
@@ -23,14 +16,13 @@ import (
 	"github.com/okedeji/agentcage/internal/reference"
 )
 
-// Store is agentcage's local bundle store under ~/.agentcage/store.
+// Store is the local bundle store under ~/.agentcage/store.
 type Store struct {
 	dir string
 }
 
-// New opens the store under ~/.agentcage/store, honoring AGENTCAGE_HOME so all
-// of agentcage's on-disk state moves together. It does not create the
-// directory; the first write does that lazily.
+// New opens the store, honoring AGENTCAGE_HOME. The directory is created
+// lazily by the first write.
 func New() (*Store, error) {
 	dir, err := storeDir()
 	if err != nil {
@@ -39,23 +31,17 @@ func New() (*Store, error) {
 	return &Store{dir: dir}, nil
 }
 
-// Dir is the store root. Build hashes the source against this path as the
-// output anchor: it sits outside any source tree, so it excludes nothing from
-// the hash and the value matches what bundle.Build recomputes when it writes
-// into the store.
+// Dir returns the store root. Build hashes source against this path; it sits
+// outside any source tree, so it excludes nothing from the hash.
 func (s *Store) Dir() string { return s.dir }
 
-// PathFor is where a bundle of the given files_hash lives. ':' is not portable
-// in a filename, so sha256:abc becomes sha256-abc, the scheme the pull cache
-// uses too. Build writes its bundle here; an unchanged source resolves to the
-// same path, so a rebuild overwrites rather than piling up copies.
+// PathFor returns the bundle path for a files_hash. ':' becomes '-' for
+// filename portability, matching the pull cache.
 func (s *Store) PathFor(filesHash string) string {
 	return filepath.Join(s.dir, "bundles", strings.ReplaceAll(filesHash, ":", "-")+".agent")
 }
 
-// Tag indexes ref to a stored bundle's files_hash so push, run, and call can
-// find it by name. It is the ref half of what build writes; the bundle itself
-// is content-addressed and written separately.
+// Tag points ref at a stored bundle's files_hash.
 func (s *Store) Tag(ref reference.Reference, filesHash string) error {
 	if ref.Tag == "" {
 		return fmt.Errorf("tagging the store needs a version, %s has none", ref.Original)
@@ -64,8 +50,7 @@ func (s *Store) Tag(ref reference.Reference, filesHash string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("creating store ref dir: %w", err)
 	}
-	// Rename-on-success so an interrupted tag never leaves a ref pointing at a
-	// half-written hash.
+	// Write-then-rename so an interrupted tag never leaves a partial ref.
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, []byte(filesHash), 0o644); err != nil {
 		return fmt.Errorf("writing store ref: %w", err)
@@ -77,8 +62,7 @@ func (s *Store) Tag(ref reference.Reference, filesHash string) error {
 }
 
 // Get resolves a tagged reference to its stored bundle path. ok is false when
-// the ref is not indexed or its bundle is missing, so the caller falls back to
-// pulling from the registry.
+// the ref is not indexed or its bundle is missing.
 func (s *Store) Get(ref reference.Reference) (bundlePath string, ok bool, err error) {
 	if ref.Tag == "" {
 		return "", false, nil
@@ -97,10 +81,8 @@ func (s *Store) Get(ref reference.Reference) (bundlePath string, ok bool, err er
 	return path, true, nil
 }
 
-// FindByHash resolves a content hash, full or a prefix, to its stored bundle.
-// A full hash hits one bundle; a prefix that matches more than one is ambiguous
-// and errors rather than guess. ok is false when nothing matches, so the caller
-// reports a clear miss.
+// FindByHash resolves a content hash or unique prefix to its stored bundle.
+// An ambiguous prefix errors; ok is false on no match.
 func (s *Store) FindByHash(hash string) (bundlePath string, ok bool, err error) {
 	prefix := strings.ReplaceAll(hash, ":", "-")
 	dir := filepath.Join(s.dir, "bundles")
@@ -131,25 +113,21 @@ func (s *Store) FindByHash(hash string) (bundlePath string, ok bool, err error) 
 	return match, true, nil
 }
 
-// refPath is where the ref-to-hash index entry for ref lives:
-// refs/<registry>/<repository>/<tag>.
+// refPath: refs/<registry>/<repository>/<tag>.
 func (s *Store) refPath(ref reference.Reference) string {
 	return filepath.Join(s.dir, "refs", ref.Registry, filepath.FromSlash(ref.Repository), ref.Tag)
 }
 
-// Entry is one stored bundle as List reports it. Ref is the fully-qualified
-// reference a build -t indexed it under, empty for a bundle stored only by
-// content hash. Two tags on the same bytes produce two entries sharing a Hash.
+// Entry is one (bundle, ref) pairing as List reports it. Ref is empty for a
+// bundle stored only by content hash.
 type Entry struct {
 	Ref  string
 	Hash string
 	Size int64
 }
 
-// List returns every stored bundle, one entry per (bundle, ref) pairing plus a
-// ref-less entry for a bundle no tag points at. It backs `agentcage store ls`,
-// the first read surface over the store, so an operator can see what resolves
-// locally without a registry.
+// List returns every stored bundle, one entry per ref plus a ref-less entry
+// for a bundle no tag points at.
 func List() ([]Entry, error) {
 	s, err := New()
 	if err != nil {
@@ -198,8 +176,7 @@ func List() ([]Entry, error) {
 	return out, nil
 }
 
-// refsByHash reads the ref index into a files_hash -> reference-strings map, so
-// List can label each bundle with the tags that point at it.
+// refsByHash inverts the ref index: files_hash -> reference strings.
 func (s *Store) refsByHash() (map[string][]string, error) {
 	root := filepath.Join(s.dir, "refs")
 	out := map[string][]string{}
@@ -230,9 +207,7 @@ func (s *Store) refsByHash() (map[string][]string, error) {
 	return out, nil
 }
 
-// refFromRelPath rebuilds a display reference from a ref index path
-// <registry>/<repo...>/<tag>, rendered the way an operator named it: the
-// @org/name shorthand for the default registry, the full host otherwise.
+// refFromRelPath rebuilds a display reference from <registry>/<repo...>/<tag>.
 func refFromRelPath(rel string) string {
 	parts := strings.Split(filepath.ToSlash(rel), "/")
 	if len(parts) < 3 {
@@ -245,16 +220,13 @@ func refFromRelPath(rel string) string {
 	}.Display()
 }
 
-// unsanitizeHash reverses PathFor's ':' -> '-' so a bundle filename reads back
-// as a content hash. A sha256 hex body has no '-', so only the scheme's colon
-// is restored.
+// unsanitizeHash reverses PathFor's ':' -> '-'. Only the first '-' is
+// restored; a sha256 hex body contains none.
 func unsanitizeHash(name string) string {
 	return strings.Replace(name, "-", ":", 1)
 }
 
-// CopyTo writes a copy of the bundle at src to dst. It backs the -o flag: a
-// portable file the operator can move by hand, while the store stays the source
-// of truth.
+// CopyTo writes a copy of the bundle at src to dst.
 func CopyTo(src, dst string) error {
 	in, err := os.Open(src)
 	if err != nil {
@@ -286,8 +258,7 @@ func fileExists(path string) bool {
 	return err == nil && !info.IsDir()
 }
 
-// storeDir resolves ~/.agentcage/store, honoring AGENTCAGE_HOME the same way
-// the config and registry cache do so all of agentcage's state moves together.
+// storeDir resolves ~/.agentcage/store, honoring AGENTCAGE_HOME.
 func storeDir() (string, error) {
 	if home := strings.TrimSpace(os.Getenv(env.Home)); home != "" {
 		return filepath.Join(home, "store"), nil

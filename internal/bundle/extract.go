@@ -13,18 +13,11 @@ import (
 	"strings"
 )
 
-// Extract opens an .agent file at bundlePath and writes its source tree
-// entries into destDir. Returns the parsed manifest as a convenience
-// so callers do not have to re-open the file.
-//
-// destDir must already exist. Files are written with the modes the
-// bundle recorded (currently 0o644). The bundle's "files/" prefix is
-// stripped so destDir mirrors the layout the author had at build time.
-//
-// Path traversal is guarded: any entry whose name escapes destDir
-// (because of "../" or an absolute path) errors out before any write,
-// without leaving the destination partially populated. Bundles from
-// untrusted sources can therefore be safely extracted into temp dirs.
+// Extract writes an .agent file's source tree into destDir, which must
+// already exist, and returns the parsed manifest. The "files/" prefix is
+// stripped so destDir mirrors the author's layout. Any entry whose name
+// escapes destDir ("../" or an absolute path) errors before the write, so
+// untrusted bundles extract safely.
 func Extract(bundlePath, destDir string) (*Manifest, error) {
 	f, err := os.Open(bundlePath)
 	if err != nil {
@@ -71,7 +64,7 @@ func Extract(bundlePath, destDir string) (*Manifest, error) {
 			}
 		default:
 			// Unknown top-level entries are ignored so older readers
-			// can survive future additions to the bundle format.
+			// survive future format additions.
 		}
 	}
 
@@ -79,13 +72,12 @@ func Extract(bundlePath, destDir string) (*Manifest, error) {
 		return nil, fmt.Errorf("bundle %s is missing %s", bundlePath, manifestFilename)
 	}
 
-	// Re-hash the extracted tree against the manifest's files_hash. A registry
-	// pull is digest-verified by the OCI client, but a local .agent file is
-	// not, so this is where a corrupted or tampered source tree is caught
-	// before any of it is built or run. The hash cannot stop an attacker who
-	// rewrites files_hash to match, only a signature can, but it catches
-	// corruption and a tamper that left the manifest alone. An empty hash is a
-	// pre-hash bundle with nothing to check against, not a pass.
+	// Re-hash the extracted tree against files_hash. A registry pull is
+	// digest-verified by the OCI client; a local .agent file is not, so this
+	// is where corruption or a tamper that left the manifest alone is caught.
+	// Integrity, not authenticity: an attacker who rewrites files_hash to
+	// match defeats it, only a signature would not. An empty hash is a
+	// pre-hash bundle with nothing to check, not a pass.
 	if manifest.FilesHash != "" {
 		got, err := hashFiles(destAbs, nil)
 		if err != nil {
@@ -98,18 +90,14 @@ func Extract(bundlePath, destDir string) (*Manifest, error) {
 	return manifest, nil
 }
 
-// manifestFilename and filesPrefix mirror the layout Build produces.
-// Centralizing them keeps the read and write paths in sync.
+// Layout constants shared by the read and write paths.
 const (
 	manifestFilename = "manifest.json"
 	filesPrefix      = "files/"
 )
 
-// ReadManifest reads only the manifest.json entry of an .agent bundle.
-// Cheaper than Extract when the caller only needs to inspect bundle
-// metadata (for example, to look up the main tool before deciding
-// whether to invoke run or fall through to a "this is a tool
-// collection" error).
+// ReadManifest reads only the manifest.json entry of an .agent bundle,
+// cheaper than Extract when only metadata is needed.
 func ReadManifest(bundlePath string) (*Manifest, error) {
 	f, err := os.Open(bundlePath)
 	if err != nil {
@@ -139,13 +127,9 @@ func ReadManifest(bundlePath string) (*Manifest, error) {
 	return nil, fmt.Errorf("bundle %s is missing %s", bundlePath, manifestFilename)
 }
 
-// ReadSourceFile returns the bytes of one files/ entry from a bundle. It is
-// for a consumer that needs a single packed file (the eval suite the EVAL
-// directive points at) without paying for a full Extract of the source tree.
-//
-// rel is the path relative to the source root, the same form the manifest
-// records (for example "tests/eval.yaml"). A rel that escapes the source root
-// is rejected before any read.
+// ReadSourceFile returns one files/ entry without extracting the tree. rel is
+// relative to the source root; a rel that escapes it is rejected before any
+// read.
 func ReadSourceFile(bundlePath, rel string) ([]byte, error) {
 	clean := path.Clean("/" + filepath.ToSlash(rel))
 	if clean == "/" {
@@ -194,11 +178,10 @@ func decodeManifest(r io.Reader) (*Manifest, error) {
 	return &m, nil
 }
 
-// extractFile writes one bundle entry into destAbs/rel. Refuses to
-// write outside destAbs.
+// extractFile writes one bundle entry into destAbs/rel, refusing anything
+// that escapes destAbs.
 func extractFile(tr *tar.Reader, hdr *tar.Header, destAbs, rel string) error {
-	// Reject any path that escapes destAbs after cleaning. This
-	// covers "../", absolute paths, and symlink-shaped entries.
+	// Covers "../", absolute paths, and symlink-shaped entries.
 	target := filepath.Join(destAbs, rel)
 	cleanTarget, err := filepath.Abs(target)
 	if err != nil {
@@ -233,9 +216,8 @@ func extractFile(tr *tar.Reader, hdr *tar.Header, destAbs, rel string) error {
 			return fmt.Errorf("close %s: %w", cleanTarget, err)
 		}
 	default:
-		// Skip symlinks, devices, FIFOs, etc. Bundles are source
-		// trees; anything else is not what we packaged and we
-		// refuse to materialize it.
+		// Symlinks, devices, FIFOs: bundles are source trees, refuse to
+		// materialize anything else.
 	}
 	return nil
 }

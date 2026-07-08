@@ -1,12 +1,6 @@
 // Package history is the daemon's durable run log: a bbolt store under
-// ~/.agentcage that keeps one record per run so ps, logs, and trace survive the
-// run ending and the daemon restarting. It is trusted-kernel code on the host.
-// The agent never writes here; only the daemon does, keyed by the run id it
-// assigned, so a record can never be forged by a cage.
-//
-// bbolt is the same embedded store containerd uses for its metadata: pure Go,
-// single file, crash-safe, already in the dependency tree. Run history is
-// key-value (the run id is the key), which is all ps/logs/trace need.
+// ~/.agentcage, one record per run, keyed by the daemon-assigned run id.
+// Only the daemon writes here; a cage cannot forge a record.
 package history
 
 import (
@@ -21,20 +15,17 @@ import (
 	"github.com/okedeji/agentcage/internal/env"
 )
 
-// dbName is the history file under the agentcage home dir.
 const dbName = "history.db"
 
 // runsBucket holds one JSON Record per run, keyed by run id.
 var runsBucket = []byte("runs")
 
-// openTimeout bounds how long Open waits for the file lock. The socket guard
-// already keeps a second daemon from starting, so contention here means a stale
-// lock or a misconfiguration; failing fast beats hanging the daemon's boot.
+// openTimeout bounds the wait for the bbolt file lock. The socket guard keeps
+// a second daemon from starting, so contention means a stale lock; fail fast.
 const openTimeout = 2 * time.Second
 
-// Run statuses. A run is running until it ends; the terminal states distinguish
-// a clean finish from a failure, a budget cutoff, an operator stop, and a daemon
-// that died under the run (reconciled to crashed at the next startup).
+// Run statuses. crashed is assigned at startup reconciliation to runs whose
+// daemon died under them.
 const (
 	StatusRunning    = "running"
 	StatusSucceeded  = "succeeded"
@@ -44,10 +35,9 @@ const (
 	StatusCrashed    = "crashed"
 )
 
-// Record is one run's durable entry. Cost and budget are micro-USD integers, the
-// same unit the LLM gateway meters in, so the history never rounds the meter.
-// TraceJSON holds the run's serialized trace, what `agentcage trace` renders;
-// it is empty for a run that made no LLM call.
+// Record is one run's durable entry. Cost and budget are micro-USD, the unit
+// the LLM gateway meters in, so the history never rounds. TraceJSON is empty
+// for a run that made no LLM call.
 type Record struct {
 	RunID          string    `json:"run_id"`
 	Ref            string    `json:"ref"`
@@ -75,8 +65,8 @@ func DefaultPath() (string, error) {
 	return filepath.Join(home, dbName), nil
 }
 
-// Open opens the history store at path, creating the file and the runs bucket if
-// they do not exist.
+// Open opens the history store at path, creating the file and bucket as
+// needed.
 func Open(path string) (*Store, error) {
 	db, err := bbolt.Open(path, 0o600, &bbolt.Options{Timeout: openTimeout})
 	if err != nil {
@@ -95,9 +85,7 @@ func Open(path string) (*Store, error) {
 // Close closes the database.
 func (s *Store) Close() error { return s.db.Close() }
 
-// Put writes a record, overwriting any prior record for the same run id. A run
-// is written once at boot as running and again at its terminal state, so the
-// last write wins.
+// Put writes a record, overwriting any prior record for the same run id.
 func (s *Store) Put(r Record) error {
 	buf, err := json.Marshal(r)
 	if err != nil {
@@ -148,11 +136,9 @@ func (s *Store) List() ([]Record, error) {
 	return out, nil
 }
 
-// ReconcileRunning rewrites every record still marked running to crashed, since a
-// running record at daemon startup is one whose daemon died without finishing it.
-// It is the history analogue of the orphan container sweep: a fresh daemon owns
-// no prior run, so any run still "in progress" on disk is a casualty of the
-// crash. Returns the number of records reconciled.
+// ReconcileRunning rewrites every record still marked running to crashed. A
+// fresh daemon owns no prior run, so a running record at startup is one whose
+// daemon died under it. Returns the number reconciled.
 func (s *Store) ReconcileRunning(at time.Time) (int, error) {
 	var n int
 	err := s.db.Update(func(tx *bbolt.Tx) error {

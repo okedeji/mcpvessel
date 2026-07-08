@@ -8,8 +8,8 @@ import (
 	"github.com/okedeji/agentcage/internal/reference"
 )
 
-// newTestStore roots the store at a temp AGENTCAGE_HOME so a test never reads
-// or writes the operator's real ~/.agentcage.
+// newTestStore roots the store at a temp AGENTCAGE_HOME to keep tests off the
+// real ~/.agentcage.
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
 	t.Setenv("AGENTCAGE_HOME", t.TempDir())
@@ -24,8 +24,6 @@ func TestStore_PutThenGetByRef(t *testing.T) {
 	s := newTestStore(t)
 	const hash = "sha256:abc123"
 
-	// Stage a bundle at the content path the store would write to, then index
-	// a ref at it, the two halves build performs.
 	dst := s.PathFor(hash)
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		t.Fatalf("mkdir bundles: %v", err)
@@ -83,8 +81,7 @@ func TestList_TaggedAndUntagged(t *testing.T) {
 	for _, e := range entries {
 		got[e.Hash] = e.Ref
 	}
-	// A default-registry ref reads back as the @org/name shorthand the operator
-	// wrote, not the ghcr host it resolves to.
+	// Default-registry refs read back as @org/name shorthand, not the ghcr host.
 	if got["sha256:tagged1"] != "@okedeji/researcher:0.1" {
 		t.Errorf("tagged bundle ref = %q, want the @org/name shorthand", got["sha256:tagged1"])
 	}
@@ -160,9 +157,7 @@ func TestStore_GetUnknownRef(t *testing.T) {
 	}
 }
 
-// TestStore_GetTagWithMissingBundle covers a dangling index entry: the ref
-// resolves to a hash whose bundle was removed. Get reports not-found so the
-// caller falls back to a pull rather than handing back a missing path.
+// Dangling index entry: the ref resolves to a hash whose bundle was removed.
 func TestStore_GetTagWithMissingBundle(t *testing.T) {
 	s := newTestStore(t)
 	ref, err := reference.Parse("@okedeji/researcher:0.1")

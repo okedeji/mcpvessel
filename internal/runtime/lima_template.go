@@ -7,55 +7,38 @@ import (
 
 // LimaTemplateInput drives generateLimaTemplate.
 type LimaTemplateInput struct {
-	// InstanceName is the Lima VM name (used to scope the LIMA_HOME path).
-	// agentcage uses a single shared instance, "agentcage", for every
-	// build on a given host.
+	// InstanceName is the Lima VM name; agentcage uses one shared instance
+	// per host.
 	InstanceName string
 
-	// HostSocketDir is where Lima will forward the in-VM Unix sockets to.
-	// Typically ~/.agentcage/lima/sock. The directory must exist by the
-	// time `limactl start` runs; the YAML uses absolute paths so Lima
-	// itself does not try to expand $HOME or templates inside the value.
+	// HostSocketDir receives the forwarded in-VM Unix sockets. It must exist
+	// before `limactl start` runs; the YAML uses absolute paths so Lima does
+	// not try to expand $HOME inside the value.
 	HostSocketDir string
 
-	// CPUs and MemoryGiB cap the VM's resources. Defaults are applied
-	// when zero; see defaultLimaCPUs / defaultLimaMemoryGiB.
+	// CPUs, MemoryGiB, and DiskSizeGiB cap the VM; zero applies the defaults
+	// below.
 	CPUs        int
 	MemoryGiB   int
 	DiskSizeGiB int
 }
 
-// The memory default is what the cage caps and live-cage counts are sized
-// against (resources.go, config.go): 8 GiB leaves room for a handful of
-// concurrent cages after the host reserve, where 4 forced the memory clamp to
-// shrink almost every multi-cage run. An operator on a small machine lowers it
-// (machine.memory_gib) and the admission math follows.
+// The 8 GiB memory default is what the cage caps and live-cage counts are
+// sized against (resources.go, config.go); 4 forced the memory clamp to
+// shrink almost every multi-cage run.
 const (
 	defaultLimaCPUs        = 4
 	defaultLimaMemoryGiB   = 8
 	defaultLimaDiskSizeGiB = 60
 )
 
-// generateLimaTemplate produces the YAML that `limactl create` consumes
-// to provision agentcage's VM. The template is intentionally minimal. It
-// leans on Lima's stock `_images/ubuntu-lts` base and on the rootless
-// containerd that the Lima provisioning scripts install. On top of that
-// it forwards two Unix sockets back to the host:
-//
-//   - containerd.sock, so the agentcage runtime can drive containerd
-//     (image lookup, container create, task spawn, stdio).
-//   - buildkitd.sock, so BuildKit's Go client can submit Solve
-//     requests for image builds from generated Dockerfiles.
-//
-// The output is deterministic: same input → byte-identical YAML, which
-// matters because Lima will recreate the VM when the template hash
-// changes, and we do not want spurious recreations.
-//
-// Both forwarded sockets target the rootless paths under
-// /run/user/{{.UID}}, matching Lima's stock buildkit.yaml template
-// (https://github.com/lima-vm/lima/blob/v2.1.2/templates/buildkit.yaml).
-// Rootless is the default; lifting it would require system: true and
-// `lima sudo` for every nerdctl call, which we do not need.
+// generateLimaTemplate produces the YAML `limactl create` consumes: Lima's
+// stock ubuntu-lts base with rootless containerd, forwarding the containerd
+// and buildkitd sockets back to the host. Output is byte-deterministic for
+// the same input; Lima recreates the VM when the template hash changes, so a
+// spurious diff means a spurious recreation. Rootless matches Lima's stock
+// buildkit.yaml; lifting it would require system: true and `lima sudo` for
+// every nerdctl call.
 func generateLimaTemplate(in LimaTemplateInput) string {
 	cpus := in.CPUs
 	if cpus <= 0 {
@@ -88,10 +71,8 @@ func generateLimaTemplate(in LimaTemplateInput) string {
 	fmt.Fprintln(&b, "  user: true")
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "portForwards:")
-	// Lima's stock buildkit.yaml forwards the rootless buildkitd socket
-	// from this exact in-guest path; using the same path keeps us
-	// compatible with the rootless containerd setup the base template
-	// installs by default.
+	// Same in-guest paths as Lima's stock buildkit.yaml, matching the
+	// rootless setup the base template installs.
 	fmt.Fprintln(&b, "- guestSocket: \"/run/user/{{.UID}}/buildkit-default/buildkitd.sock\"")
 	fmt.Fprintf(&b, "  hostSocket: %q\n", in.HostSocketDir+"/buildkitd.sock")
 	fmt.Fprintln(&b, "- guestSocket: \"/run/user/{{.UID}}/containerd/containerd.sock\"")

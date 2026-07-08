@@ -61,9 +61,8 @@ path (positional or -b) to push a file built elsewhere or with -o.`,
 				}
 			}
 
-			// Decide (and interactively log in) before the upload, so an
-			// unpublishable push is caught early and the short-lived registry
-			// token is minted just before the publish step uses it.
+			// Decide and log in before the upload: an unpublishable push fails
+			// early, and the short-lived registry token is minted just before use.
 			doPublish, err := preparePublish(cmd, ref, forcePublic, forcePrivate)
 			if err != nil {
 				return err
@@ -89,11 +88,9 @@ path (positional or -b) to push a file built elsewhere or with -o.`,
 				return err
 			}
 
-			// MCP Registry publication runs only after the OCI artifact is up,
-			// so a failed publish never leaves a dangling registry entry with no
-			// bundle behind it. A publish failure does not fail the push (the
-			// bytes are already pushed) unless the operator explicitly asked to
-			// publish with --public.
+			// Publish only after the OCI artifact is up, so a failed publish
+			// never leaves a registry entry with no bundle behind it. The bytes
+			// are already pushed, so only an explicit --public fails the push.
 			noteW := w
 			if jsonOut {
 				noteW = cmd.ErrOrStderr()
@@ -128,14 +125,10 @@ path (positional or -b) to push a file built elsewhere or with -o.`,
 	return cmd
 }
 
-// stampEvalsBeforePush runs the agent's full eval suite, records the results
-// into the bundle's manifest, and pushes even when cases fail: the manifest
-// block is a transparency signal, not a gate. An operator who wants a gate
-// checks 'agentcage eval' exit code first. It reports to stderr so a --json
-// push keeps stdout clean for the digest.
-//
-// The suite runs against the resolved bundle path, not the ref, so a bundle
-// pushed with an explicit -b that is not indexed in the store still evaluates.
+// stampEvalsBeforePush runs the eval suite against the resolved bundle path
+// (a -b bundle not indexed in the store still evaluates) and records the
+// results into the manifest. Failing cases do not block the push: the stamp
+// is a transparency signal, not a gate.
 func stampEvalsBeforePush(ctx context.Context, w io.Writer, displayRef, bundlePath, judgeModel string) error {
 	manifest, err := bundle.ReadManifest(bundlePath)
 	if err != nil {
@@ -175,9 +168,8 @@ func stampEvalsBeforePush(ctx context.Context, w io.Writer, displayRef, bundlePa
 	return nil
 }
 
-// bundleFromStore locates the bundle the build stored for ref. arg is the
-// operator's original reference string, used in the error so it reads back the
-// way they typed it.
+// bundleFromStore locates the stored bundle for ref; arg is the operator's
+// original spelling, used in the error message.
 func bundleFromStore(ref reference.Reference, arg string) (string, error) {
 	st, err := store.New()
 	if err != nil {

@@ -13,9 +13,8 @@ import (
 	"github.com/okedeji/agentcage/internal/identity"
 )
 
-// DefaultLimaInstanceName is the single shared Lima VM agentcage
-// provisions on macOS and Windows. One VM hosts every build the user
-// does on this machine.
+// DefaultLimaInstanceName is the single shared Lima VM agentcage provisions;
+// one VM hosts every build on this machine.
 const DefaultLimaInstanceName = identity.Name
 
 // LimaStatus is the parsed equivalent of `limactl ls -f "{{.Status}}"`.
@@ -41,43 +40,29 @@ func (s LimaStatus) String() string {
 	}
 }
 
-// LimaVM wraps the bundled `limactl` binary, scoping every call to an
-// agentcage-private LIMA_HOME so our state does not collide with the
-// user's other Lima instances (Colima, Rancher Desktop, plain Lima).
+// LimaVM wraps the bundled limactl binary, scoping every call to an
+// agentcage-private LIMA_HOME so state does not collide with the user's other
+// Lima instances (Colima, Rancher Desktop, plain Lima).
 type LimaVM struct {
-	// LimactlPath is the absolute path to the limactl binary the
-	// wrapper drives. Pick this with FindLimactl.
+	// LimactlPath is the limactl binary to drive; pick with FindLimactl.
 	LimactlPath string
 
-	// HomeDir is the per-instance state directory. Becomes LIMA_HOME
-	// for every invocation. Typically ~/.agentcage/lima/data.
+	// HomeDir becomes LIMA_HOME for every invocation. Typically
+	// ~/.agentcage/lima/data.
 	HomeDir string
 
-	// HostSocketDir is where Lima will forward the in-VM Unix sockets
-	// to. Typically ~/.agentcage/lima/sock. The generated template
-	// must reference this same directory.
+	// HostSocketDir receives the forwarded in-VM Unix sockets. The generated
+	// template must reference this same directory.
 	HostSocketDir string
 
-	// InstanceName is the Lima VM name. Defaults to
-	// DefaultLimaInstanceName when empty.
+	// InstanceName defaults to DefaultLimaInstanceName when empty.
 	InstanceName string
 }
 
-// FindLimactl returns the absolute path to a usable limactl binary.
-//
-// Lookup order:
-//
-//  1. <directory of os.Executable()>/lima/bin/limactl, the bundled
-//     binary inside the Lima distribution layout (templates and guest
-//     agents sit alongside in share/lima/). What an installed
-//     agentcage and `make lima-deps` produce.
-//  2. ./bin/lima/bin/limactl relative to the current working
-//     directory, same layout, dev mode.
-//  3. limactl on PATH, the fallback for developers who installed Lima
-//     via brew or apt. Lima resolves its own data files in this case.
-//
-// Returns an error wrapped with all tried paths so an operator can see
-// exactly what was searched.
+// FindLimactl returns the path to a usable limactl: the bundled Lima layout
+// next to the running executable (what an installed agentcage and `make
+// lima-deps` produce), then ./bin/lima in a dev tree, then PATH. The error
+// names every path tried.
 func FindLimactl() (string, error) {
 	var tried []string
 
@@ -105,8 +90,6 @@ func FindLimactl() (string, error) {
 	return "", fmt.Errorf("limactl not found (tried: %s); run 'make lima-deps' or install Lima v2.0+", strings.Join(tried, ", "))
 }
 
-// isExecutable returns true when path is a regular file with at least
-// one execute bit set.
 func isExecutable(path string) bool {
 	st, err := os.Stat(path)
 	if err != nil || st.IsDir() {
@@ -115,7 +98,6 @@ func isExecutable(path string) bool {
 	return st.Mode().Perm()&0o111 != 0
 }
 
-// instanceName returns the resolved instance name (default applied).
 func (vm *LimaVM) instanceName() string {
 	if vm.InstanceName == "" {
 		return DefaultLimaInstanceName
@@ -123,26 +105,21 @@ func (vm *LimaVM) instanceName() string {
 	return vm.InstanceName
 }
 
-// command builds a limactl exec.Cmd with the right LIMA_HOME injected.
 func (vm *LimaVM) command(ctx context.Context, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, vm.LimactlPath, args...)
-	// LIMA_HOME isolates our VM state. Without it, Lima writes to
-	// ~/.lima and collides with anything else the user has.
+	// LIMA_HOME isolates our VM state from ~/.lima and anything else there.
 	cmd.Env = append(os.Environ(), "LIMA_HOME="+vm.HomeDir)
 	return cmd
 }
 
-// Status reports whether the VM exists, is stopped, or is running.
-// Maps the text limactl emits to LimaStatus; never errors on
-// "instance not found", a normal Nonexistent.
+// Status maps limactl's text output to LimaStatus. A missing instance is
+// LimaNonexistent, not an error.
 func (vm *LimaVM) Status(ctx context.Context) (LimaStatus, error) {
 	cmd := vm.command(ctx, "ls", "-f", "{{.Status}}", vm.instanceName())
 	out, err := cmd.Output()
 	if err != nil {
-		// limactl exits non-zero when the instance is missing AND
-		// prints "No instance matching X found" on stderr. We treat
-		// that as Nonexistent rather than an error so the caller can
-		// just call EnsureRunning without pre-checking.
+		// limactl exits non-zero for a missing instance, printing "No
+		// instance matching X found" on stderr; that is Nonexistent.
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) && strings.Contains(string(exitErr.Stderr), "No instance matching") {
 			return LimaNonexistent, nil
@@ -165,12 +142,8 @@ func parseLimaStatus(s string) LimaStatus {
 	}
 }
 
-// Create provisions the VM from the given YAML template. Use
-// generateLimaTemplate to produce the YAML.
-//
-// limactl's `--name` is taken from the wrapper's InstanceName. The
-// template is fed via a temp file (limactl does not accept stdin for
-// create in v2). The temp file is removed before returning even on
+// Create provisions the VM from the given YAML template, fed via a temp file
+// (limactl v2 does not accept stdin for create); the file is removed even on
 // failure.
 func (vm *LimaVM) Create(ctx context.Context, template string, stdout, stderr io.Writer) error {
 	if err := os.MkdirAll(vm.HomeDir, 0o755); err != nil {
@@ -203,9 +176,8 @@ func (vm *LimaVM) Create(ctx context.Context, template string, stdout, stderr io
 	return nil
 }
 
-// Start runs `limactl start` against an already-created instance.
-// Lima v2 no longer attaches the VM to the foreground, so this returns
-// once the VM is running (or fails).
+// Start runs `limactl start` against an already-created instance; Lima v2
+// returns once the VM is running rather than attaching it to the foreground.
 func (vm *LimaVM) Start(ctx context.Context, stdout, stderr io.Writer) error {
 	cmd := vm.command(ctx, "start", "--tty=false", vm.instanceName())
 	cmd.Stdout = stdout
@@ -216,8 +188,7 @@ func (vm *LimaVM) Start(ctx context.Context, stdout, stderr io.Writer) error {
 	return nil
 }
 
-// Stop sends `limactl stop` and returns when the daemon has acked the
-// shutdown request.
+// Stop sends `limactl stop`.
 func (vm *LimaVM) Stop(ctx context.Context, stdout, stderr io.Writer) error {
 	cmd := vm.command(ctx, "stop", vm.instanceName())
 	cmd.Stdout = stdout
@@ -228,9 +199,8 @@ func (vm *LimaVM) Stop(ctx context.Context, stdout, stderr io.Writer) error {
 	return nil
 }
 
-// Delete tears the instance down completely (removes disk image,
-// state). Use sparingly; the user loses every cached image and every
-// pulled base image in the VM.
+// Delete removes the instance's disk image and state; every cached image in
+// the VM is lost.
 func (vm *LimaVM) Delete(ctx context.Context, stdout, stderr io.Writer) error {
 	cmd := vm.command(ctx, "delete", "--force", vm.instanceName())
 	cmd.Stdout = stdout
@@ -241,13 +211,9 @@ func (vm *LimaVM) Delete(ctx context.Context, stdout, stderr io.Writer) error {
 	return nil
 }
 
-// EnsureRunning is the idempotent provisioner: nothing if the VM is
-// already running, Create+Start if it does not exist, Start if it is
-// merely stopped. Streams limactl's progress to stdout/stderr so the
-// caller can render a "first-time setup" UX.
-//
-// templateGen is called to produce the template only when a Create is
-// needed; this lets callers compute paths once and pass a closure.
+// EnsureRunning is the idempotent provisioner: no-op when running, Start when
+// stopped, Create+Start when absent. templateGen runs only when a Create is
+// needed.
 func (vm *LimaVM) EnsureRunning(ctx context.Context, templateGen func() string, stdout, stderr io.Writer) error {
 	status, err := vm.Status(ctx)
 	if err != nil {
@@ -268,16 +234,14 @@ func (vm *LimaVM) EnsureRunning(ctx context.Context, templateGen func() string, 
 	}
 }
 
-// ContainerdAddress is the host-side socket path where the VM's
-// rootless containerd is reachable. Matches what the generated YAML
-// template sets up as a forward.
+// ContainerdAddress is the host-side socket the template forwards the VM's
+// rootless containerd to.
 func (vm *LimaVM) ContainerdAddress() string {
 	return filepath.Join(vm.HostSocketDir, "containerd.sock")
 }
 
-// BuildKitAddress is the host-side address (unix:// scheme) where the
-// VM's rootless buildkitd is reachable. BuildKit's Go client expects
-// the unix:// prefix.
+// BuildKitAddress is the host-side forward for the VM's rootless buildkitd,
+// with the unix:// prefix BuildKit's Go client expects.
 func (vm *LimaVM) BuildKitAddress() string {
 	return "unix://" + filepath.Join(vm.HostSocketDir, "buildkitd.sock")
 }

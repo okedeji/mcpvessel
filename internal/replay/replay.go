@@ -1,9 +1,6 @@
-// Package replay owns the .replay artifact: the full-payload recording of a
-// run's external interactions, written under ~/.agentcage/replays. The recording
-// captures every LLM call's request and response so a run can be kept, shared
-// when reporting a bug, or re-run later. This package is the artifact's single
-// owner: the daemon assembles a Recording at a run's finish and writes it, and a
-// reader decodes the same shape.
+// Package replay owns the .replay artifact under ~/.agentcage/replays: the
+// full-payload recording of a run's external interactions. The daemon
+// assembles a Recording at a run's finish; readers decode the same shape.
 package replay
 
 import (
@@ -16,14 +13,13 @@ import (
 	"github.com/okedeji/agentcage/internal/env"
 )
 
-// Version is the artifact schema version, bumped only on a breaking change so a
-// reader can refuse a shape it does not understand.
+// Version is the artifact schema version, bumped only on breaking changes.
 const Version = "0.1"
 
 const replaysDirName = "replays"
 
-// Recording is one run's whole recording: its input, the ordered events it
-// produced, and its result. Times bound the run; the events carry their own.
+// Recording is one run's input, ordered events, and result. StartedAt and
+// EndedAt bound the run; events carry their own times.
 type Recording struct {
 	Version      string    `json:"version"`
 	AgentRef     string    `json:"agent_ref"`
@@ -50,11 +46,11 @@ type Result struct {
 	Error  string `json:"error,omitempty"`
 }
 
-// Event is one recorded external interaction, in occurrence order by Seq. An LLM
-// call carries its full request and response and metered cost; a sub-agent call
-// (not yet recorded) would carry its args and response. Request and
-// Response are raw JSON when the payload was JSON, a JSON string otherwise (a
-// streamed SSE body), so the artifact stays valid JSON either way.
+// Event is one recorded external interaction, ordered by Seq. An LLM call
+// carries its full request, response, and metered cost; a sub-agent call
+// (typed "subagent.<edge>.<tool>") carries its args and response. Request and
+// Response are raw JSON when the payload was JSON, a JSON string otherwise
+// (a streamed SSE body), keeping the artifact valid JSON either way.
 type Event struct {
 	Seq          int             `json:"seq"`
 	Type         string          `json:"type"`
@@ -98,9 +94,8 @@ func Write(rec *Recording) error {
 	return os.WriteFile(path, buf, 0o600)
 }
 
-// RawOrString embeds a captured payload into the artifact: the bytes themselves
-// when they are valid JSON, a JSON-encoded string otherwise, so a non-JSON body
-// (a streamed SSE response) never breaks the surrounding JSON.
+// RawOrString embeds a captured payload: the bytes themselves when valid
+// JSON, a JSON-encoded string otherwise (a streamed SSE body).
 func RawOrString(b []byte) json.RawMessage {
 	if len(b) == 0 {
 		return nil

@@ -7,25 +7,18 @@ import (
 	bkclient "github.com/moby/buildkit/client"
 )
 
-// DefaultBuildKitAddress is the conventional socket buildkitd listens
-// on. Lima-provisioned VMs on macOS and Windows forward this back to
-// the host on the same path so the address stays portable.
+// DefaultBuildKitAddress is buildkitd's conventional socket. Lima VMs forward
+// it back to the host at the same path, keeping the address portable.
 const DefaultBuildKitAddress = "unix:///run/buildkit/buildkitd.sock"
 
-// BuildKit wraps a BuildKit client with the address it was dialed
-// against. Close releases the underlying gRPC connection.
+// BuildKit wraps a BuildKit client with the address it was dialed against.
 type BuildKit struct {
 	client  *bkclient.Client
 	address string
 }
 
-// DialBuildKit opens a connection to a buildkitd daemon at the given
-// address. Pass "" to use DefaultBuildKitAddress. Accepts both
-// unix://path and tcp://host:port shapes that buildkitd supports.
-//
-// Returns an error wrapped with the dialed address so operators can
-// distinguish socket-path misconfiguration from daemon-down conditions
-// in logs.
+// DialBuildKit connects to buildkitd at address (unix:// or tcp://), or
+// DefaultBuildKitAddress when empty.
 func DialBuildKit(ctx context.Context, address string) (*BuildKit, error) {
 	if address == "" {
 		address = DefaultBuildKitAddress
@@ -45,11 +38,9 @@ func (b *BuildKit) Close() error {
 	return b.client.Close()
 }
 
-// Address returns the socket address this connection was opened
-// against.
+// Address returns the socket address this connection was dialed against.
 func (b *BuildKit) Address() string { return b.address }
 
-// Client returns the underlying BuildKit client for operations the
-// wrapper does not yet expose. The client must not be Close'd by the
-// caller; that belongs to the wrapper.
+// Client returns the underlying BuildKit client. Closing it belongs to the
+// wrapper.
 func (b *BuildKit) Client() *bkclient.Client { return b.client }

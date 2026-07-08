@@ -72,8 +72,6 @@ func TestElicitRouter_NoTargetErrors(t *testing.T) {
 	}
 }
 
-// TestElicitRouter_SerializesCalls proves a second bind blocks until the first
-// releases, so only one call's answer channel is ever live.
 func TestElicitRouter_SerializesCalls(t *testing.T) {
 	r := newElicitRouter()
 	release := r.bind(okTarget)
@@ -98,9 +96,6 @@ func TestElicitRouter_SerializesCalls(t *testing.T) {
 	}
 }
 
-// TestElicitRouter_RespectsContextCancel proves the call fails closed when the
-// wait is abandoned: a cancelled caller context unblocks route rather than
-// hanging until the deadline.
 func TestElicitRouter_RespectsContextCancel(t *testing.T) {
 	r := newElicitRouter()
 	release := r.bind(func(ctx context.Context, _ *mcp.ElicitRequest) (*mcp.ElicitResult, error) {

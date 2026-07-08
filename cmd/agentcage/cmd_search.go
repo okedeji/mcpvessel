@@ -73,9 +73,8 @@ func searchLocal(w io.Writer, query string, jsonOut bool) error {
 	return nil
 }
 
-// printSearchResults renders the registry hits, header always present so an
-// empty result still reads as a table. Descriptions are clipped so one long
-// entry cannot wreck the column alignment.
+// printSearchResults clips descriptions so one long entry cannot wreck the
+// column alignment.
 func printSearchResults(w io.Writer, servers []mcpregistry.Server) {
 	tw := tabwriter.NewWriter(w, 0, 0, 3, ' ', 0)
 	_, _ = fmt.Fprintln(tw, "NAME\tVERSION\tEVALS\tDESCRIPTION")

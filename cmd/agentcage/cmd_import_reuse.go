@@ -14,21 +14,19 @@ import (
 	"github.com/okedeji/agentcage/internal/store"
 )
 
-// wrapperCandidate is an existing wrapper of the server being imported: a tool
-// collection carrying the same imported_from marker, either one already in the
-// operator's store or one someone published to the registry.
+// wrapperCandidate is an existing wrapper of the server being imported (same
+// imported_from marker), from the local store or the registry.
 type wrapperCandidate struct {
 	Ref   string
 	Eval  string
 	Local bool
 }
 
-// chooseReuse offers any existing wrapper of the same server so an operator does
-// not rebuild what already exists, their own or another's. It returns the ref to
-// reuse, or "" to wrap a fresh one, which is also what an unmarked source (empty
-// origin) or no candidates yields. Reuse is always advisory: interactively the
-// operator picks, non-interactively the first candidate wins, and --no-reuse
-// skips the whole thing. Nobody is made to depend on another's namespace.
+// chooseReuse returns the ref of an existing wrapper to reuse, or "" to wrap
+// fresh (also the answer for an unmarked source or no candidates). Advisory
+// only: interactively the operator picks, non-interactively the first
+// candidate wins, and --no-reuse skips it. Nobody is made to depend on
+// another's namespace.
 func chooseReuse(cmd *cobra.Command, origin string) (string, error) {
 	if origin == "" {
 		return "", nil
@@ -68,9 +66,8 @@ func chooseReuse(cmd *cobra.Command, origin string) (string, error) {
 	}
 }
 
-// findLocalWrappers returns the operator's own prior wraps of this server, read
-// off each stored bundle's imported_from marker. One entry per ref; a bundle no
-// tag points at cannot be a USES target, so it is skipped.
+// findLocalWrappers reads each stored bundle's imported_from marker. One entry
+// per ref; an untagged bundle cannot be a USES target, so it is skipped.
 func findLocalWrappers(origin string) ([]wrapperCandidate, error) {
 	entries, err := store.List()
 	if err != nil {
@@ -99,10 +96,9 @@ func findLocalWrappers(origin string) ([]wrapperCandidate, error) {
 	return out, nil
 }
 
-// findRegistryWrappers returns published wrappers of this server. Search matches
-// on the entry name, so it casts by the server's short name and the marker
-// narrows the hits to true wrappers of this very source. Best-effort: a registry
-// outage returns nothing rather than failing an import that can proceed locally.
+// findRegistryWrappers searches by the server's short name and narrows the
+// hits by marker. Best-effort: a registry outage returns nothing rather than
+// failing an import that can proceed locally.
 func findRegistryWrappers(ctx context.Context, origin string) []wrapperCandidate {
 	servers, err := mcpregistry.New().Search(ctx, reuseSearchTerm(origin), 20)
 	if err != nil {
@@ -119,9 +115,8 @@ func findRegistryWrappers(ctx context.Context, origin string) []wrapperCandidate
 	return out
 }
 
-// reuseSearchTerm reduces an origin to the short name the registry search matches
-// on: the last path or scheme segment, so npm:@scope/server-time and
-// io.github.foo/server-time both cast for "server-time".
+// reuseSearchTerm reduces an origin to its last path or scheme segment, the
+// short name registry search matches on.
 func reuseSearchTerm(origin string) string {
 	if i := strings.LastIndexAny(origin, "/:"); i >= 0 {
 		return origin[i+1:]

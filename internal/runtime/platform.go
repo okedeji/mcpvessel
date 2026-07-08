@@ -16,86 +16,62 @@ import (
 	"github.com/okedeji/agentcage/internal/config"
 )
 
-// Provisioner is the platform-specific gate to a Linux container
-// environment with containerd and buildkitd.
+// Provisioner is the platform-specific gate to a Linux container environment
+// with containerd and buildkitd.
 //
-// EnsureReady is idempotent: subsequent calls after the first successful
-// one return quickly. Implementations stream provisioning progress
-// (which may take minutes on first run) to stdout/stderr so the CLI
-// can render a "first-time setup" UX.
+// EnsureReady is idempotent and streams provisioning progress (minutes on
+// first run) to stdout/stderr.
 //
-// ContainerdAddress and BuildKitAddress return socket addresses
-// reachable from this process. BuildKit's address is the one we
-// genuinely talk to programmatically. Its gRPC API works over a
-// forwarded socket. ContainerdAddress is exposed for diagnostics and
-// future use; we do not drive container lifecycle through it because
-// the containerd Go client expects to share a mount namespace with
-// the daemon, which fails when the daemon is rootless inside a Lima
-// VM and we are not.
+// BuildKitAddress is the socket we genuinely talk to; its gRPC API works over
+// a forwarded socket. ContainerdAddress is diagnostics only: the containerd Go
+// client expects to share a mount namespace with the daemon, which fails when
+// the daemon is rootless inside a Lima VM and we are not.
 //
-// Nerdctl is how the runtime drives containers and networks: the
-// Provisioner returns an unstarted *exec.Cmd that runs nerdctl with the
-// given arguments in the right environment (inside the Lima VM on macOS,
-// directly on Linux). The caller wires Stdin/Stdout/Stderr and calls Start.
-// This mirrors what Finch, Rancher Desktop, and Colima do for the same
-// reason: shell-out to nerdctl is the working pattern for
-// rootless-containerd-in-a-VM setups. Run a container with
-// nerdctlRunArgs(spec); create networks and stop containers with the
-// matching nerdctl subcommand.
+// Nerdctl returns an unstarted *exec.Cmd running nerdctl in the right
+// environment (inside the Lima VM on macOS, directly on Linux). Shell-out to
+// nerdctl is the working pattern for rootless-containerd-in-a-VM; Finch,
+// Rancher Desktop, and Colima do the same.
 type Provisioner interface {
 	EnsureReady(ctx context.Context, stdout, stderr io.Writer) error
 	ContainerdAddress() string
 	BuildKitAddress() string
 	Nerdctl(ctx context.Context, args ...string) *exec.Cmd
-	// AvailableMemory reports the total memory the machine can give cages, in
-	// bytes: the host's RAM on Linux, the VM's configured RAM on macOS. The
-	// runtime checks a run's compulsory footprint against it before booting.
+	// AvailableMemory reports the memory the machine can give cages, in bytes:
+	// host RAM on Linux, the VM's RAM on macOS.
 	AvailableMemory() (int64, error)
-	// DestroyVM tears down the backing VM so the next EnsureReady rebuilds it with
-	// the current machine config (the way `init --recreate` applies a memory
-	// change). It is a no-op on Linux, where there is no VM, and tolerates an
-	// already-absent VM.
+	// DestroyVM tears down the backing VM so the next EnsureReady rebuilds it
+	// with the current machine config. No-op on Linux; tolerates an absent VM.
 	DestroyVM(ctx context.Context, stdout, stderr io.Writer) error
 	Close() error
 }
 
-// ContainerSpec describes one container the runtime starts. Networks attaches
-// it to one or more named nerdctl networks so members of a shared network reach
-// it by name; Env injects environment variables; Detached runs it in the
-// background (-d) instead of attaching stdio (-i). An agent cage joins exactly
-// one network, shared only with the gateways, so no cage can reach another
-// directly. A gateway is multi-homed: it joins every cage network it must route
-// between, which is what makes it the sole chokepoint that enforces DENY. A
-// gateway door reaching the outside also joins the egress network.
+// ContainerSpec describes one container the runtime starts. An agent cage
+// joins exactly one network, shared only with the gateways, so no cage can
+// reach another directly; a gateway is multi-homed across every cage network
+// it routes between, the sole chokepoint that enforces DENY.
 type ContainerSpec struct {
 	RunID    string
 	ImageRef string
-	Args     []string // command args after the image; the gateway image's mode (mcp-gateway, llm-gateway, egress)
-	Networks []string // joined in order; one for an agent, many for a multi-homed gateway
+	Args     []string // command args after the image; the gateway image's mode
+	Networks []string // one for an agent, many for a multi-homed gateway
 	Env      map[string]string
-	Memory   string // nerdctl --memory cap; the runtime sets one on every cage so none runs uncapped
+	Memory   string // nerdctl --memory cap; every cage gets one
 	CPUs     string // nerdctl --cpus cap
 	Pids     int    // nerdctl --pids-limit cap
 	Detached bool
-	// Managed labels the container as a daemon-managed run's, so a freshly
-	// started daemon can sweep a crashed predecessor's orphans. A one-shot run
-	// leaves it false and is never swept.
+	// Managed labels the container for the daemon orphan sweep; a one-shot
+	// run leaves it false and is never swept.
 	Managed bool
 }
 
-// daemonResourceLabel marks the containers and networks a daemon-managed run
-// creates. A daemon's runs die with it (their stdio holder is gone), so any
-// resource carrying this label at the next daemon startup is a crash orphan
-// safe to sweep. A one-shot run carries no such label, so the sweep never
-// touches a concurrent agentcage run.
+// daemonResourceLabel marks daemon-managed containers and networks. A daemon's
+// runs die with it, so anything carrying this label at the next daemon startup
+// is a crash orphan safe to sweep. One-shot runs carry no label.
 const daemonResourceLabel = "agentcage.daemon"
 
-// nerdctlRunArgs builds the `run ...` argument list for a spec. Env keys
-// are sorted so the command is deterministic (and testable).
-//
-// --rm only goes on the attached parent, where it reaps the container once
-// stdin closes. nerdctl rejects --rm together with -d, so a detached
-// container omits it and gets removed explicitly at teardown.
+// nerdctlRunArgs builds the run argument list. Env keys are sorted for
+// determinism. nerdctl rejects --rm together with -d, so a detached container
+// omits it and is removed explicitly at teardown.
 func nerdctlRunArgs(spec ContainerSpec) []string {
 	args := []string{"run", "--name", spec.RunID}
 	if spec.Detached {
@@ -132,19 +108,9 @@ func nerdctlRunArgs(spec ContainerSpec) []string {
 	return append(args, spec.Args...)
 }
 
-// DefaultProvisioner returns the right Provisioner for the host OS,
-// using sensible defaults for socket paths and Lima state directories.
-//
-// Linux: NativeProvisioner assumes containerd at
-// /run/containerd/containerd.sock and buildkitd at
-// unix:///run/buildkit/buildkitd.sock. Operators who install agentcage
-// on Linux are expected to have those daemons running (systemd units
-// shipped by their distro's containerd and buildkit packages cover this).
-//
-// macOS: LimaProvisioner provisions ~/.agentcage/lima/ on first use.
-//
-// Windows: returns an error for now; a later change wires Lima's WSL2 driver
-// through the same LimaProvisioner type.
+// DefaultProvisioner returns the Provisioner for the host OS. Linux assumes
+// the distro's containerd and buildkitd are running at the default sockets;
+// macOS provisions ~/.agentcage/lima on first use; Windows is unsupported.
 func DefaultProvisioner() (Provisioner, error) {
 	switch runtime.GOOS {
 	case "linux":
@@ -152,26 +118,20 @@ func DefaultProvisioner() (Provisioner, error) {
 	case "darwin":
 		return defaultLimaProvisioner()
 	case "windows":
-		// Windows support will come via Lima's WSL2 driver, but the WSL2
-		// driver does not forward Unix sockets cleanly the way the macOS
-		// VZ driver does, so the current architecture does not port over
-		// directly. For now the agentcage CLI on Windows works (it just
-		// writes a .agent file from any host); `agentcage run` requires a
-		// Linux runtime.
+		// Lima's WSL2 driver does not forward Unix sockets the way the macOS
+		// VZ driver does, so the architecture does not port over directly.
 		return nil, fmt.Errorf("the agentcage runtime is not yet supported on Windows; for now run agents on a macOS or Linux host (or run the agentcage CLI inside a WSL2 distro that has containerd + buildkitd)")
 	default:
 		return nil, fmt.Errorf("unsupported host OS: %s", runtime.GOOS)
 	}
 }
 
-// NativeProvisioner is the Linux path: no VM, no provisioning, just
-// trust that the system's containerd and buildkitd are running.
+// NativeProvisioner is the Linux path: no VM, the system's containerd and
+// buildkitd are used directly.
 type NativeProvisioner struct{}
 
-// EnsureReady is a no-op for the native path. We rely on operators
-// keeping containerd and buildkitd running; if they aren't, the first
-// connection attempt to those sockets returns a clear error naming
-// the missing daemon.
+// EnsureReady is a no-op; a missing daemon surfaces on the first socket
+// connect instead.
 func (n *NativeProvisioner) EnsureReady(ctx context.Context, stdout, stderr io.Writer) error {
 	return nil
 }
@@ -180,19 +140,16 @@ func (n *NativeProvisioner) ContainerdAddress() string { return DefaultContainer
 func (n *NativeProvisioner) BuildKitAddress() string   { return DefaultBuildKitAddress }
 func (n *NativeProvisioner) Close() error              { return nil }
 
-// DestroyVM is a no-op on Linux: there is no VM to tear down, the host's
-// containerd and buildkitd are used directly.
+// DestroyVM is a no-op on Linux; there is no VM.
 func (n *NativeProvisioner) DestroyVM(ctx context.Context, stdout, stderr io.Writer) error {
 	return nil
 }
 
-// AvailableMemory reads the host's total RAM from /proc/meminfo. On Linux the
-// cages run on this host directly, so its memory is the machine capacity.
+// AvailableMemory reads the host's total RAM from /proc/meminfo.
 func (n *NativeProvisioner) AvailableMemory() (int64, error) {
 	return readMemTotal("/proc/meminfo")
 }
 
-// readMemTotal reads a /proc/meminfo-format file and parses its MemTotal.
 func readMemTotal(path string) (int64, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -201,9 +158,7 @@ func readMemTotal(path string) (int64, error) {
 	return parseMemTotal(data)
 }
 
-// parseMemTotal pulls the MemTotal line out of /proc/meminfo content and returns
-// it in bytes. The value is reported in kB. Shared by the host read on Linux and
-// the in-VM read on macOS so both sides agree on the format.
+// parseMemTotal returns MemTotal in bytes; /proc/meminfo reports kB.
 func parseMemTotal(data []byte) (int64, error) {
 	for _, line := range strings.Split(string(data), "\n") {
 		if !strings.HasPrefix(line, "MemTotal:") {
@@ -222,31 +177,25 @@ func parseMemTotal(data []byte) (int64, error) {
 	return 0, fmt.Errorf("MemTotal not found")
 }
 
-// Nerdctl runs `nerdctl <args>` on the host. Operators are expected to have
-// nerdctl on PATH when running agentcage on Linux without Lima.
+// Nerdctl runs nerdctl on the host; it must be on PATH.
 func (n *NativeProvisioner) Nerdctl(ctx context.Context, args ...string) *exec.Cmd {
 	return exec.CommandContext(ctx, "nerdctl", args...)
 }
 
-// LimaProvisioner runs the containerd + buildkitd stack inside a Lima VM
-// on macOS (and eventually Windows via Lima's WSL2 driver). EnsureReady
-// is what makes the "first-time setup" UX appear; subsequent calls are
-// near-instant.
+// LimaProvisioner runs the containerd + buildkitd stack inside a Lima VM on
+// macOS.
 type LimaProvisioner struct {
 	VM *LimaVM
 
-	// MemoryGiB, CPUs, and DiskGiB size the VM at creation, from the operator's
-	// machine config. Zero leaves the template default. They take effect only
-	// when the VM is created; an existing VM keeps the size it was made with until
-	// it is recreated.
+	// MemoryGiB, CPUs, and DiskGiB size the VM at creation; zero leaves the
+	// template default. An existing VM keeps its size until recreated.
 	MemoryGiB int
 	CPUs      int
 	DiskGiB   int
 }
 
-// defaultLimaProvisioner constructs a LimaProvisioner with the
-// conventional paths (~/.agentcage/lima/data for state, /sock for
-// forwarded sockets) and the bundled limactl binary.
+// defaultLimaProvisioner uses the conventional ~/.agentcage/lima paths and the
+// bundled limactl binary.
 func defaultLimaProvisioner() (*LimaProvisioner, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -274,9 +223,8 @@ func defaultLimaProvisioner() (*LimaProvisioner, error) {
 	}, nil
 }
 
-// EnsureReady makes sure the Lima VM exists and is running. First call
-// after install: ~2 minutes of provisioning output. Subsequent calls
-// while the VM is running: a single `limactl ls` round-trip.
+// EnsureReady makes sure the Lima VM exists and is running: ~2 minutes of
+// provisioning on first call, a single limactl ls round-trip after.
 func (l *LimaProvisioner) EnsureReady(ctx context.Context, stdout, stderr io.Writer) error {
 	templateGen := func() string {
 		return generateLimaTemplate(LimaTemplateInput{
@@ -294,15 +242,13 @@ func (l *LimaProvisioner) ContainerdAddress() string { return l.VM.ContainerdAdd
 func (l *LimaProvisioner) BuildKitAddress() string   { return l.VM.BuildKitAddress() }
 func (l *LimaProvisioner) Close() error              { return nil }
 
-// memQueryTimeout bounds the in-VM memory read. It is a single cat over the
-// already-running limactl shell, so it should return in well under a second; the
-// timeout only guards against a wedged VM.
+// memQueryTimeout bounds the in-VM memory read, a single cat over limactl
+// shell; it only guards against a wedged VM.
 const memQueryTimeout = 10 * time.Second
 
-// AvailableMemory reports the Lima VM's real RAM by reading /proc/meminfo inside
-// it. The cages run in the VM, so its memory, not the Mac's, is the machine
-// capacity. Reading the live VM (rather than the configured value) keeps the
-// number honest when the config has changed but the VM has not been recreated.
+// AvailableMemory reads /proc/meminfo inside the Lima VM; the cages run there,
+// not on the Mac. Reading the live VM rather than the configured value keeps
+// the number honest when the config changed but the VM was not recreated.
 func (l *LimaProvisioner) AvailableMemory() (int64, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), memQueryTimeout)
 	defer cancel()
@@ -313,10 +259,8 @@ func (l *LimaProvisioner) AvailableMemory() (int64, error) {
 	return parseMemTotal(out)
 }
 
-// DestroyVM deletes the Lima VM so the next EnsureReady recreates it with the
-// current machine config. An already-absent VM is fine. The caller is expected
-// to have stopped the daemon first, since this orphans every container the VM
-// held.
+// DestroyVM deletes the Lima VM; an absent VM is fine. Stop the daemon first,
+// this orphans every container the VM held.
 func (l *LimaProvisioner) DestroyVM(ctx context.Context, stdout, stderr io.Writer) error {
 	status, err := l.VM.Status(ctx)
 	if err != nil {
@@ -328,14 +272,10 @@ func (l *LimaProvisioner) DestroyVM(ctx context.Context, stdout, stderr io.Write
 	return l.VM.Delete(ctx, stdout, stderr)
 }
 
-// Nerdctl constructs `limactl shell <instance> nerdctl <args>`. The limactl
-// shell wrapper enters the Lima VM's user shell, and crucially the rootless
-// mount namespace where snapshot paths actually exist. nerdctl then drives
-// containerd from inside that namespace, sidestepping the cross-host
-// snapshot-path problem entirely.
-//
-// LIMA_HOME is injected via the wrapper's command builder so our state
-// stays isolated from the user's other Lima instances.
+// Nerdctl constructs `limactl shell <instance> nerdctl <args>`. The shell
+// enters the rootless mount namespace where snapshot paths actually exist,
+// sidestepping the cross-host snapshot-path problem. LIMA_HOME is injected so
+// state stays isolated from the user's other Lima instances.
 func (l *LimaProvisioner) Nerdctl(ctx context.Context, args ...string) *exec.Cmd {
 	full := append([]string{"shell", l.VM.instanceName(), "nerdctl"}, args...)
 	return l.VM.command(ctx, full...)

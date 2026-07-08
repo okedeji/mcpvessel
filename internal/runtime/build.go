@@ -19,43 +19,28 @@ import (
 
 // BuildInput is everything BuildAgent needs to produce an image.
 type BuildInput struct {
-	// Agentfile is the parsed Agentfile (drives Dockerfile codegen).
 	Agentfile *agentfile.Agentfile
 
-	// Manifest is the .agent bundle manifest (used for OCI image labels).
+	// Manifest supplies the image's OCI provenance labels.
 	Manifest *bundle.Manifest
 
-	// SourceDir is the directory containing the agent's source tree. It
-	// becomes the COPY context inside the generated Dockerfile.
+	// SourceDir is the COPY context for the generated Dockerfile.
 	SourceDir string
 
-	// ImageRef is the target image reference (e.g.
-	// "okedeji/researcher:0.1"). The resulting image is registered in
-	// containerd's image store under this name.
+	// ImageRef names the result in containerd's image store.
 	ImageRef string
 
 	// OnStatus, when non-nil, receives every BuildKit status update.
-	// Callers can render this to a TUI or stream it to logs.
 	OnStatus func(*bkclient.SolveStatus)
 
-	// NoCache tells BuildKit to ignore its layer cache and rebuild every
-	// step from scratch.
+	// NoCache rebuilds every step, ignoring BuildKit's layer cache.
 	NoCache bool
 }
 
-// BuildAgent runs BuildKit to produce an OCI image from the Agentfile.
-//
-// The flow:
-//
-//  1. Generate a Dockerfile from the Agentfile into a temp directory.
-//  2. Submit the build to BuildKit's dockerfile.v0 frontend, with two
-//     local mounts: the source directory (build context) and the temp
-//     directory (where the Dockerfile lives).
-//  3. Export the resulting image into containerd's image store under
-//     ImageRef so it can be looked up by reference at run time.
-//
-// The temp Dockerfile directory is removed before returning, even on
-// error, so failed builds do not leak working directories.
+// BuildAgent generates a Dockerfile from the Agentfile and solves it via
+// BuildKit's dockerfile.v0 frontend, exporting the image into containerd's
+// image store under ImageRef. The temp Dockerfile directory is removed even
+// on error.
 func BuildAgent(ctx context.Context, bk *BuildKit, in BuildInput) error {
 	if bk == nil {
 		return fmt.Errorf("buildkit client is nil")
@@ -80,15 +65,10 @@ func BuildAgent(ctx context.Context, bk *BuildKit, in BuildInput) error {
 }
 
 // solveImage runs the dockerfile.v0 frontend over a build context and a
-// directory holding the "Agentfile" definition, exporting the result into
-// containerd's image store under imageRef. The agent build and the gateway
-// build share it: the only difference is where the context and definition
-// come from.
-//
-// We name the definition file "Agentfile" so progress output reads "load
-// build definition from Agentfile" rather than "from Dockerfile". The
-// frontend still parses Dockerfile syntax (that is its job) but the
-// operator sees agentcage's vocabulary in the build progress.
+// definition dir, exporting into containerd's image store under imageRef.
+// Shared by the agent and gateway builds. The definition file is named
+// "Agentfile" so build progress reads in agentcage's vocabulary; the frontend
+// still parses Dockerfile syntax.
 func solveImage(ctx context.Context, bk *BuildKit, contextDir, dockerfileDir, imageRef string, noCache bool, onStatus func(*bkclient.SolveStatus)) error {
 	ctxMount, err := fsutil.NewFS(contextDir)
 	if err != nil {
@@ -101,8 +81,7 @@ func solveImage(ctx context.Context, bk *BuildKit, contextDir, dockerfileDir, im
 
 	frontendAttrs := map[string]string{"filename": "Agentfile"}
 	if noCache {
-		// The dockerfile frontend treats a present "no-cache" key as a flag,
-		// rebuilding every step regardless of its layer cache.
+		// The frontend treats a present "no-cache" key as a flag.
 		frontendAttrs["no-cache"] = ""
 	}
 
@@ -115,12 +94,9 @@ func solveImage(ctx context.Context, bk *BuildKit, contextDir, dockerfileDir, im
 		},
 		Exports: []bkclient.ExportEntry{
 			{
-				// "image" routes the result into the local worker's
-				// image store. On a BuildKit configured with the
-				// containerd worker (which is the production path),
-				// that's containerd's image store at the address the
-				// caller configured. Image is then loadable via
-				// containerd.Client.GetImage(ctx, imageRef).
+				// "image" routes the result into the local worker's image
+				// store; with the containerd worker (the production path)
+				// that is containerd's, loadable by ref at run time.
 				Type: bkclient.ExporterImage,
 				Attrs: map[string]string{
 					"name": imageRef,
@@ -148,11 +124,8 @@ func solveImage(ctx context.Context, bk *BuildKit, contextDir, dockerfileDir, im
 	return nil
 }
 
-// writeBuildContext materializes the generated build instructions
-// into a fresh temp directory as a file named "Agentfile" (still
-// Dockerfile syntax internally, but presented as agentcage's
-// vocabulary) and returns its path along with a cleanup function the
-// caller must defer.
+// writeBuildContext writes the generated Dockerfile into a fresh temp dir as
+// "Agentfile" and returns its path with a cleanup the caller must defer.
 func writeBuildContext(in BuildInput) (string, func(), error) {
 	dir, err := os.MkdirTemp("", "agentcage-build-*")
 	if err != nil {
@@ -172,10 +145,8 @@ func writeBuildContext(in BuildInput) (string, func(), error) {
 	return dir, cleanup, nil
 }
 
-// labelsFromManifest derives OCI image labels from the bundle manifest
-// so the resulting image carries its provenance. Tools like
-// `nerdctl image inspect` can read these to see what bundle produced
-// the image without unpacking it.
+// labelsFromManifest derives OCI provenance labels from the bundle manifest,
+// readable via image inspect without unpacking the bundle.
 func labelsFromManifest(m *bundle.Manifest) map[string]string {
 	if m == nil {
 		return nil
@@ -191,19 +162,10 @@ func labelsFromManifest(m *bundle.Manifest) map[string]string {
 	return labels
 }
 
-// buildWithProgress runs BuildAgent and renders BuildKit's status
-// stream to w using AutoMode: a live-updating `[+] Building 0.4s (9/9)
-// FINISHED` dashboard when w is a terminal, plain `#1 ... DONE` lines
-// when it is a pipe or file. AutoMode handles the TTY detection for us;
-// CI logs stay readable without us needing to detect them by hand.
-//
-// Before status events reach the display we rewrite vertex names so
-// the operator sees agentcage's vocabulary in places where BuildKit
-// would otherwise surface the underlying build terminology: "Dockerfile"
-// becomes "Agentfile", "docker.io/library/" is stripped from image refs,
-// ".dockerignore" becomes ".agentignore". The frontend itself still
-// parses that syntax (that is how BuildKit works), but the operator
-// never has to see it.
+// buildWithProgress runs BuildAgent, rendering the status stream to w.
+// AutoMode gives a live dashboard on a TTY and plain lines on a pipe, keeping
+// CI logs readable. Status names are rewritten to agentcage's vocabulary
+// before display.
 func buildWithProgress(ctx context.Context, bk *BuildKit, in BuildInput, w io.Writer) error {
 	statusCh := make(chan *bkclient.SolveStatus, 16)
 	displayDone := make(chan struct{})
@@ -212,8 +174,7 @@ func buildWithProgress(ctx context.Context, bk *BuildKit, in BuildInput, w io.Wr
 		defer close(displayDone)
 		d, err := progressui.NewDisplay(w, progressui.AutoMode)
 		if err != nil {
-			// If the display cannot be constructed, drain the
-			// channel so BuildAgent does not block on a backed-up
+			// No display: drain so BuildAgent does not block on a full
 			// status pipe.
 			for range statusCh {
 			}
@@ -232,11 +193,9 @@ func buildWithProgress(ctx context.Context, bk *BuildKit, in BuildInput, w io.Wr
 	return err
 }
 
-// rewriteStatusForAgentcage rewrites vertex and sub-status names in
-// place so the build progress reads as agentcage's. The substitutions
-// are intentionally narrow: anything that is not display-text noise
-// (errors, log lines, digests) is left untouched so a real failure
-// still points at what BuildKit actually saw.
+// rewriteStatusForAgentcage rewrites vertex and sub-status names in place.
+// Display text only: errors, log lines, and digests stay untouched so a real
+// failure still points at what BuildKit actually saw.
 func rewriteStatusForAgentcage(s *bkclient.SolveStatus) {
 	for _, v := range s.Vertexes {
 		v.Name = rewriteAgentcageDisplay(v.Name)
@@ -251,8 +210,7 @@ func rewriteAgentcageDisplay(s string) string {
 	if s == "" {
 		return s
 	}
-	// Order matters: replace longer substrings first so the shorter
-	// ones do not partial-match.
+	// Longer substrings first so shorter ones do not partial-match.
 	s = strings.ReplaceAll(s, "docker.io/library/", "")
 	s = strings.ReplaceAll(s, "docker.io/", "")
 	s = strings.ReplaceAll(s, ".dockerignore", ".agentignore")

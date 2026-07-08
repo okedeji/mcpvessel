@@ -1,12 +1,7 @@
-// Package mcpregistry talks to the official MCP Registry: it searches the
-// public catalog, resolves a reverse-DNS name to the artifact it points at,
-// and publishes a public agent's server.json.
-//
-// The registry stores no bundles. Each entry is a server.json record whose
-// packages[] point at where the runnable artifact actually lives, an OCI
-// artifact for an agentcage agent. So this package is a thin discovery
-// client: it never moves an agent's bytes, only the metadata that lets a
-// caller find the OCI reference the OCI registry client then pulls.
+// Package mcpregistry talks to the official MCP Registry: search, resolve
+// a reverse-DNS name, publish a server.json. The registry stores no
+// bundles; each entry's packages[] point at the OCI artifact, so this
+// client moves metadata only, never an agent's bytes.
 package mcpregistry
 
 import (
@@ -28,27 +23,23 @@ import (
 const (
 	defaultBaseURL = "https://registry.modelcontextprotocol.io"
 
-	// apiPrefix is the versioned API root every endpoint hangs off. It moves
-	// with the registry's API version, not agentcage's, so it lives here and
-	// nowhere else.
+	// apiPrefix moves with the registry's API version, not agentcage's.
 	apiPrefix = "/v0.1"
 
-	// requestTimeout bounds a single registry call. The registry is an
-	// external dependency, so a wedged one must fail the command rather than
-	// hang the CLI with no way out but Ctrl-C.
+	// requestTimeout bounds a single registry call so a wedged registry
+	// fails the command rather than hanging the CLI.
 	requestTimeout = 30 * time.Second
 )
 
-// Client is a discovery client for the MCP Registry. It holds no credentials:
-// search and resolve are unauthenticated reads, and Publish takes the caller's
-// bearer token per call so a token never outlives the operation that needs it.
+// Client is a discovery client for the MCP Registry. It holds no
+// credentials; Publish takes the caller's bearer per call.
 type Client struct {
 	baseURL string
 	http    *http.Client
 }
 
-// New builds a Client against the official registry, or the AGENTCAGE_MCP_REGISTRY
-// override for operators pointing at a mirror or a test double.
+// New builds a Client against the official registry, or the
+// AGENTCAGE_MCP_REGISTRY override.
 func New() *Client {
 	return &Client{
 		baseURL: baseURL(),
@@ -60,9 +51,8 @@ func baseURL() string {
 	return strings.TrimRight(config.LookupEnvOr(env.MCPRegistry, defaultBaseURL), "/")
 }
 
-// Search returns servers whose name matches query, newest first, up to limit.
-// An empty query lists the catalog; the registry paginates and this returns
-// only the first page, which is what an interactive search wants.
+// Search returns servers matching query, newest first, up to limit. An
+// empty query lists the catalog; only the first page is returned.
 func (c *Client) Search(ctx context.Context, query string, limit int) ([]Server, error) {
 	q := url.Values{}
 	if query != "" {
@@ -82,10 +72,8 @@ func (c *Client) Search(ctx context.Context, query string, limit int) ([]Server,
 	return out, nil
 }
 
-// Resolve returns the registry entry for an exact reverse-DNS name, or a not-found
-// error naming what was asked for. It is the seam the OCI reference layer uses to
-// turn io.github.user/name into the OCI coordinates a pull runs against: the
-// caller reads the resolved entry's OCI package (OCIReference).
+// Resolve returns the registry entry for an exact reverse-DNS name, or a
+// not-found error naming what was asked for.
 func (c *Client) Resolve(ctx context.Context, name string) (*Server, error) {
 	servers, err := c.Search(ctx, name, 0)
 	if err != nil {
@@ -99,10 +87,9 @@ func (c *Client) Resolve(ctx context.Context, name string) (*Server, error) {
 	return nil, fmt.Errorf("resolving %s: no such server in the MCP Registry", name)
 }
 
-// Publish records a server.json in the registry under the caller's namespace.
-// token is the bearer the operator obtained by proving they own the namespace
-// (GitHub OAuth). A rejected token is an error, never a silent no-op: a publish
-// the operator believes happened but did not is worse than a loud failure.
+// Publish records a server.json under the caller's namespace. token is the
+// bearer from the GitHub OAuth namespace proof. A rejected token is an
+// error, never a silent no-op.
 func (c *Client) Publish(ctx context.Context, s *Server, token string) error {
 	if token == "" {
 		return fmt.Errorf("publishing %s: no MCP Registry token; run 'agentcage login mcp-registry' first", s.Name)
@@ -164,7 +151,7 @@ func (c *Client) get(ctx context.Context, path string, q url.Values, out any) er
 }
 
 // snippet reads a bounded prefix of an error body so a misbehaving registry
-// cannot flood the terminal, and a truncated read never blocks the message.
+// cannot flood the terminal.
 func snippet(r io.Reader) string {
 	b, _ := io.ReadAll(io.LimitReader(r, 512))
 	return strings.TrimSpace(string(b))

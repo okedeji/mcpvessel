@@ -8,12 +8,9 @@ import (
 	"github.com/okedeji/agentcage/internal/progress"
 )
 
-// TestSetupTap_DetectsLimaPhases walks setupTap through representative
-// Lima output and confirms the phase advance order we depend on. The
-// markers come from real `limactl create`/`start` runs observed on
-// macOS during the slice-5 smoke; this test pins the parsing
-// expectations so a Lima upgrade that quietly renames a log line
-// shows up as a CI failure rather than a silent UX regression.
+// The markers come from real limactl create/start runs on macOS. This pins
+// the parsing so a Lima upgrade that quietly renames a log line fails CI
+// rather than silently regressing the UX.
 func TestSetupTap_DetectsLimaPhases(t *testing.T) {
 	var buf bytes.Buffer
 	ui := progress.NewSetupPlain(&buf, "", "", SetupPhases)
@@ -52,9 +49,8 @@ func TestSetupTap_DetectsLimaPhases(t *testing.T) {
 }
 
 func TestSetupTap_BuffersAcrossWrites(t *testing.T) {
-	// Real provisioner output arrives in network-sized chunks that
-	// rarely align to line boundaries. The tap must buffer across
-	// writes; otherwise mid-line splits would lose phase markers.
+	// Provisioner output arrives in chunks that rarely align to line
+	// boundaries; the tap must buffer across writes or lose markers.
 	var buf bytes.Buffer
 	ui := progress.NewSetupPlain(&buf, "", "", SetupPhases)
 	tap := newSetupTap(ui)
@@ -83,9 +79,8 @@ func TestSetupTap_UnknownLinesAreDiscarded(t *testing.T) {
 		t.Fatalf("Write: %v", err)
 	}
 	ui.Done()
-	// Plain UI prints "-> phase" lines on transitions; with no
-	// transitions we should see at most the final "Setup complete"
-	// line and no leak of the raw input.
+	// With no transitions, at most the final "Setup complete" line appears
+	// and none of the raw input leaks.
 	if strings.Contains(buf.String(), "noise that is not a phase marker") {
 		t.Errorf("tap leaked unmatched Lima output to UI:\n%s", buf.String())
 	}

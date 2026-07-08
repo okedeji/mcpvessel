@@ -9,17 +9,12 @@ import (
 	"strings"
 )
 
-// SweepDaemonOrphans removes the containers and networks a previous daemon left
-// behind. A daemon-managed run dies with the daemon that held its stdio, but its
-// detached sub-agents, gateways, and networks do not, so the daemon labels them
-// and a freshly started one sweeps any that survive a crash. One-shot runs carry
-// no such label and are never touched.
-//
-// The caller must invoke this only once it owns the control socket, so a daemon
-// already serving cannot have its live runs swept. It is best-effort: with no
-// runtime up there is nothing to sweep, and a nerdctl hiccup returns for the
-// caller to log rather than aborting startup. Containers go before networks so a
-// network is empty by the time it is removed.
+// SweepDaemonOrphans removes containers and networks a crashed daemon left
+// behind, identified by the daemon label; one-shot runs carry no label and are
+// never touched. Call only once the control socket is owned, so a daemon
+// already serving cannot have its live runs swept. Best-effort: errors return
+// for the caller to log rather than aborting startup. Containers go before
+// networks so a network is empty by the time it is removed.
 func SweepDaemonOrphans(ctx context.Context) error {
 	p, err := DefaultProvisioner()
 	if err != nil {
@@ -53,8 +48,7 @@ func SweepDaemonOrphans(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-// nerdctlLines runs nerdctl and returns its stdout split into non-empty trimmed
-// lines, the shape the -q listings the sweep reads come back in.
+// nerdctlLines returns nerdctl's stdout as non-empty trimmed lines.
 func nerdctlLines(ctx context.Context, p Provisioner, args ...string) ([]string, error) {
 	cmd := p.Nerdctl(ctx, args...)
 	var out bytes.Buffer

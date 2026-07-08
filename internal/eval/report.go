@@ -6,9 +6,8 @@ import (
 	"time"
 )
 
-// CaseResult is the outcome of one eval case: whether it passed, the reasons it
-// did not, and what it cost and took. JudgeScore is nil unless the case ran a
-// judge; a run that errored before producing output has no score to record.
+// CaseResult is the outcome of one eval case. JudgeScore is nil unless the
+// case ran a judge; a run that errored before producing output has no score.
 type CaseResult struct {
 	Name         string   `json:"name"`
 	Passed       bool     `json:"passed"`
@@ -18,9 +17,9 @@ type CaseResult struct {
 	JudgeScore   *float64 `json:"judge_score,omitempty"`
 	JudgeReason  string   `json:"judge_reason,omitempty"`
 
-	// judgeCostMicroUSD is the judge's own spend for this case, summed into the
-	// report footer. It is never counted against the case's max_cost_usd: that
-	// ceiling measures the agent, not the operator's choice to grade it.
+	// judgeCostMicroUSD is the judge's own spend, summed into the report
+	// footer but never counted against max_cost_usd: that ceiling measures
+	// the agent, not the operator's choice to grade it.
 	judgeCostMicroUSD int64
 }
 
@@ -29,8 +28,8 @@ func (r CaseResult) Duration() time.Duration {
 	return time.Duration(r.DurationMS) * time.Millisecond
 }
 
-// Report is a whole suite run: per-case results plus aggregate counts, the mean
-// judge score across judged cases, and the money the agent and the judge spent.
+// Report is a whole suite run: per-case results, aggregate counts, the mean
+// judge score across judged cases, and agent and judge spend.
 type Report struct {
 	Cases             []CaseResult `json:"cases"`
 	Passed            int          `json:"passed"`
@@ -47,10 +46,9 @@ func (r Report) Elapsed() time.Duration {
 	return time.Duration(r.ElapsedMS) * time.Millisecond
 }
 
-// FormatUSD renders a micro-USD amount as a dollar figure, keeping full
-// micro-dollar precision for small values and trimming trailing zeros past two
-// decimals so a round amount stays short. A tiny LLM call reads as $0.000007
-// rather than rounding away to $0.000; a whole-dollar budget stays $5.00.
+// FormatUSD renders micro-USD as dollars, keeping micro precision for small
+// values ($0.000007 does not round away to $0.000) and trimming past two
+// decimals so a round amount stays $5.00.
 func FormatUSD(microUSD int64) string {
 	s := fmt.Sprintf("%d.%06d", microUSD/1_000_000, microUSD%1_000_000)
 	s = strings.TrimRight(s, "0")

@@ -95,12 +95,8 @@ Examples:
 	return cmd
 }
 
-// parseArgPairs turns the repeated --arg KEY=VALUE flag into the map the MCP
-// CallTool API expects, coercing each value to the type the tool's input schema
-// declares: a string stays a string (so a value that happens to look like JSON
-// is not mangled), an array or object is parsed as JSON (so a tool taking a list
-// can be called at all), a number or boolean is converted. Returns an error
-// naming the offending pair when one is malformed.
+// parseArgPairs turns repeated --arg KEY=VALUE flags into the MCP CallTool
+// args map, coercing each value to the type the tool's input schema declares.
 func parseArgPairs(pairs []string, schema map[string]any) (map[string]any, error) {
 	props, _ := schema["properties"].(map[string]any)
 	out := make(map[string]any, len(pairs))
@@ -118,11 +114,10 @@ func parseArgPairs(pairs []string, schema map[string]any) (map[string]any, error
 	return out, nil
 }
 
-// coerceArg converts a raw --arg string to the JSON type the property declares.
-// A declared type that the value will not parse into falls back to the raw
-// string, leaving the server to validate and report. With no schema for the key,
-// it parses valid JSON and otherwise keeps the string, the best a caller can do
-// blind.
+// coerceArg converts a raw --arg string to the declared JSON type. A declared
+// string stays verbatim, even when it looks like JSON. A value that will not
+// parse falls back to the raw string; the server validates and reports. With
+// no schema, valid JSON parses and anything else stays a string.
 func coerceArg(value string, prop any) any {
 	switch propType(prop) {
 	case "string":
@@ -153,8 +148,8 @@ func coerceArg(value string, prop any) any {
 	return value
 }
 
-// propType reads a JSON Schema property's declared type. A union type
-// (["string","null"]) reports the first non-null member, enough to coerce.
+// propType reads a property's declared type; a union like ["string","null"]
+// reports the first non-null member.
 func propType(prop any) string {
 	p, ok := prop.(map[string]any)
 	if !ok {
@@ -173,9 +168,8 @@ func propType(prop any) string {
 	return ""
 }
 
-// toolSchema returns the input schema the catalog recorded for toolName, or nil
-// when the bundle has no catalog (built --no-introspect) or the tool declares no
-// schema. A nil schema leaves parseArgPairs to coerce blind.
+// toolSchema returns the catalog's input schema for toolName, nil when the
+// bundle has no catalog (built --no-introspect) or the tool declares none.
 func toolSchema(manifest *bundle.Manifest, toolName string) map[string]any {
 	for _, t := range manifest.Tools {
 		if t.Name == toolName {
@@ -185,12 +179,10 @@ func toolSchema(manifest *bundle.Manifest, toolName string) map[string]any {
 	return nil
 }
 
-// assertToolIsPublic rejects external calls to private tools so the operator
-// sees a clear error before the platform tries to spin up the cage. It reads the
-// tool catalog, the authoritative visibility after introspection: it already has
-// EXPOSE * expanded to per-tool public, which the raw EXPOSE directive does not.
-// A declared-only bundle (built --no-introspect) has no catalog, so it falls back
-// to the Agentfile's MAIN and EXPOSE names.
+// assertToolIsPublic rejects calls to private tools before the cage spins up.
+// The catalog is the authoritative visibility (it has EXPOSE * expanded, the
+// raw directive does not); a declared-only bundle has no catalog and falls
+// back to the Agentfile's MAIN and EXPOSE names.
 func assertToolIsPublic(manifest *bundle.Manifest, toolName string) error {
 	if len(manifest.Tools) > 0 {
 		publicNames := make([]string, 0, len(manifest.Tools))

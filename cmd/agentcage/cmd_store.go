@@ -61,8 +61,6 @@ plus a row for a bundle stored only by content hash.`,
 	return cmd
 }
 
-// printStoreEntries renders the store listing as a table, header always present
-// so an empty store still reads as a table rather than nothing.
 func printStoreEntries(w io.Writer, entries []store.Entry) {
 	tw := tabwriter.NewWriter(w, 0, 0, 3, ' ', 0)
 	_, _ = fmt.Fprintln(tw, "REFERENCE\tHASH\tSIZE")
@@ -121,9 +119,9 @@ func loadBundle(w io.Writer, file, tag string) error {
 		ref = parsed
 	}
 
-	// Verify by extracting to a throwaway dir: Extract re-hashes the source tree
-	// against the manifest's files_hash, so a corrupt or tampered bundle is
-	// caught before it enters the store rather than at first run.
+	// Extract to a throwaway dir re-hashes the source tree against the
+	// manifest's files_hash, catching a corrupt or tampered bundle before it
+	// enters the store.
 	tmp, err := os.MkdirTemp("", "agentcage-import-")
 	if err != nil {
 		return fmt.Errorf("creating verify dir: %w", err)

@@ -8,43 +8,24 @@ import (
 	"time"
 )
 
-// Setup renders a multi-phase first-time-setup flow. Phases are defined
-// up front; the orchestrator calls Start to advance from one to the
-// next, optionally SetDetail to attach a sub-status to the active
-// phase ("downloading 342 MB" inside "Preparing Linux microVM"), and
-// Done when all phases are complete.
-//
-// Two implementations ship: SetupTTY (live-updating, spinner + elapsed
-// times), and SetupPlain (one line per phase transition, safe for pipes
-// / CI capture buffers). NewSetup picks based on whether the writer
-// is a terminal.
-//
-// The renderer suppresses Lima's raw output entirely. Users see a
-// branded, calm first-time experience instead of a hundred INFO lines
-// they cannot interpret. Operators who want the raw stream pass
-// --verbose to bypass the renderer.
+// Setup renders a multi-phase first-time-setup flow with the phases fixed
+// up front. It exists to replace Lima's raw output, which a first-time user
+// cannot interpret; --verbose bypasses it for the raw stream.
 type Setup interface {
-	// Start marks the named phase active and completes the previously
-	// active one. Phase names must match what was passed to NewSetup
-	// at construction. Calling Start for a phase not in the list is a
-	// no-op (the renderer never fails the caller for a label typo).
+	// Start marks the named phase active, completing the previously
+	// active one. An unknown name is a no-op, never a failure.
 	Start(name string)
-	// SetDetail attaches a short sub-status to the active phase. The
-	// detail is rendered next to the phase name and overwritten by
-	// later SetDetail calls. Empty strings clear the detail.
+	// SetDetail attaches a short sub-status to the active phase; empty
+	// clears it.
 	SetDetail(detail string)
-	// Done completes the active phase and stops the renderer's tick
-	// loop. Safe to call more than once.
+	// Done completes the active phase and stops the renderer. Safe to
+	// call more than once.
 	Done()
-	// Fail marks the active phase as failed and stops the renderer.
-	// The error is shown next to the phase in the final render.
+	// Fail marks the active phase failed and stops the renderer.
 	Fail(err error)
 }
 
 // NewSetup picks SetupTTY when w is a terminal, SetupPlain otherwise.
-// title and tip are displayed above and below the phase list (the tip
-// can be empty). phases are rendered in order; the first call to
-// Start activates the first one.
 func NewSetup(w io.Writer, title, tip string, phases []string) Setup {
 	if IsTerminal(w) {
 		return NewSetupTTY(w, title, tip, phases)
@@ -70,9 +51,6 @@ type setupPhase struct {
 	endedAt   time.Time
 }
 
-// findPhase returns the index of the phase with the given name, or -1
-// if there is none. Match is case-sensitive; phase names are
-// developer-supplied strings, not user input.
 func findPhase(phases []setupPhase, name string) int {
 	for i, p := range phases {
 		if p.name == name {
@@ -91,9 +69,8 @@ func activePhaseIndex(phases []setupPhase) int {
 	return -1
 }
 
-// SetupTTY is the live-updating renderer. It owns a tick goroutine
-// that refreshes the display so elapsed times update smoothly while a
-// phase runs. Done stops the goroutine.
+// SetupTTY is the live-updating renderer; a tick goroutine refreshes
+// elapsed times until Done.
 type SetupTTY struct {
 	w       io.Writer
 	mu      sync.Mutex
@@ -106,9 +83,8 @@ type SetupTTY struct {
 	lines   int // lines emitted in the previous render
 }
 
-// NewSetupTTY constructs the live renderer. It writes the initial
-// header immediately so the user sees something on the first frame
-// even before the first Start.
+// NewSetupTTY renders the header immediately so the user sees something
+// before the first Start.
 func NewSetupTTY(w io.Writer, title, tip string, phaseNames []string) *SetupTTY {
 	phases := make([]setupPhase, len(phaseNames))
 	for i, n := range phaseNames {
@@ -147,21 +123,16 @@ func (t *SetupTTY) Start(name string) {
 	if idx < 0 {
 		return
 	}
-	// Re-calling Start for the already-active phase is a no-op. The
-	// tap fires Start whenever it sees a marker, and most phases
-	// have many matching markers, and without this guard each marker
-	// would reset startedAt and clear detail, making the UI feel
-	// stuck at "0s" while real time elapses.
+	// The Lima tap fires Start once per marker and a phase has many
+	// markers; without this guard each one would reset startedAt and
+	// clear detail, pinning the UI at "0s".
 	if t.phases[idx].state == phaseActive {
 		return
 	}
 	now := time.Now()
-	// Complete the currently-active phase, then auto-complete any
-	// still-pending phases that sit before the new one. This keeps
-	// the UI honest when our Lima tap misses a marker (or when a
-	// phase legitimately has no work, e.g. the Ubuntu image was
-	// cached so "Preparing" had nothing to do). Without this,
-	// skipped phases stay with a leading dot forever.
+	// Complete the active phase, then auto-complete pending phases before
+	// the new one: the tap can miss a marker, and a cached image gives a
+	// phase nothing to do. Otherwise skipped phases keep their dot forever.
 	if cur := activePhaseIndex(t.phases); cur >= 0 {
 		t.phases[cur].state = phaseDone
 		t.phases[cur].endedAt = now
@@ -221,8 +192,7 @@ func (t *SetupTTY) render() {
 	t.renderLocked()
 }
 
-// spinnerFrames is the Braille-dot spinner shared with most other
-// modern CLI tools (rustup, cargo, gh). Indexed by elapsed
+// spinnerFrames is the usual Braille spinner, indexed by elapsed
 // tickInterval slices so adjacent renders show distinct frames.
 var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 
@@ -258,22 +228,19 @@ func (t *SetupTTY) renderLocked() {
 	t.lines = lines
 }
 
-// writeLine appends s followed by the clear-to-end-of-line escape so
-// leftover characters from a previous, longer render do not bleed
-// through.
+// writeLine appends s plus the clear-to-end-of-line escape so a previous,
+// longer render does not bleed through.
 func writeLine(b *strings.Builder, s string) {
 	b.WriteString(s)
 	b.WriteString("\033[K\n")
 }
 
-// formatSetupPhase renders one phase line. Format:
+// formatSetupPhase renders one phase line:
 //
 //	✓ <name>                                  3s
 //	⠼ <name> - <detail>                  1m 22s
 //	· <name>
 //	✗ <name> - <error>                  (failed)
-//
-// The duration is left out for pending phases (they have no clock).
 func formatSetupPhase(p setupPhase) string {
 	var icon string
 	switch p.state {
@@ -312,8 +279,8 @@ func formatSetupPhase(p setupPhase) string {
 	return formatTwoColumn("  "+icon+" "+label, right)
 }
 
-// formatTwoColumn pads left with spaces so right ends at column 78. If
-// the line would overflow, left is truncated and right is preserved.
+// formatTwoColumn pads so right ends at column 78; on overflow left is
+// truncated and right preserved.
 func formatTwoColumn(left, right string) string {
 	const width = 78
 	if right == "" {
@@ -326,8 +293,7 @@ func formatTwoColumn(left, right string) string {
 	return left + strings.Repeat(" ", pad) + right
 }
 
-// displayLen counts runes, not bytes, so multi-byte glyphs (spinner,
-// checkmark) line up correctly in the right-aligned column.
+// displayLen counts runes so multi-byte glyphs align.
 func displayLen(s string) int {
 	n := 0
 	for range s {
@@ -336,8 +302,6 @@ func displayLen(s string) int {
 	return n
 }
 
-// humanDuration formats a duration as sub-minute seconds with one
-// decimal, longer as "1m 22s".
 func humanDuration(d time.Duration) string {
 	if d < time.Minute {
 		return fmt.Sprintf("%.1fs", d.Seconds())
@@ -347,8 +311,8 @@ func humanDuration(d time.Duration) string {
 	return fmt.Sprintf("%dm %02ds", mins, secs)
 }
 
-// SetupPlain is the non-TTY renderer. One line per state transition,
-// no cursor games. Safe for pipes, files, and CI capture.
+// SetupPlain is the non-TTY renderer: one line per transition, no cursor
+// control.
 type SetupPlain struct {
 	w       Writer
 	mu      sync.Mutex
@@ -358,14 +322,11 @@ type SetupPlain struct {
 	started time.Time
 }
 
-// Writer is a tiny alias so SetupPlain can take either an io.Writer or
-// a fmt-style writer without pulling fmt's package boundary into the
-// signature.
+// Writer aliases io.Writer.
 type Writer = io.Writer
 
-// NewSetupPlain constructs the line-by-line renderer. Title is
-// printed immediately; the tip (if any) lands at Done so it reads as
-// a closing remark.
+// NewSetupPlain prints the title immediately; the tip, if any, lands at
+// Done.
 func NewSetupPlain(w io.Writer, title, tip string, phaseNames []string) *SetupPlain {
 	phases := make([]setupPhase, len(phaseNames))
 	for i, n := range phaseNames {
@@ -386,9 +347,7 @@ func (p *SetupPlain) Start(name string) {
 		return
 	}
 	if p.phases[idx].state == phaseActive {
-		// Re-calling Start for the already-active phase is a no-op;
-		// the tap fires many markers per phase and we should not
-		// emit a duplicate "-> name" line each time.
+		// The tap fires many markers per phase; one "-> name" line each.
 		return
 	}
 	now := time.Now()
@@ -397,10 +356,8 @@ func (p *SetupPlain) Start(name string) {
 		p.phases[cur].endedAt = now
 		_, _ = fmt.Fprintf(p.w, "  done in %s\n", humanDuration(p.phases[cur].endedAt.Sub(p.phases[cur].startedAt)))
 	}
-	// Auto-complete still-pending phases that sit before the new
-	// one, matching SetupTTY.Start. Each one prints a "skipped"
-	// line so the operator sees the phase happened (or didn't) in
-	// order.
+	// Auto-complete pending phases before the new one, matching
+	// SetupTTY.Start; each prints a skipped line so order stays visible.
 	for i := range idx {
 		if p.phases[i].state == phasePending {
 			p.phases[i].state = phaseDone

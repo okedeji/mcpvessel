@@ -47,8 +47,7 @@ func TestNonInteractiveCredentials_BothFlags(t *testing.T) {
 }
 
 func TestNonInteractiveCredentials_MissingNeedsPrompt(t *testing.T) {
-	// No flags, no password-stdin: the command must fall through to an
-	// interactive prompt, signalled by ok=false and no error.
+	// ok=false with no error is the fall-through-to-prompt signal.
 	_, _, ok, err := nonInteractiveCredentials(strings.NewReader(""), "", "", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

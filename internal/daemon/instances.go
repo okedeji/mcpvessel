@@ -11,10 +11,9 @@ import (
 	"github.com/okedeji/agentcage/internal/runtime"
 )
 
-// managedSession is what the instance manager needs from a booted instance: the
-// call surface it hands the front door and a way to release it. *runtime.Session
-// satisfies it; an interface here keeps the manager unit-testable without booting
-// a container.
+// managedSession is what the manager needs from a booted instance.
+// *runtime.Session satisfies it; the interface keeps the manager testable
+// without booting a container.
 type managedSession interface {
 	Call(ctx context.Context, tool string, args map[string]any) (string, error)
 	BindElicit(target mcp.ElicitHandler) func()
@@ -22,20 +21,15 @@ type managedSession interface {
 }
 
 // instanceReapInterval is how often the manager sweeps for clients gone quiet.
-// Frequent enough that an abandoned instance frees its host slots well inside a
-// busy host's pressure, infrequent enough that the sweep itself is negligible.
 const instanceReapInterval = 30 * time.Second
 
-// instanceSaturationWait is how long a new client waits for a slot when a served
-// agent is at its client cap and nothing is reapable, before failing closed.
-// Short, so a caller gets a clear capacity error rather than a long hang; a peer
-// finishing and going idle, or the reaper, frees a slot well within it for the
-// common burst. A var so a test can shrink it.
+// instanceSaturationWait bounds how long a new client waits for a slot when a
+// served agent is at its client cap and nothing is reapable, before failing
+// closed with a capacity error. A var so tests can shrink it.
 var instanceSaturationWait = 5 * time.Second
 
-// instance is one client's live agent: the held Session, its run id (for the
-// history record and the lifecycle feed), when it was last used, and how many
-// calls are in flight so the reaper never takes one mid-call.
+// instance is one client's live agent. inFlight keeps the reaper from taking
+// an instance mid-call.
 type instance struct {
 	session  managedSession
 	runID    string
@@ -44,31 +38,26 @@ type instance struct {
 }
 
 // instanceHooks reports a per-client instance's run lifecycle to the daemon:
-// onStart when its cage boots, onEnd just before it is reaped or released, so a
-// served instance is recorded and streamed exactly like a one-shot run. Both are
-// nil in tests, where the manager runs without a daemon to report to.
+// onStart when its cage boots, onEnd just before it is reaped or released.
+// Both are nil in tests.
 type instanceHooks struct {
 	onStart func(runID string)
 	onEnd   func(runID string)
 }
 
-// instanceBoot is an in-progress boot, so concurrent first-calls for one client
-// session collapse onto a single boot (the working set's single-flight, one
-// level up: the unit is a whole instance, not a cage).
+// instanceBoot is an in-progress boot; concurrent first-calls for one client
+// session collapse onto it (single-flight).
 type instanceBoot struct {
 	done chan struct{}
 	inst *instance
 	err  error
 }
 
-// instanceManager owns the per-client instances of one exposed agent. It boots
-// an instance on a client session's first call, reuses it for that session,
-// bounds the live set by maxClients, and reaps an instance whose client has gone
-// quiet past idleTTL. It mirrors the working-set patterns one level up: the unit
-// is a whole instance (a run = root + its sub-agent tree), not a cage. The host floor
-// (host_max_live + live memory) is inherited automatically: an instance's boot
-// fails admission inside runtime.Acquire when the host is full, which surfaces
-// here as a boot error.
+// instanceManager owns the per-client instances of one exposed agent: boot on
+// a client session's first call, reuse for that session, cap the live set at
+// maxClients, reap past idleTTL. The unit is a whole instance (root plus its
+// sub-agent tree), not a cage. The host floor is inherited: a boot fails
+// admission inside runtime.Acquire when the host is full.
 type instanceManager struct {
 	address    string
 	boot       func(ctx context.Context, runID string) (managedSession, error)
@@ -84,9 +73,7 @@ type instanceManager struct {
 	cancel    context.CancelFunc
 }
 
-// newInstanceManager builds a manager and starts its reaper. boot acquires a
-// fresh instance for the given run id; the caller wires it to runtime.Acquire.
-// hooks report each instance's run lifecycle to the daemon.
+// newInstanceManager builds a manager and starts its reaper.
 func newInstanceManager(address string, maxClients int, idleTTL time.Duration, boot func(ctx context.Context, runID string) (managedSession, error), hooks instanceHooks) *instanceManager {
 	ctx, cancel := context.WithCancel(context.Background())
 	m := &instanceManager{
@@ -104,9 +91,9 @@ func newInstanceManager(address string, maxClients int, idleTTL time.Duration, b
 	return m
 }
 
-// endInstance reports an instance's run as finished, then releases it. The order
+// endInstance reports an instance's run as finished, then releases it. Order
 // matters: onEnd reads the run's final spend off the gateway, so it must run
-// while the instance's containers are still up, before Release tears them down.
+// before Release tears the containers down.
 func (m *instanceManager) endInstance(inst *instance) error {
 	if m.hooks.onEnd != nil {
 		m.hooks.onEnd(inst.runID)
@@ -114,18 +101,16 @@ func (m *instanceManager) endInstance(inst *instance) error {
 	return inst.session.Release()
 }
 
-// clientCount is the number of live per-client instances, the slice of
-// agentcage_serve_clients this manager contributes.
+// clientCount is the number of live per-client instances.
 func (m *instanceManager) clientCount() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return len(m.instances)
 }
 
-// acquire returns the session for a client, booting one on its first call, and a
-// release the caller defers when the call returns. It bumps the in-flight count
-// so the reaper never takes an instance mid-call (including a long elicitation
-// wait) and stamps last-use for the idle math.
+// acquire returns the client's session, booting one on its first call, plus a
+// release to defer. The in-flight bump keeps the reaper off an instance
+// mid-call, including a long elicitation wait.
 func (m *instanceManager) acquire(ctx context.Context, sessionID string) (managedSession, func(), error) {
 	inst, err := m.getOrBoot(ctx, sessionID)
 	if err != nil {
@@ -151,10 +136,10 @@ func (m *instanceManager) acquire(ctx context.Context, sessionID string) (manage
 	return inst.session, release, nil
 }
 
-// getOrBoot returns the session's instance or boots a new one, single-flighting
-// concurrent first-calls. At the client cap it first reaps an instance already
-// past its idle TTL (an abandoned client), then waits briefly for one to free,
-// then fails closed. It never evicts a within-TTL client to admit a newcomer.
+// getOrBoot returns the session's instance or boots one, single-flighting
+// concurrent first-calls. At the client cap it reaps a past-TTL instance,
+// waits briefly for a slot, then fails closed. It never evicts a within-TTL
+// client to admit a newcomer.
 func (m *instanceManager) getOrBoot(ctx context.Context, sessionID string) (*instance, error) {
 	deadline := time.NewTimer(instanceSaturationWait)
 	defer deadline.Stop()
@@ -169,8 +154,8 @@ func (m *instanceManager) getOrBoot(ctx context.Context, sessionID string) (*ins
 			<-b.done
 			return b.inst, b.err
 		}
-		// liveLocked counts booting too, so concurrent first-calls for distinct
-		// sessions do not overshoot the cap.
+		// liveLocked counts booting too; concurrent first-calls for distinct
+		// sessions must not overshoot the cap.
 		if m.liveLocked() < m.maxClients {
 			b := &instanceBoot{done: make(chan struct{})}
 			m.booting[sessionID] = b
@@ -186,7 +171,7 @@ func (m *instanceManager) getOrBoot(ctx context.Context, sessionID string) (*ins
 			delete(m.booting, sessionID)
 			m.mu.Unlock()
 			close(b.done)
-			// A finished boot frees a booting slot; wake a waiter so it rechecks.
+			// A finished boot frees a booting slot; wake a waiter to recheck.
 			m.signalSlotFree()
 			return inst, err
 		}
@@ -210,10 +195,9 @@ func (m *instanceManager) getOrBoot(ctx context.Context, sessionID string) (*ins
 	}
 }
 
-// bootOne acquires a fresh instance under a per-boot run id, so concurrent
-// instances of the same bundle get distinct container names and each lifetime
-// gets its own history record. onStart runs once the cage is up, recording the
-// run as the one-shot path does.
+// bootOne acquires a fresh instance under a per-boot run id: concurrent
+// instances of the same bundle need distinct container names, and each
+// lifetime gets its own history record.
 func (m *instanceManager) bootOne(ctx context.Context, sessionID string) (*instance, error) {
 	runID := runtime.InstanceRunID(m.address, sessionID)
 	session, err := m.boot(ctx, runID)
@@ -226,16 +210,14 @@ func (m *instanceManager) bootOne(ctx context.Context, sessionID string) (*insta
 	return &instance{session: session, runID: runID, lastUse: nowFunc()}, nil
 }
 
-// liveLocked is the number of instances holding a client slot: live plus
-// in-progress boots. The caller holds m.mu.
+// liveLocked counts instances holding a client slot, live plus in-progress
+// boots. Caller holds m.mu.
 func (m *instanceManager) liveLocked() int {
 	return len(m.instances) + len(m.booting)
 }
 
-// reapableVictimLocked picks the least-recently-used instance that is both idle
-// (no call in flight) and past its idle TTL, the one safe to reclaim at the cap.
-// It never returns a within-TTL instance, so a live client is never evicted to
-// admit a newcomer. The caller holds m.mu.
+// reapableVictimLocked picks the least-recently-used instance that is idle and
+// past its TTL. It never returns a within-TTL instance. Caller holds m.mu.
 func (m *instanceManager) reapableVictimLocked() string {
 	now := nowFunc()
 	var victim string
@@ -252,7 +234,6 @@ func (m *instanceManager) reapableVictimLocked() string {
 	return victim
 }
 
-// reapLoop sweeps idle instances on a ticker until the manager is released.
 func (m *instanceManager) reapLoop(ctx context.Context) {
 	t := time.NewTicker(instanceReapInterval)
 	defer t.Stop()
@@ -266,8 +247,7 @@ func (m *instanceManager) reapLoop(ctx context.Context) {
 	}
 }
 
-// reapIdle releases every instance whose client has gone quiet past the idle TTL
-// and has no call in flight, freeing their host slots back to the floor.
+// reapIdle releases every instance past the idle TTL with no call in flight.
 func (m *instanceManager) reapIdle() {
 	now := nowFunc()
 	m.mu.Lock()
@@ -288,8 +268,8 @@ func (m *instanceManager) reapIdle() {
 	}
 }
 
-// signalSlotFree wakes one client waiting for a slot. Non-blocking: at most one
-// pending wake is held, enough because each waiter rechecks on waking.
+// signalSlotFree wakes one client waiting for a slot. Non-blocking; at most
+// one pending wake, enough because each waiter rechecks on waking.
 func (m *instanceManager) signalSlotFree() {
 	select {
 	case m.slotFreed <- struct{}{}:
@@ -298,7 +278,6 @@ func (m *instanceManager) signalSlotFree() {
 }
 
 // releaseAll stops the reaper and releases every live instance, joining errors.
-// The front door calls it when the served agent stops or the daemon shuts down.
 func (m *instanceManager) releaseAll() error {
 	m.mu.Lock()
 	if m.cancel != nil {

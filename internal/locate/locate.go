@@ -1,8 +1,7 @@
-// Package locate turns a bundle path or registry reference into a local .agent
-// file, the step run, call, inspect, and tree share before they can read or run
-// an agent. An existing file is taken as-is; a reference resolves against the
-// local store first and is pulled from the registry only when the store does
-// not hold it.
+// Package locate turns a bundle path or registry reference into a local
+// .agent file, the step run, call, inspect, and tree share. An existing
+// file is taken as-is; a reference resolves store-first and is pulled only
+// on a miss.
 package locate
 
 import (
@@ -19,21 +18,18 @@ import (
 	"github.com/okedeji/agentcage/internal/store"
 )
 
-// Result is a resolved bundle: its local Path, the Display label a human view
-// shows (a file path, a hash, or the full ref), and the short Name a run id
-// derives from (the file or repo basename, or a short hash). Name keeps a run
-// reading as "echo-..." rather than the store's content-hash filename.
+// Result is a resolved bundle: local Path, the Display label human views
+// show, and the short Name run ids derive from. Name keeps a run reading as
+// "echo-..." rather than the store's content-hash filename.
 type Result struct {
 	Path    string
 	Display string
 	Name    string
 }
 
-// Bundle resolves arg to a local bundle. An existing file is used as-is, so a
-// hand-moved bundle or a -o output still works. A bare sha256 hash, full or a
-// prefix, resolves an unnamed build from the store. Anything else is a
-// reference, resolved store-first: a locally built bundle is found without a
-// round-trip, and only a reference the store lacks is pulled (cache-first).
+// Bundle resolves arg to a local bundle: an existing file as-is, a bare
+// sha256 hash (full or prefix) from the store, anything else as a reference
+// resolved store-first and pulled only when the store lacks it.
 func Bundle(ctx context.Context, arg string) (Result, error) {
 	if info, statErr := os.Stat(arg); statErr == nil && !info.IsDir() {
 		return Result{Path: arg, Display: arg, Name: fileName(arg)}, nil
@@ -91,13 +87,10 @@ func Bundle(ctx context.Context, arg string) (Result, error) {
 	return Result{Path: p, Display: ref.OCIRef(), Name: path.Base(ref.Repository)}, nil
 }
 
-// RegistryName reports whether arg is an MCP Registry name (io.github.user/server)
-// rather than an OCI reference, and returns it unchanged when so. The grammar is
-// the discriminator: a registry name has exactly one slash, a dotted namespace
-// on the left, and no tag or digest, which no valid agentcage OCI ref matches
-// (those carry a host/org/name path of two slashes, or an @ shorthand). So the
-// check never steals an input the reference parser would otherwise accept. It is
-// exported so inspect can route a registry name to the registry view.
+// RegistryName reports whether arg is an MCP Registry name
+// (io.github.user/server). The grammar discriminates: exactly one slash, a
+// dotted namespace, no tag or digest, which no valid agentcage OCI ref
+// matches, so this never steals the reference parser's input.
 func RegistryName(arg string) (string, bool) {
 	if strings.HasPrefix(arg, "@") || strings.Contains(arg, "@") {
 		return "", false
@@ -112,11 +105,9 @@ func RegistryName(arg string) (string, bool) {
 	return arg, true
 }
 
-// isReverseDNSNamespace reports whether s is a reverse-DNS domain: two or more
-// dot-separated alphanumeric labels. It is what separates a registry name's
-// namespace from a relative path like "./x" or a bare word, so the caller does
-// not mistake a file for a server. Uppercase is allowed because the registry
-// preserves the case of a GitHub username, e.g. io.github.Digital-Defiance.
+// isReverseDNSNamespace matches two or more dot-separated alphanumeric
+// labels. Uppercase is allowed: the registry preserves GitHub username
+// case, e.g. io.github.Digital-Defiance.
 func isReverseDNSNamespace(s string) bool {
 	labels := strings.Split(s, ".")
 	if len(labels) < 2 {
@@ -137,10 +128,9 @@ func isReverseDNSNamespace(s string) bool {
 	return true
 }
 
-// resolveReverseDNS asks the MCP Registry what OCI artifact a name points at and
-// returns the ref the rest of Bundle resolves against. An entry with no OCI
-// package is a server agentcage cannot pull, named as such rather than failing
-// later with an opaque reference error.
+// resolveReverseDNS resolves a name to the OCI ref its registry entry
+// points at. An entry with no OCI package cannot be pulled and is named as
+// such rather than failing later with an opaque reference error.
 func resolveReverseDNS(ctx context.Context, name string) (string, error) {
 	server, err := mcpregistry.New().Resolve(ctx, name)
 	if err != nil {
@@ -156,13 +146,11 @@ func resolveReverseDNS(ctx context.Context, name string) (string, error) {
 	return ref, nil
 }
 
-// fileName is a bundle file's name without its .agent extension.
 func fileName(p string) string {
 	return strings.TrimSuffix(filepath.Base(p), ".agent")
 }
 
-// shortHash is the first 12 hex chars of a sha256 content-hash arg, the same
-// width the runtime uses for run-id suffixes.
+// shortHash is the first 12 hex chars, the run-id suffix width.
 func shortHash(arg string) string {
 	h := strings.TrimPrefix(arg, "sha256:")
 	if len(h) > 12 {
@@ -171,10 +159,10 @@ func shortHash(arg string) string {
 	return h
 }
 
-// isContentHash reports whether arg is a bare sha256 hash, the form build
-// prints for an unnamed bundle. A digest-pinned reference carries the same
-// sha256 but behind a name@, so this only catches the standalone hash. The
-// minimum length keeps a typo like "sha256:" from scanning the whole store.
+// isContentHash matches a bare sha256 hash, the form build prints for an
+// unnamed bundle; a digest-pinned reference hides its sha256 behind name@,
+// so only the standalone form matches. The minimum length keeps a bare
+// "sha256:" typo from scanning the whole store.
 func isContentHash(arg string) bool {
 	rest, ok := strings.CutPrefix(arg, "sha256:")
 	if !ok || len(rest) < 6 {
