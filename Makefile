@@ -46,7 +46,7 @@ build-linux-all:
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build $(GOFLAGS) -o $(BINDIR)/agentcage-linux-amd64 ./cmd/agentcage/
 
 clean:
-	rm -rf $(BINDIR) dist
+	rm -rf $(BINDIR) dist .lima-release
 
 test:
 	$(GO) test ./...
@@ -96,19 +96,20 @@ lima-deps:
 	chmod +x "$(BINDIR)/lima/bin/limactl"; \
 	echo "installed $(BINDIR)/lima/bin/limactl (lima v$(LIMA_VERSION)) with templates and guest agents"
 
-# lima-deps-all fetches both macOS Lima bundles into dist/lima-darwin-<arch>/,
+# lima-deps-all fetches both macOS Lima bundles into .lima-release/lima-darwin-<arch>/,
 # the staging dirs the release archives copy from (goreleaser's {{.Os}}-{{.Arch}}
-# is darwin-amd64 / darwin-arm64). Same version pin and SHA verification as
-# lima-deps; it fetches by explicit arch rather than uname, so a release built
-# on one Mac still packages both. Lima ships macOS only, so there is no
-# darwin/linux split to make here: Linux archives carry no Lima.
+# is darwin-amd64 / darwin-arm64). It stages OUTSIDE dist/ on purpose: goreleaser
+# owns dist/ and aborts ("dist is not empty") if a before-hook writes into it.
+# Same version pin and SHA verification as lima-deps; it fetches by explicit arch
+# rather than uname, so a release built on one Mac still packages both. Lima ships
+# macOS only, so Linux archives carry no Lima.
 lima-deps-all:
 	@set -e; for arch in arm64 amd64; do \
 		case "$$arch" in \
 			arm64) tarball=lima-$(LIMA_VERSION)-Darwin-arm64.tar.gz;  want=$(LIMA_SHA256_Darwin_arm64) ;; \
 			amd64) tarball=lima-$(LIMA_VERSION)-Darwin-x86_64.tar.gz; want=$(LIMA_SHA256_Darwin_x86_64) ;; \
 		esac; \
-		dest=dist/lima-darwin-$$arch; \
+		dest=.lima-release/lima-darwin-$$arch; \
 		if [ -x "$$dest/bin/limactl" ]; then echo "lima ($$arch) already at $$dest"; continue; fi; \
 		mkdir -p "$$dest"; \
 		url=https://github.com/lima-vm/lima/releases/download/v$(LIMA_VERSION)/$$tarball; \

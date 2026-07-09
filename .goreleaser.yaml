@@ -49,7 +49,7 @@ archives:
       - src: "bin/agentcage-linux-{{ .Arch }}"
         strip_parent: true
         info: { mode: 0o755 }
-      - src: "dist/lima-{{ .Os }}-{{ .Arch }}"
+      - src: ".lima-release/lima-{{ .Os }}-{{ .Arch }}"
         dst: "lima"
       - LICENSE
 
