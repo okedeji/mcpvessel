@@ -32,7 +32,7 @@ func TestHandler_ListsAndCallsPublicTools(t *testing.T) {
 			return "q=" + args["q"].(string), nil
 		}, nil)
 
-	srv := httptest.NewServer(Handler([]Agent{agent}))
+	srv := httptest.NewServer(Handler([]Agent{agent}, nil))
 	defer srv.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -70,7 +70,7 @@ func TestHandler_PrivateToolUnreachable(t *testing.T) {
 			return "should not run for " + tool, nil
 		}, nil)
 
-	srv := httptest.NewServer(Handler([]Agent{agent}))
+	srv := httptest.NewServer(Handler([]Agent{agent}, nil))
 	defer srv.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -108,7 +108,7 @@ func askingAgent() Agent {
 }
 
 func TestHandler_ElicitsThroughCaller(t *testing.T) {
-	srv := httptest.NewServer(Handler([]Agent{askingAgent()}))
+	srv := httptest.NewServer(Handler([]Agent{askingAgent()}, nil))
 	defer srv.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -135,7 +135,7 @@ func TestHandler_ElicitsThroughCaller(t *testing.T) {
 }
 
 func TestHandler_ElicitFailsClosedWithoutCallerSupport(t *testing.T) {
-	srv := httptest.NewServer(Handler([]Agent{askingAgent()}))
+	srv := httptest.NewServer(Handler([]Agent{askingAgent()}, nil))
 	defer srv.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -175,7 +175,7 @@ func TestHandler_ConcurrentClientsDoNotSerialize(t *testing.T) {
 		},
 	}
 
-	srv := httptest.NewServer(Handler([]Agent{agent}))
+	srv := httptest.NewServer(Handler([]Agent{agent}, nil))
 	defer srv.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -215,7 +215,7 @@ func TestHandler_SeparateEndpointPerAgent(t *testing.T) {
 			[]mcp.Tool{{Name: tool, Schema: map[string]any{"type": "object"}}},
 			func(context.Context, string, map[string]any) (string, error) { return addr, nil }, nil)
 	}
-	srv := httptest.NewServer(Handler([]Agent{mk("researcher", "search"), mk("web-scraper", "fetch")}))
+	srv := httptest.NewServer(Handler([]Agent{mk("researcher", "search"), mk("web-scraper", "fetch")}, nil))
 	defer srv.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -232,5 +232,111 @@ func TestHandler_SeparateEndpointPerAgent(t *testing.T) {
 	}
 	if len(tools) != 1 || tools[0].Name != "fetch" {
 		t.Fatalf("web-scraper tools = %v, want only fetch", tools)
+	}
+}
+
+// echoAgent answers every call with "<addr>:<tool the target saw>", proving
+// which agent got the dispatch and under what name.
+func echoAgent(addr string, tools ...string) Agent {
+	mcpTools := make([]mcp.Tool, len(tools))
+	for i, name := range tools {
+		mcpTools[i] = mcp.Tool{Name: name, Schema: map[string]any{"type": "object"}}
+	}
+	return staticAgent(addr, mcpTools,
+		func(_ context.Context, tool string, _ map[string]any) (string, error) {
+			return addr + ":" + tool, nil
+		}, nil)
+}
+
+func mustFlat(t *testing.T, agents []Agent) []FlatTool {
+	t.Helper()
+	flat, err := FlatTools(agents)
+	if err != nil {
+		t.Fatalf("FlatTools: %v", err)
+	}
+	return flat
+}
+
+func TestFlatTools_EveryNamePrefixedByAgent(t *testing.T) {
+	agents := []Agent{echoAgent("github", "create_issue", "search"), echoAgent("web.scraper", "search")}
+	flat := mustFlat(t, agents)
+	got := map[string]bool{}
+	for _, ft := range flat {
+		got[ft.Name] = true
+	}
+	// Every name carries its agent's prefix (dots sanitized for MCP tool
+	// names) so adding a bundle can never rename an existing tool.
+	for _, want := range []string{"github_create_issue", "github_search", "web_scraper_search"} {
+		if !got[want] {
+			t.Errorf("flat names = %v, missing %q", got, want)
+		}
+	}
+	if len(flat) != 3 {
+		t.Errorf("flat has %d tools, want 3", len(flat))
+	}
+}
+
+func TestFlatTools_SurvivingCollisionIsAnError(t *testing.T) {
+	// Two addresses that sanitize identically produce the same prefixed name.
+	agents := []Agent{
+		echoAgent("web.scraper", "search"),
+		echoAgent("web_scraper", "search"),
+	}
+	if _, err := FlatTools(agents); err == nil {
+		t.Fatal("FlatTools accepted a collision that survived prefixing")
+	}
+}
+
+func TestHandler_FlatEndpointMergesAgents(t *testing.T) {
+	agents := []Agent{echoAgent("github", "create_issue"), echoAgent("time", "now")}
+	srv := httptest.NewServer(Handler(agents, mustFlat(t, agents)))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	client, err := mcp.ConnectHTTP(ctx, srv.URL+FlatPath)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer func() { _ = client.Close() }()
+
+	tools, err := client.ListTools(ctx)
+	if err != nil {
+		t.Fatalf("list tools: %v", err)
+	}
+	if len(tools) != 2 {
+		t.Fatalf("flat endpoint lists %v, want both agents' tools", tools)
+	}
+
+	out, err := client.CallTool(ctx, "time_now", nil)
+	if err != nil {
+		t.Fatalf("call: %v", err)
+	}
+	if out != "time:now" {
+		t.Errorf("call dispatched to %q, want time:now", out)
+	}
+}
+
+func TestHandler_FlatEndpointForwardsOriginalNameOnCollision(t *testing.T) {
+	agents := []Agent{echoAgent("github", "search"), echoAgent("time", "search")}
+	srv := httptest.NewServer(Handler(agents, mustFlat(t, agents)))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	client, err := mcp.ConnectHTTP(ctx, srv.URL+FlatPath)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer func() { _ = client.Close() }()
+
+	// The prefixed name routes to the right agent, which must see the tool's
+	// original name, not the prefixed one.
+	out, err := client.CallTool(ctx, "time_search", nil)
+	if err != nil {
+		t.Fatalf("call: %v", err)
+	}
+	if out != "time:search" {
+		t.Errorf("call dispatched to %q, want time:search (original name)", out)
 	}
 }

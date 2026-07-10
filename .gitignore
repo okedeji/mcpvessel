@@ -29,6 +29,7 @@ vendor/
 .claude
 .docs
 LAUNCH.md
+DISCOVERY.md
 
 # OS
 .DS_Store

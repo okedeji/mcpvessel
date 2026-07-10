@@ -427,13 +427,48 @@ func newBootSession(ctx context.Context, in bootInput, td *teardown) (*bootSessi
 
 // buildImage builds in.ImageRef unless already present. Refs are
 // content-addressed, so an existing ref is provably the same source; noCache
-// forces a rebuild regardless.
+// forces a rebuild regardless. A transient upstream failure (a registry 5xx
+// or dropped connection resolving a base image) is retried once: those clear
+// in seconds, and without the retry a first-run import fails on someone
+// else's outage.
 func buildImage(ctx context.Context, sess *bootSession, in BuildInput, noCache bool, stderr io.Writer) error {
 	if !noCache && imageExists(ctx, sess.provisioner, in.ImageRef) {
 		return nil
 	}
 	in.NoCache = noCache
+	err := buildWithProgress(ctx, sess.bk, in, stderr)
+	if err == nil || ctx.Err() != nil || !isTransientBuildError(err) {
+		return err
+	}
+	_, _ = fmt.Fprintf(stderr, "transient registry error (%v); retrying the build once\n", err)
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(2 * time.Second):
+	}
 	return buildWithProgress(ctx, sess.bk, in, stderr)
+}
+
+// isTransientBuildError matches upstream failures worth one retry. Deliberate
+// non-matches: 404/not-found (a typo'd base image never resolves) and build
+// step failures (a broken RUN reruns identically).
+func isTransientBuildError(err error) bool {
+	msg := err.Error()
+	for _, marker := range []string{
+		"500 Internal Server Error",
+		"502 Bad Gateway",
+		"503 Service Unavailable",
+		"toomanyrequests",
+		"connection reset by peer",
+		"TLS handshake timeout",
+		"i/o timeout",
+		"unexpected EOF",
+	} {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // startAttachedAgent builds the agent's image and starts its container

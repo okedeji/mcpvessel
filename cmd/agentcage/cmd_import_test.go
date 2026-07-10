@@ -112,3 +112,35 @@ func TestDefaultImportDir(t *testing.T) {
 		}
 	}
 }
+
+// A failed import removes only a directory it created itself; a pre-existing
+// one may hold hand edits and stays.
+func TestRemoveGenerated(t *testing.T) {
+	base := t.TempDir()
+
+	created := filepath.Join(base, "fresh")
+	if err := os.MkdirAll(created, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var out strings.Builder
+	removeGenerated(&out, created, true)
+	if dirExists(created) {
+		t.Error("created dir survived cleanup")
+	}
+	if !strings.Contains(out.String(), "retry starts fresh") {
+		t.Errorf("cleanup note = %q, want the retry hint", out.String())
+	}
+
+	preexisting := filepath.Join(base, "mine")
+	if err := os.MkdirAll(preexisting, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	removeGenerated(&out, preexisting, false)
+	if !dirExists(preexisting) {
+		t.Error("pre-existing dir was deleted")
+	}
+	if out.String() != "" {
+		t.Errorf("unexpected note for untouched dir: %q", out.String())
+	}
+}

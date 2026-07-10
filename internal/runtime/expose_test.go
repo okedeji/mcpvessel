@@ -155,3 +155,66 @@ func TestPublicTools(t *testing.T) {
 		t.Errorf("publicTools(nil) = %v, want nil", got)
 	}
 }
+
+// An imported tool collection declares EXPOSE * and carries an introspected
+// catalog; serve must expose the catalog's real tool names, never the raw "*"
+// (which would match no tool at the front door and serve an empty endpoint).
+func TestPublicTools_WildcardUsesCatalog(t *testing.T) {
+	m := &bundle.Manifest{
+		Agentfile: bundle.AgentfileSpec{Expose: []string{"*"}},
+		Tools: []bundle.Tool{
+			{Name: "create_issue", Visibility: bundle.VisibilityPublic},
+			{Name: "search", Visibility: bundle.VisibilityPublic},
+			{Name: "debug_dump", Visibility: bundle.VisibilityPrivate},
+		},
+	}
+	got := publicTools(m)
+	want := map[string]bool{"create_issue": true, "search": true}
+	if len(got) != len(want) {
+		t.Fatalf("publicTools = %v, want exactly %v", got, want)
+	}
+	for _, name := range got {
+		if !want[name] {
+			t.Errorf("publicTools exposed %q, want only %v", name, want)
+		}
+	}
+}
+
+// A catalog-bearing manifest gates on catalog visibility even when tools are
+// named explicitly: MAIN and EXPOSE'd names come back, private ones do not.
+func TestPublicTools_CatalogVisibility(t *testing.T) {
+	m := &bundle.Manifest{
+		Agentfile: bundle.AgentfileSpec{Main: "respond", Expose: []string{"lookup"}},
+		Tools: []bundle.Tool{
+			{Name: "respond", Visibility: bundle.VisibilityMain},
+			{Name: "lookup", Visibility: bundle.VisibilityPublic},
+			{Name: "internal", Visibility: bundle.VisibilityPrivate},
+		},
+	}
+	got := publicTools(m)
+	want := map[string]bool{"respond": true, "lookup": true}
+	if len(got) != len(want) {
+		t.Fatalf("publicTools = %v, want exactly %v", got, want)
+	}
+	for _, name := range got {
+		if !want[name] {
+			t.Errorf("publicTools exposed %q, want only %v", name, want)
+		}
+	}
+}
+
+// A declared-only bundle (built --no-introspect, no catalog) still falls back
+// to the raw MAIN and EXPOSE names, but a bare "*" cannot be expanded without
+// a catalog and must not leak as a literal tool name.
+func TestPublicTools_DeclaredOnlyFallback(t *testing.T) {
+	got := publicTools(agent("main", []string{"a", "*"}))
+	want := map[string]bool{"main": true, "a": true}
+	if len(got) != len(want) {
+		t.Fatalf("publicTools = %v, want exactly %v", got, want)
+	}
+	for _, name := range got {
+		if !want[name] {
+			t.Errorf("publicTools exposed %q, want only %v", name, want)
+		}
+	}
+}

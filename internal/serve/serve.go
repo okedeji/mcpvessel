@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -36,29 +37,102 @@ type Target struct {
 	BindElicit func(elicit mcp.ElicitHandler) (release func())
 }
 
-// Handler builds a streamable-HTTP MCP endpoint per agent at
-// /agents/<address>/mcp, each advertising only that agent's public tools.
-func Handler(agents []Agent) http.Handler {
+// FlatPath is where the merged endpoint is mounted: one MCP server
+// advertising every exposed agent's public tools, so an MCP client (Cursor,
+// Claude) configures a single URL no matter how many bundles are served.
+const FlatPath = "/mcp"
+
+// FlatTool is one entry on the merged endpoint: the name it is advertised
+// under (always <agent>_<tool>) and the index of the exposed agent that
+// serves it.
+type FlatTool struct {
+	Name  string
+	Tool  mcp.Tool
+	Agent int
+}
+
+// FlatTools merges every agent's public tools into the flat endpoint's single
+// namespace as <agent>_<tool>. Every name is prefixed, never just colliding
+// ones, so adding a bundle to a serve can never rename an existing tool out
+// from under a configured client. A collision that survives prefixing (two
+// addresses sanitizing identically) is an error for the operator, not a
+// silent drop.
+func FlatTools(agents []Agent) ([]FlatTool, error) {
+	seen := map[string]string{}
+	var out []FlatTool
+	for i, a := range agents {
+		for _, t := range a.Tools {
+			name := toolPrefix(a.Address) + "_" + t.Name
+			owner := a.Address + "/" + t.Name
+			if other, dup := seen[name]; dup {
+				return nil, fmt.Errorf("tools %s and %s both flatten to %q on %s; hide one agent with --no-expose", other, owner, name, FlatPath)
+			}
+			seen[name] = owner
+			out = append(out, FlatTool{Name: name, Tool: t, Agent: i})
+		}
+	}
+	return out, nil
+}
+
+// toolPrefix reduces an agent address to MCP-tool-name-safe characters.
+func toolPrefix(addr string) string {
+	var b strings.Builder
+	for _, r := range addr {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('_')
+		}
+	}
+	return b.String()
+}
+
+// Handler builds the front door: a streamable-HTTP MCP endpoint per agent at
+// /agents/<address>/mcp, each advertising only that agent's public tools,
+// plus the merged endpoint at FlatPath advertising flat.
+func Handler(agents []Agent, flat []FlatTool) http.Handler {
 	mux := http.NewServeMux()
-	for _, a := range agents {
+	for i := range agents {
+		a := agents[i]
 		srv := mcpsdk.NewServer(&mcpsdk.Implementation{Name: identity.Name, Version: identity.Version}, nil)
 		for _, t := range a.Tools {
 			srv.AddTool(&mcpsdk.Tool{
 				Name:        t.Name,
 				Description: t.Description,
 				InputSchema: inputSchema(t.Schema),
-			}, dispatch(a.Resolve))
+			}, dispatch("", a.Resolve))
 		}
 		handler := mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return srv }, nil)
 		mux.Handle("/agents/"+a.Address+"/mcp", handler)
 	}
+	if len(flat) > 0 {
+		srv := mcpsdk.NewServer(&mcpsdk.Implementation{Name: identity.Name, Version: identity.Version}, nil)
+		for _, ft := range flat {
+			a := agents[ft.Agent]
+			srv.AddTool(&mcpsdk.Tool{
+				Name:        ft.Name,
+				Description: ft.Tool.Description,
+				InputSchema: inputSchema(ft.Tool.Schema),
+			}, dispatch(ft.Tool.Name, a.Resolve))
+		}
+		handler := mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return srv }, nil)
+		mux.Handle(FlatPath, handler)
+		mux.Handle(FlatPath+"/", handler)
+	}
 	return mux
 }
 
-// dispatch turns one agent's resolver into an MCP tool handler. Failures come
-// back as tool errors (IsError), never transport errors.
-func dispatch(resolve func(ctx context.Context, sessionID string) (Target, func(), error)) mcpsdk.ToolHandler {
+// dispatch turns one agent's resolver into an MCP tool handler, forwarding
+// under the given tool name — empty means the request's own name (the
+// per-agent endpoints, where names are never prefixed). Failures come back as
+// tool errors (IsError), never transport errors.
+func dispatch(tool string, resolve func(ctx context.Context, sessionID string) (Target, func(), error)) mcpsdk.ToolHandler {
 	return func(ctx context.Context, req *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
+		name := tool
+		if name == "" {
+			name = req.Params.Name
+		}
 		args, err := decodeArgs(req.Params.Arguments)
 		if err != nil {
 			return toolError("decoding arguments: " + err.Error()), nil
@@ -72,7 +146,7 @@ func dispatch(resolve func(ctx context.Context, sessionID string) (Target, func(
 			releaseElicit := target.BindElicit(operatorElicit(req.Session))
 			defer releaseElicit()
 		}
-		text, err := target.Call(ctx, req.Params.Name, args)
+		text, err := target.Call(ctx, name, args)
 		if err != nil {
 			return toolError(err.Error()), nil
 		}

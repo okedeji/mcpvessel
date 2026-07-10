@@ -162,14 +162,32 @@ func matchesAny(ref reference.Reference, ms []refMatcher) bool {
 }
 
 // publicTools is an agent's externally callable tool names: MAIN plus its
-// EXPOSE'd tools. Mirrors the cage-entry gate in cmd_call.
+// EXPOSE'd tools. The catalog is the authoritative visibility when present
+// (it has EXPOSE * expanded, the raw directive does not); a declared-only
+// bundle falls back to the raw names, where a bare "*" cannot be expanded
+// and is dropped. Mirrors the cage-entry gate in cmd_call.
 func publicTools(m *bundle.Manifest) []string {
 	if m == nil {
 		return nil
+	}
+	if len(m.Tools) > 0 {
+		tools := make([]string, 0, len(m.Tools))
+		for _, t := range m.Tools {
+			if t.Visibility == bundle.VisibilityMain || t.Visibility == bundle.VisibilityPublic {
+				tools = append(tools, t.Name)
+			}
+		}
+		return tools
 	}
 	tools := make([]string, 0, len(m.Agentfile.Expose)+1)
 	if m.Agentfile.Main != "" {
 		tools = append(tools, m.Agentfile.Main)
 	}
-	return append(tools, m.Agentfile.Expose...)
+	for _, name := range m.Agentfile.Expose {
+		if name == "*" {
+			continue
+		}
+		tools = append(tools, name)
+	}
+	return tools
 }

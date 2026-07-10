@@ -274,20 +274,36 @@ type ServedAgent struct {
 	Tools   []string `json:"tools"`
 }
 
+// ServedFlat is the merged endpoint: one URL advertising every served
+// bundle's public tools at once.
+type ServedFlat struct {
+	Path  string   `json:"path"`
+	Tools []string `json:"tools"`
+}
+
 // ServeResult is the front door the daemon opened for a serve request, plus
 // any boot-time warnings for the operator.
 type ServeResult struct {
 	Listen   string        `json:"listen"`
+	Flat     ServedFlat    `json:"flat"`
 	Agents   []ServedAgent `json:"agents"`
 	Warnings []string      `json:"warnings,omitempty"`
 }
 
-// Serve asks the daemon to register an agent's exposed set and open an MCP
-// front door bound to listen.
-func (c *Client) Serve(ctx context.Context, ref, listen string, expose, noExpose []string) (ServeResult, error) {
+// ServeTarget is one bundle to serve: a daemon-resolvable ref and an
+// optional name overriding the root agent's address (a source directory
+// resolves to a content hash, whose prefix would make a poor address).
+type ServeTarget struct {
+	Ref  string `json:"ref"`
+	Name string `json:"name,omitempty"`
+}
+
+// Serve asks the daemon to register the bundles' exposed sets and open one
+// MCP front door bound to listen.
+func (c *Client) Serve(ctx context.Context, targets []ServeTarget, listen string, expose, noExpose []string) (ServeResult, error) {
 	var out ServeResult
 	err := c.post(ctx, "/serve", map[string]any{
-		"ref":       ref,
+		"bundles":   targets,
 		"listen":    listen,
 		"expose":    expose,
 		"no_expose": noExpose,
@@ -314,7 +330,7 @@ func (c *Client) get(ctx context.Context, path string, out any) error {
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("contacting the daemon: %w", err)
+		return &Unreachable{fmt.Errorf("contacting the daemon: %w", err)}
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
@@ -346,7 +362,7 @@ func (c *Client) post(ctx context.Context, path string, body, out any) error {
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("contacting the daemon: %w", err)
+		return &Unreachable{fmt.Errorf("contacting the daemon: %w", err)}
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {

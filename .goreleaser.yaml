@@ -96,7 +96,7 @@ homebrew_casks:
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     directory: Casks
     homepage: "https://github.com/okedeji/agentcage"
-    description: "Run MCP agents you don't trust, in a cage. Signed and verified by default."
+    description: "Build, sign, and run MCP agents in isolated containers"
     # Wire up tab-completion at install time, from the scripts shipped in the
     # archive (paths are archive-relative).
     completions:

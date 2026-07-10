@@ -1,8 +1,9 @@
 # Security policy
 
-agentcage's job is to run untrusted agents safely, so a hole in the sandbox or
-the trust model is the most serious kind of bug it can have. Reports are
-welcome and taken seriously.
+agentcage runs agents in isolated containers behind policy gateways, with a
+signing and trust model over the artifacts. A hole in the sandbox or the trust
+model is the most serious kind of bug it can have. Reports are welcome and taken
+seriously.
 
 ## Reporting a vulnerability
 
@@ -36,8 +37,8 @@ In scope, most valuable first:
 Out of scope:
 
 - The known limits of signing: the first pull of a publisher trusts the key it
-  sees (trust on first use), and signing proves origin, not intent. A
-  malicious-but-signed agent is what the cage is for.
+  sees (trust on first use), and signing proves origin, not intent. The sandbox,
+  not the signature, is what contains a malicious agent.
 - Denial of service from an agent you deliberately ran with generous caps.
 - Anything requiring you to already hold the host user's credentials or root.
 

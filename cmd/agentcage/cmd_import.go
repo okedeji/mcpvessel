@@ -24,49 +24,47 @@ func newImportCmd() *cobra.Command {
 	var dir, tag, entrypoint, progressFlag string
 	var reasoning, noReuse bool
 	var model, prompt, reasonerPath string
-	var tools []string
 	cmd := &cobra.Command{
-		Use:   "import SOURCE",
-		Short: "Wrap an existing MCP server as an agent",
-		Long: `Turn an existing MCP server into an agentcage agent: generate the Agentfile
-that installs and launches it, then build it into a normal .agent bundle you can
-run, serve, push, and depend on via USES.
+		Use:   "import SOURCE...",
+		Short: "Wrap existing MCP servers as agents",
+		Long: `Turn existing MCP servers into agentcage agents: generate the Agentfile
+that installs and launches each one, then build it into a normal .agent bundle
+you can run, serve, push, and depend on via USES.
 
-SOURCE is an MCP Registry reference, any reverse-DNS name (io.github.user/server,
-com.example/server), or a direct package coordinate (npm:<pkg>, pypi:<pkg>,
-oci:<image>). npm and PyPI packages are wrapped by installing them; an OCI image
-is used as the base directly and needs --entrypoint to say how it launches. A
-remote-only server (a hosted URL) cannot be imported: agentcage runs agents in
-cages and cannot contain a remote endpoint; reach it from an agent that declares
-EGRESS allow:<host> and its SECRETS instead.
+Each SOURCE is an MCP Registry reference, any reverse-DNS name
+(io.github.user/server, com.example/server), or a direct package coordinate
+(npm:<pkg>, pypi:<pkg>, oci:<image>). npm and PyPI packages are wrapped by
+installing them; an OCI image is used as the base directly and needs
+--entrypoint (or an inline launch, "oci:img -- cmd args") to say how it
+launches. A remote-only server (a hosted URL) cannot be imported: agentcage
+runs agents in cages and cannot contain a remote endpoint; reach it from an
+agent that declares EGRESS allow:<host> and its SECRETS instead.
 
-The generated Agentfile is written into a directory (--dir, default ./<name>) and
-is yours to edit: add a MODEL to make it a reasoning agent, tighten its EGRESS,
-then rebuild.
+Several SOURCEs wrap into one bundle each: their tools stay separate cages you
+serve or depend on individually. Each generated Agentfile is written into its
+own directory (default ./<name>) and is yours to edit: add a MODEL to make it a
+reasoning agent, tighten its EGRESS, then rebuild.
 
-With --reasoning, import also builds a reasoning agent that answers prompts by
-running an LLM tool-use loop over the imported tools. Repeat --tool to compose
-several servers under one agent: a single brain reasons across all their tools.`,
+With --reasoning, import instead composes every SOURCE under one reasoning
+agent that answers prompts by running an LLM tool-use loop over all their
+tools: a single brain reasoning across every server.`,
 		Example: `  agentcage import npm:@modelcontextprotocol/server-filesystem
   agentcage import io.github.modelcontextprotocol/filesystem -t @me/fs:0.1
+  agentcage import npm:server-github pypi:mcp-server-time
   agentcage import oci:ghcr.io/acme/mcp-slack:1.2 --entrypoint "mcp-slack --stdio"
   agentcage import pypi:mcp-server-time --reasoning -t @me/timekeeper:0.1
-  agentcage import --reasoning --tool npm:server-github --tool pypi:mcp-slack -t @me/assistant:0.1
-  agentcage import --reasoning --tool "oci:ghcr.io/acme/mcp-slack:1.2 -- mcp-slack --stdio" --tool pypi:mcp-server-time -t @me/ops:0.1`,
-		Args: cobra.MaximumNArgs(1),
+  agentcage import npm:server-github pypi:mcp-slack --reasoning -t @me/assistant:0.1
+  agentcage import "oci:ghcr.io/acme/mcp-slack:1.2 -- mcp-slack --stdio" pypi:mcp-server-time --reasoning -t @me/ops:0.1`,
+		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			sources := append(append([]string{}, args...), tools...)
-			if len(sources) == 0 {
-				return fmt.Errorf("provide a SOURCE to import, or a --tool for each server a --reasoning agent should use")
-			}
 			mode := progress.ParseMode(progressFlag)
 
 			if reasoning {
-				if entrypoint != "" && len(sources) > 1 {
-					return fmt.Errorf("--entrypoint applies to a single SOURCE; give a multi-tool launch inline as --tool \"oci:img -- cmd args\"")
+				if entrypoint != "" && len(args) > 1 {
+					return fmt.Errorf("--entrypoint applies to a single SOURCE; give a multi-source launch inline as \"oci:img -- cmd args\"")
 				}
 				return buildReasoningImport(cmd, reasoningParams{
-					sources:    sources,
+					sources:    args,
 					entrypoint: entrypoint,
 					parentDir:  dir,
 					agentTag:   tag,
@@ -78,47 +76,122 @@ several servers under one agent: a single brain reasons across all their tools.`
 				})
 			}
 
-			if len(sources) > 1 {
-				return fmt.Errorf("--tool composes several servers into one reasoning agent; add --reasoning (a plain import wraps a single server)")
+			if len(args) > 1 {
+				switch {
+				case tag != "":
+					return fmt.Errorf("--tag names a single bundle; import SOURCEs one at a time to tag them")
+				case dir != "":
+					return fmt.Errorf("--dir places a single SOURCE's Agentfile; import SOURCEs one at a time to choose directories")
+				case entrypoint != "":
+					return fmt.Errorf("--entrypoint applies to a single SOURCE; give a launch inline as \"oci:img -- cmd args\"")
+				}
 			}
-			source, launch := parseToolArg(sources[0])
-			src, err := resolveImportSource(cmd.Context(), source)
-			if err != nil {
-				return err
+
+			usedDir := map[string]bool{}
+			for _, arg := range args {
+				if err := importCollection(cmd, arg, dir, tag, entrypoint, mode, usedDir); err != nil {
+					return err
+				}
 			}
-			switch {
-			case len(launch) > 0:
-				src.Launch = launch
-			case entrypoint != "":
-				src.Launch = strings.Fields(entrypoint)
+			if len(args) > 1 {
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
+					"\nWrapped %d servers, each its own bundle. To compose them under one reasoning agent:\n  agentcage import %s --reasoning -t @you/assistant:0.1\n",
+					len(args), quoteSources(args))
 			}
-			outDir := dir
-			if outDir == "" {
-				outDir = defaultImportDir(src)
-			}
-			if err := writeToolCollection(outDir, src); err != nil {
-				return err
-			}
-			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Generated %s\n", filepath.Join(outDir, bundle.AgentfileName))
-			printImportInputs(cmd.ErrOrStderr(), src.Env)
-			return buildToStore(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), buildConfig{
-				srcDir: outDir,
-				mode:   mode,
-				tag:    tag,
-			})
+			return nil
 		},
 	}
 	cmd.Flags().StringVar(&dir, "dir", "", "directory to write the generated Agentfile into (default: ./<name>)")
 	cmd.Flags().StringVarP(&tag, "tag", "t", "", "reference to name the built bundle under (names the reasoning agent with --reasoning)")
 	cmd.Flags().StringVar(&entrypoint, "entrypoint", "", "override the launch command (required for an oci image)")
 	cmd.Flags().StringVar(&progressFlag, "progress", "auto", "set build progress output (auto, plain, tty)")
-	cmd.Flags().BoolVar(&reasoning, "reasoning", false, "also build a reasoning agent that USES the tool collection and answers prompts over its tools")
-	cmd.Flags().StringArrayVar(&tools, "tool", nil, "with --reasoning, a server the agent should reason over; repeat to compose several into one agent (an oci tool states its launch inline: \"oci:img -- cmd args\")")
+	cmd.Flags().BoolVar(&reasoning, "reasoning", false, "compose the SOURCEs under one reasoning agent that answers prompts over their tools")
 	cmd.Flags().BoolVar(&noReuse, "no-reuse", false, "with --reasoning, wrap a fresh tool collection instead of reusing an existing wrapper of the same server")
 	cmd.Flags().StringVar(&model, "model", "", "pin the reasoning agent's provider/model (default: defer to your configured default)")
 	cmd.Flags().StringVar(&prompt, "prompt", "", "the reasoning agent's system prompt (default: a generic tool-using prompt)")
 	cmd.Flags().StringVar(&reasonerPath, "reasoner", "", "path to a custom reasoning harness .py to use instead of the built-in one")
 	return cmd
+}
+
+// importCollection wraps one SOURCE into its own tool-collection bundle. dir
+// and tag apply only to single-source imports; usedDir keeps a batch's default
+// directories distinct.
+func importCollection(cmd *cobra.Command, arg, dir, tag, entrypoint string, mode progress.Mode, usedDir map[string]bool) error {
+	source, launch := parseToolArg(arg)
+	src, err := resolveImportSource(cmd.Context(), source)
+	if err != nil {
+		return err
+	}
+	switch {
+	case len(launch) > 0:
+		src.Launch = launch
+	case entrypoint != "":
+		src.Launch = strings.Fields(entrypoint)
+	}
+	outDir := dir
+	if outDir == "" {
+		outDir = uniqueDir(defaultImportDir(src), usedDir)
+	}
+	created := !dirExists(outDir)
+	if err := writeToolCollection(outDir, src); err != nil {
+		removeGenerated(cmd.ErrOrStderr(), outDir, created)
+		return err
+	}
+	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Generated %s\n", filepath.Join(outDir, bundle.AgentfileName))
+	printImportInputs(cmd.ErrOrStderr(), src.Env)
+	if err := buildToStore(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), buildConfig{
+		srcDir: outDir,
+		mode:   mode,
+		tag:    tag,
+	}); err != nil {
+		removeGenerated(cmd.ErrOrStderr(), outDir, created)
+		return err
+	}
+	return nil
+}
+
+// dirExists reports whether path is an existing directory.
+func dirExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
+// removeGenerated deletes a directory this import itself created, so a failed
+// import does not block the retry with "Agentfile already exists". A
+// pre-existing directory is never touched: it may hold hand edits.
+func removeGenerated(stderr io.Writer, dir string, created bool) {
+	if !created {
+		return
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		return
+	}
+	_, _ = fmt.Fprintf(stderr, "Removed generated %s so a retry starts fresh.\n", dir)
+}
+
+// uniqueDir keeps one batch's generated directories distinct when two SOURCEs
+// share a last name segment.
+func uniqueDir(dir string, used map[string]bool) string {
+	d := dir
+	for n := 2; used[d]; n++ {
+		d = fmt.Sprintf("%s-%d", dir, n)
+	}
+	used[d] = true
+	return d
+}
+
+// quoteSources renders sources for a suggested command line, quoting any that
+// carry an inline launch ("oci:img -- cmd args").
+func quoteSources(sources []string) string {
+	out := make([]string, len(sources))
+	for i, s := range sources {
+		if strings.ContainsAny(s, " ") {
+			out[i] = fmt.Sprintf("%q", s)
+		} else {
+			out[i] = s
+		}
+	}
+	return strings.Join(out, " ")
 }
 
 type reasoningParams struct {
@@ -165,16 +238,22 @@ func buildReasoningImport(cmd *cobra.Command, p reasoningParams) error {
 	}
 
 	agentDir := filepath.Join(parent, "agent")
+	created := !dirExists(agentDir)
 	if err := writeReasoningAgent(agentDir, reasoner.Params{UsesRefs: usesRefs, Model: p.model, SystemPrompt: p.prompt}, p.harness); err != nil {
+		removeGenerated(cmd.ErrOrStderr(), agentDir, created)
 		return err
 	}
 	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Generated reasoning agent %s\n", filepath.Join(agentDir, bundle.AgentfileName))
 
-	return buildToStore(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), buildConfig{
+	if err := buildToStore(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), buildConfig{
 		srcDir: agentDir,
 		mode:   p.mode,
 		tag:    p.agentTag,
-	})
+	}); err != nil {
+		removeGenerated(cmd.ErrOrStderr(), agentDir, created)
+		return err
+	}
+	return nil
 }
 
 // reuseOrWrapTool resolves one source to a tool-collection ref: an existing
@@ -193,20 +272,26 @@ func reuseOrWrapTool(cmd *cobra.Command, p reasoningParams, arg, parent, prefix,
 	}
 
 	if !p.noReuse {
-		reuse, err := chooseReuse(cmd, src.Origin)
+		cand, err := chooseReuse(cmd, src.Origin)
 		if err != nil {
 			return "", err
 		}
-		if reuse != "" {
-			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Reusing tool collection %s\n", reuse)
-			return reuse, nil
+		if cand.Ref != "" {
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Reusing tool collection %s\n", cand.Ref)
+			return cand.Ref, nil
+		}
+		if cand.Hash != "" {
+			slug := uniqueSlug(toolSlug(src), usedSlug)
+			return adoptWrapper(cmd, cand.Hash, prefix+slug+"-tools:"+version)
 		}
 	}
 
 	slug := uniqueSlug(toolSlug(src), usedSlug)
 	toolTag := prefix + slug + "-tools:" + version
 	toolDir := filepath.Join(parent, slug+"-tools")
+	created := !dirExists(toolDir)
 	if err := writeToolCollection(toolDir, src); err != nil {
+		removeGenerated(cmd.ErrOrStderr(), toolDir, created)
 		return "", err
 	}
 	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Generated %s\n", filepath.Join(toolDir, bundle.AgentfileName))
@@ -216,6 +301,7 @@ func reuseOrWrapTool(cmd *cobra.Command, p reasoningParams, arg, parent, prefix,
 		mode:   p.mode,
 		tag:    toolTag,
 	}); err != nil {
+		removeGenerated(cmd.ErrOrStderr(), toolDir, created)
 		return "", err
 	}
 	return toolTag, nil

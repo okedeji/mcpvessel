@@ -77,10 +77,23 @@ func TestReuseSearchTerm(t *testing.T) {
 }
 
 func TestCandidateProvenance(t *testing.T) {
-	if got := candidateProvenance(wrapperCandidate{Local: true}); got != "local" {
+	if got := candidateProvenance(wrapperCandidate{Ref: "@me/x-tools:0.1", Local: true}); got != "local" {
 		t.Errorf("provenance = %q, want local", got)
+	}
+	if got := candidateProvenance(wrapperCandidate{Hash: "sha256:abc", Local: true}); got != "local, untagged; reuse tags it" {
+		t.Errorf("provenance = %q, want untagged-local wording", got)
 	}
 	if got := candidateProvenance(wrapperCandidate{Eval: "47/50 j0.83"}); got != "registry, evals 47/50 j0.83" {
 		t.Errorf("provenance = %q, want registry with eval", got)
+	}
+}
+
+func TestCandidateDisplay(t *testing.T) {
+	if got := (wrapperCandidate{Ref: "@me/x-tools:0.1"}).display(); got != "@me/x-tools:0.1" {
+		t.Errorf("display = %q, want the ref", got)
+	}
+	long := "sha256:0123456789abcdef0123456789abcdef"
+	if got := (wrapperCandidate{Hash: long}).display(); got != "sha256:0123456789ab" {
+		t.Errorf("display = %q, want a short hash", got)
 	}
 }
