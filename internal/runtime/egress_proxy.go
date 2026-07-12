@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"syscall"
 
 	"github.com/okedeji/mcpvessel/internal/bundle"
 	"github.com/okedeji/mcpvessel/internal/egress"
@@ -147,21 +148,29 @@ func startEgressProxy(ctx context.Context, sess *bootSession, runID, egressNetwo
 
 // pumpEgressLog tails the detached proxy's stdout, where the egress handler
 // writes denial lines, into the run's durable log. It runs off a background
-// context, not the boot context, so it outlives a served instance's boot call
-// (the same reason the working set does); teardown cancels it.
+// context so it outlives a served instance's boot call; teardown kills it.
+//
+// It runs in its own process group and teardown kills the whole group, not just
+// the command. On macOS the command is limactl, which spawns an ssh child that
+// inherits the log pipe and survives a plain kill; that lingering child keeps
+// the pipe open and hangs cmd.Wait forever, which stalls the run's teardown.
 func pumpEgressLog(p Provisioner, proxyName string, sink io.WriteCloser, td *teardown) {
-	pumpCtx, cancel := context.WithCancel(context.Background())
-	cmd := p.Nerdctl(pumpCtx, "logs", "-f", proxyName)
+	cmd := p.Nerdctl(context.Background(), "logs", "-f", proxyName)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Stdout = sink
 	cmd.Stderr = sink
 	if err := cmd.Start(); err != nil {
-		cancel()
 		_ = sink.Close()
 		return
 	}
+	pgid := cmd.Process.Pid
 	td.push(func() error {
-		cancel()
-		_ = cmd.Wait()
+		_ = syscall.Kill(-pgid, syscall.SIGKILL)
+		// Reap in the background, never on the teardown path: on macOS the log
+		// stream flows through an ssh child of limactl that a signal may not
+		// reach, so cmd.Wait can block indefinitely. Teardown must not wait on
+		// it, or a run's result never reaches the client.
+		go func() { _ = cmd.Wait() }()
 		return sink.Close()
 	})
 }

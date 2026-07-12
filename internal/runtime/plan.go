@@ -260,7 +260,10 @@ func buildRunPlan(tree *runTree, runID string, ops operatorInputs) (*runPlan, er
 			agentEnv[env.LLMURL] = llmURL(runID, token)
 			plan.LLMAgents[key] = effectiveModel(model, node, ops.models)
 		}
-		if hosts := egressHosts(nodeEgress(node)); len(hosts) > 0 {
+		// The operator's per-run --egress reaches every agent in the run, so a
+		// reasoning agent can allow the hosts its sub-servers need without
+		// rebuilding each one.
+		if hosts := unionHosts(egressHosts(nodeEgress(node)), ops.egressAllow); len(hosts) > 0 {
 			plan.EgressAgents[containerName(key)] = egressAgent{Network: nodeNet(key), Hosts: hosts}
 			for k, v := range egressProxyEnv(runID) {
 				agentEnv[k] = v
