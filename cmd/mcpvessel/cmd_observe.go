@@ -21,6 +21,8 @@ const observeDefaultListen = "127.0.0.1:7300"
 func newObserveCmd() *cobra.Command {
 	var listen string
 	var forDur time.Duration
+	var secretFlags, envFlags []string
+	var secretFile, envFile string
 	cmd := &cobra.Command{
 		Use:   "observe BUNDLE",
 		Short: "Learn a server's egress by watching it in audit mode",
@@ -59,8 +61,12 @@ here: observe only records, then you add the line and rebuild.`,
 				dur = c.Serve.EffectiveObserveDuration()
 			}
 
+			envPool, secretPool, err := buildInputPools(envFlags, envFile, secretFlags, secretFile)
+			if err != nil {
+				return err
+			}
 			out := cmd.OutOrStdout()
-			hosts, err := observeEgressHosts(cmd.Context(), out, socket, target, listen, dur)
+			hosts, err := observeEgressHosts(cmd.Context(), out, socket, target, listen, dur, envPool, secretPool)
 			if err != nil {
 				return err
 			}
@@ -76,16 +82,20 @@ here: observe only records, then you add the line and rebuild.`,
 	}
 	cmd.Flags().StringVar(&listen, "listen", observeDefaultListen, "address to serve the agent on while observing")
 	cmd.Flags().DurationVar(&forDur, "for", 0, "how long to record before reporting, e.g. 90s (0 = configured default)")
+	cmd.Flags().StringArrayVar(&secretFlags, "secret", nil, "supply a secret NAME the server needs to boot, resolved from your environment or the mcpvessel secret store (repeatable)")
+	cmd.Flags().StringVar(&secretFile, "secret-file", "", "read secret values (NAME=VALUE per line) from a perms-restricted file")
+	cmd.Flags().StringArrayVar(&envFlags, "env", nil, "supply an env value the server needs to boot: KEY=VALUE, or KEY to pass it through (repeatable)")
+	cmd.Flags().StringVar(&envFile, "env-file", "", "read env values (KEY=VALUE per line) from a file")
 	return cmd
 }
 
 // observeEgressHosts serves target with its cage in audit mode, prints where to
 // reach it, records for dur (or until ctx is cancelled), then returns the sorted
 // set of hosts it reached. The front door is always torn down before returning.
-func observeEgressHosts(ctx context.Context, out io.Writer, socket string, target daemon.ServeTarget, listen string, dur time.Duration) ([]string, error) {
+func observeEgressHosts(ctx context.Context, out io.Writer, socket string, target daemon.ServeTarget, listen string, dur time.Duration, env, secrets map[string]string) ([]string, error) {
 	client := daemon.Dial(socket)
 	since := time.Now()
-	res, err := client.Serve(ctx, []daemon.ServeTarget{target}, listen, nil, nil, true, nil)
+	res, err := client.Serve(ctx, []daemon.ServeTarget{target}, listen, nil, nil, true, nil, env, secrets)
 	if err != nil {
 		return nil, err
 	}

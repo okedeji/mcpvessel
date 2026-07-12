@@ -18,7 +18,7 @@ import (
 // A target that is not a source directory cannot be edited (a pulled, signed
 // bundle has no local source), so it is a clear error rather than a silent
 // no-op. args are the raw serve/run arguments; scoped is the parsed --egress.
-func saveEgress(ctx context.Context, stderr io.Writer, args []string, scoped map[string][]string) error {
+func saveEgress(ctx context.Context, stderr io.Writer, args []string, scoped map[string][]string, env, secrets map[string]string) error {
 	for _, arg := range args {
 		hosts := egress.HostsFor(scoped, filepath.Base(arg))
 		if len(hosts) == 0 {
@@ -35,7 +35,9 @@ func saveEgress(ctx context.Context, stderr io.Writer, args []string, scoped map
 		if err := setVesselfileEgress(vf, hosts); err != nil {
 			return err
 		}
-		if _, _, err := buildIntoStore(ctx, stderr, stderr, buildConfig{srcDir: arg, mode: progress.ModeAuto}); err != nil {
+		// The rebuild reintrospects the server, so it needs the same inputs the
+		// server needs to boot.
+		if _, _, err := buildIntoStore(ctx, stderr, stderr, buildConfig{srcDir: arg, mode: progress.ModeAuto, env: env, secrets: secrets}); err != nil {
 			return err
 		}
 		_, _ = fmt.Fprintf(stderr, "Saved EGRESS allow:%s to %s and rebuilt.\n", strings.Join(hosts, ","), vf)

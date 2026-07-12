@@ -194,7 +194,7 @@ func importCollection(cmd *cobra.Command, arg, dir, tag, entrypoint string, mode
 		return err
 	}
 	if observe {
-		if err := observeAndSetEgress(cmd, outDir, src, build); err != nil {
+		if err := observeAndSetEgress(cmd, outDir, src, build, env, secrets); err != nil {
 			return err
 		}
 	}
@@ -203,8 +203,9 @@ func importCollection(cmd *cobra.Command, arg, dir, tag, entrypoint string, mode
 
 // observeAndSetEgress serves the just-built agent in audit mode, records the
 // hosts it reaches, and if any, rewrites its EGRESS and rebuilds. A server that
-// reaches nothing is left deny-default.
-func observeAndSetEgress(cmd *cobra.Command, outDir string, src wrap.Source, rebuild func() error) error {
+// reaches nothing is left deny-default. env and secrets let a server that needs
+// config to boot start under observation.
+func observeAndSetEgress(cmd *cobra.Command, outDir string, src wrap.Source, rebuild func() error, env, secrets map[string]string) error {
 	socket, err := daemon.SocketPath()
 	if err != nil {
 		return err
@@ -217,7 +218,7 @@ func observeAndSetEgress(cmd *cobra.Command, outDir string, src wrap.Source, reb
 	if err != nil {
 		return err
 	}
-	hosts, err := observeEgressHosts(cmd.Context(), cmd.ErrOrStderr(), socket, target, observeDefaultListen, cfg.Serve.EffectiveObserveDuration())
+	hosts, err := observeEgressHosts(cmd.Context(), cmd.ErrOrStderr(), socket, target, observeDefaultListen, cfg.Serve.EffectiveObserveDuration(), env, secrets)
 	if err != nil {
 		return err
 	}

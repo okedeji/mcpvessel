@@ -350,6 +350,13 @@ func bootAgent(ctx context.Context, in bootInput) (*mcp.Client, *workingSet, err
 	}
 
 	egressNet := in.RunID + "-egress"
+	// A cage with no broker to reach gets no network at all (loopback only).
+	// A stdio server needs none, and this is what makes deny-default actually
+	// mean no internet: without it the container joins the default bridge and
+	// can reach anywhere. A model or egress puts it on a private network below.
+	if in.Network == "" {
+		in.Network = "none"
+	}
 	if model != "" || len(allowHosts) > 0 || in.ObserveEgress {
 		network := in.RunID + "-net"
 		if err := createNetwork(ctx, sess.provisioner, network, true, in.Managed); err != nil {

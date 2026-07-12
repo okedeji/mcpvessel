@@ -22,7 +22,8 @@ import (
 
 func newServeCmd() *cobra.Command {
 	var listen string
-	var expose, noExpose, egressFlags []string
+	var expose, noExpose, egressFlags, secretFlags, envFlags []string
+	var secretFile, envFile string
 	var save bool
 	cmd := &cobra.Command{
 		Use:   "serve BUNDLE...",
@@ -56,13 +57,17 @@ shuts down.`,
 			if err != nil {
 				return err
 			}
+			envPool, secretPool, err := buildInputPools(envFlags, envFile, secretFlags, secretFile)
+			if err != nil {
+				return err
+			}
 			scoped := egress.ParseScoped(egressFlags)
 			// --save bakes the egress into editable targets and rebuilds; the
 			// runtime override then has nothing left to add. Without --save the
 			// hosts are allowed for this serve only, and never touch the bundle.
 			runtimeEgress := scoped
 			if save {
-				if err := saveEgress(cmd.Context(), cmd.ErrOrStderr(), args, scoped); err != nil {
+				if err := saveEgress(cmd.Context(), cmd.ErrOrStderr(), args, scoped, envPool, secretPool); err != nil {
 					return err
 				}
 				runtimeEgress = nil
@@ -76,7 +81,7 @@ shuts down.`,
 			if err := prebuildServeImages(cmd.Context(), cmd.ErrOrStderr(), targets, expose, noExpose); err != nil {
 				return err
 			}
-			res, err := daemon.Dial(socket).Serve(cmd.Context(), targets, listen, expose, noExpose, false, runtimeEgress)
+			res, err := daemon.Dial(socket).Serve(cmd.Context(), targets, listen, expose, noExpose, false, runtimeEgress, envPool, secretPool)
 			if err != nil {
 				var unreachable *daemon.Unreachable
 				if errors.As(err, &unreachable) {
@@ -115,6 +120,10 @@ shuts down.`,
 	cmd.Flags().StringArrayVar(&noExpose, "no-expose", nil, "hide this agent even if USES PUBLIC, matched by repository (repeatable)")
 	cmd.Flags().StringArrayVar(&egressFlags, "egress", nil, "allow a served agent hosts for this run: host,host, or agent:host,host to scope one of several (repeatable)")
 	cmd.Flags().BoolVar(&save, "save", false, "with --egress, write the hosts into the agent's Vesselfile and rebuild instead of allowing them for this run only (source directories only)")
+	cmd.Flags().StringArrayVar(&secretFlags, "secret", nil, "supply a secret NAME a served agent needs, resolved from your environment or the mcpvessel secret store (repeatable)")
+	cmd.Flags().StringVar(&secretFile, "secret-file", "", "read secret values (NAME=VALUE per line) from a perms-restricted file")
+	cmd.Flags().StringArrayVar(&envFlags, "env", nil, "supply an env value a served agent needs: KEY=VALUE, or KEY to pass it through from your environment (repeatable)")
+	cmd.Flags().StringVar(&envFile, "env-file", "", "read env values (KEY=VALUE per line) from a file")
 	_ = cmd.MarkFlagRequired("listen")
 	return cmd
 }
