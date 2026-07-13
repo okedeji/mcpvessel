@@ -174,7 +174,11 @@ func Login(ctx context.Context, host, username, password string) error {
 	if host == "" {
 		return fmt.Errorf("login: a registry host is required")
 	}
-	store, err := credentials.NewStoreFromDocker(credentials.StoreOptions{})
+	// AllowPlaintextPut mirrors Docker's own default: when no credential helper
+	// is configured (a bare Linux box or a CI runner), fall back to base64 in
+	// config.json instead of refusing the login. A machine with a helper still
+	// uses it; this only changes the no-helper fallback.
+	store, err := credentials.NewStoreFromDocker(credentials.StoreOptions{AllowPlaintextPut: true})
 	if err != nil {
 		return fmt.Errorf("opening credential store: %w", err)
 	}
