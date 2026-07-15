@@ -40,7 +40,7 @@ type Vesselfile struct {
 // lists sub-agent tools the parent rejects, nil accepting everything the
 // sub-agent EXPOSEs.
 type Use struct {
-	Ref     string // canonical "@org/name", without the tag
+	Ref     string // "@org/name" (default registry) or "host/org/name", without the tag
 	Version string // tag, never "latest"
 	Public  bool
 	Deny    []string // tool names denied; nil means "everything they EXPOSE"

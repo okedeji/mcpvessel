@@ -40,6 +40,25 @@ ENTRYPOINT ["./mcpvessel", "mcp-bridge", "--", "/server/github-mcp-server", "std
 	}
 }
 
+func TestParse_UsesExplicitHostRefs(t *testing.T) {
+	src := `FROM x
+ENTRYPOINT y
+USES ghcr.io/okedeji/mcpvessel-docs:0.1.0
+USES PUBLIC localhost:5000/org/name:1.2
+`
+	got, err := Parse(strings.NewReader(src))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	want := []Use{
+		{Ref: "ghcr.io/okedeji/mcpvessel-docs", Version: "0.1.0"},
+		{Ref: "localhost:5000/org/name", Version: "1.2", Public: true},
+	}
+	if !reflect.DeepEqual(got.Uses, want) {
+		t.Errorf("Uses = %+v, want %+v", got.Uses, want)
+	}
+}
+
 func TestParse_EntrypointExecFormRejectsNonArray(t *testing.T) {
 	src := `FROM x
 ENTRYPOINT ["unterminated"
@@ -332,9 +351,19 @@ func TestParse_Errors(t *testing.T) {
 			"must include a version tag",
 		},
 		{
-			"uses missing @",
+			"uses missing @ and not a host",
 			"FROM x\nENTRYPOINT y\nUSES anthropic/web-search:1.0",
-			"must start with @",
+			"must be @org/name:version or host/org/name:version",
+		},
+		{
+			"uses host form missing repo",
+			"FROM x\nENTRYPOINT y\nUSES ghcr.io/:1.0",
+			"must be host/org/name:version",
+		},
+		{
+			"uses host with port but no tag",
+			"FROM x\nENTRYPOINT y\nUSES localhost:5000/org/name",
+			"must include a version tag",
 		},
 		{
 			"uses missing org slash name",

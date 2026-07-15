@@ -16,9 +16,12 @@ import (
 	"github.com/okedeji/mcpvessel/internal/config"
 	"github.com/okedeji/mcpvessel/internal/daemon"
 	"github.com/okedeji/mcpvessel/internal/egress"
+	"github.com/okedeji/mcpvessel/internal/locate"
 	"github.com/okedeji/mcpvessel/internal/mcpregistry"
 	"github.com/okedeji/mcpvessel/internal/progress"
 	"github.com/okedeji/mcpvessel/internal/reasoner"
+	"github.com/okedeji/mcpvessel/internal/reference"
+	"github.com/okedeji/mcpvessel/internal/registry"
 	"github.com/okedeji/mcpvessel/internal/runtime"
 	"github.com/okedeji/mcpvessel/internal/wrap"
 )
@@ -161,6 +164,20 @@ func importCollection(cmd *cobra.Command, arg, dir, tag, entrypoint string, mode
 	src, err := resolveImportSource(cmd.Context(), source)
 	if err != nil {
 		return err
+	}
+	// A published mcpvessel bundle is already the finished agent; pull it
+	// instead of wrapping it as if it were a base image.
+	if ociRef, ok := adoptPublishedBundle(cmd.Context(), cmd.ErrOrStderr(), src); ok {
+		name := src.Origin
+		if name == "" {
+			name = ociRef
+		}
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "%s is already a caged mcpvessel agent (a published bundle); pulled it instead of wrapping.\n", name)
+		if dir != "" || tag != "" || entrypoint != "" {
+			_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "note: --dir, --tag, and --entrypoint do not apply to a published bundle; ignored.")
+		}
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Serve or run it directly:\n  mcpvessel serve --listen 127.0.0.1:7000 %s\n", name)
+		return nil
 	}
 	switch {
 	case len(launch) > 0:
@@ -363,6 +380,12 @@ func reuseOrWrapTool(cmd *cobra.Command, p reasoningParams, arg, parent, prefix,
 	if err != nil {
 		return "", err
 	}
+	// A published mcpvessel bundle needs no wrapper: the USES edge can
+	// reference it directly, pulled and signature-verified like any pin.
+	if ociRef, ok := adoptPublishedBundle(cmd.Context(), cmd.ErrOrStderr(), src); ok {
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Using published bundle %s directly\n", ociRef)
+		return ociRef, nil
+	}
 	switch {
 	case len(launch) > 0:
 		src.Launch = launch
@@ -411,6 +434,34 @@ func reuseOrWrapTool(cmd *cobra.Command, p reasoningParams, arg, parent, prefix,
 		return "", err
 	}
 	return toolTag, nil
+}
+
+// adoptPublishedBundle detects an OCI source that is a published mcpvessel
+// bundle and, when it is, pulls it (signature verified at cache ingest) and
+// returns its OCI reference. Wrapping such an artifact would cage a cage:
+// the bundle is already the finished agent, so import adopts it as-is. Any
+// error deciding leaves adoption off and the wrap path reports the real
+// problem; a plain image returns ok=false untouched.
+func adoptPublishedBundle(ctx context.Context, stderr io.Writer, src wrap.Source) (ociRef string, ok bool) {
+	if src.Registry != wrap.OCI {
+		return "", false
+	}
+	ref, err := reference.Parse(wrap.OCIImageRef(src))
+	if err != nil {
+		return "", false
+	}
+	client, err := registry.New()
+	if err != nil {
+		return "", false
+	}
+	if isBundle, err := client.IsBundleArtifact(ctx, ref); err != nil || !isBundle {
+		return "", false
+	}
+	if _, err := locate.Bundle(ctx, ref.OCIRef()); err != nil {
+		_, _ = fmt.Fprintf(stderr, "note: %s is a published mcpvessel bundle but pulling it failed: %v\n", ref.OCIRef(), err)
+		return "", false
+	}
+	return ref.OCIRef(), true
 }
 
 // parseToolArg splits "SOURCE -- cmd args", the per-tool --entrypoint.

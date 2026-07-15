@@ -242,11 +242,18 @@ func parseDenyList(s string) []string {
 }
 
 func parseUseRef(ref string, lineNo int) (Use, error) {
-	if !strings.HasPrefix(ref, "@") {
-		return Use{}, fmt.Errorf("line %d: USES reference must start with @ (got %q)", lineNo, ref)
+	// Two shapes, mirroring the reference grammar: @org/name:version on the
+	// default registry, or host/org/name:version pinning an explicit host. A
+	// dot or port colon in the first path segment marks a host, the same
+	// discrimination reference.Parse applies, so a published agent on any
+	// registry can sit in a USES tree.
+	if !strings.HasPrefix(ref, "@") && !useHostForm(ref) {
+		return Use{}, fmt.Errorf("line %d: USES reference must be @org/name:version or host/org/name:version (got %q)", lineNo, ref)
 	}
 	colon := strings.LastIndex(ref, ":")
-	if colon == -1 {
+	// A version tag never contains a slash; finding one means the last colon
+	// was a host port and the tag is missing.
+	if colon == -1 || strings.Contains(ref[colon+1:], "/") {
 		return Use{}, fmt.Errorf("line %d: USES reference must include a version tag like @org/name:1.2.0 (got %q)", lineNo, ref)
 	}
 	name := ref[:colon]
@@ -258,10 +265,22 @@ func parseUseRef(ref string, lineNo int) (Use, error) {
 		// latest points at different content over time, breaking reproducibility.
 		return Use{}, fmt.Errorf("line %d: USES reference cannot use the latest tag", lineNo)
 	}
-	if !strings.Contains(name[1:], "/") {
+	if strings.HasPrefix(ref, "@") && !strings.Contains(name[1:], "/") {
 		return Use{}, fmt.Errorf("line %d: USES reference must be @org/name:version (got %q)", lineNo, ref)
 	}
+	if !strings.HasPrefix(ref, "@") {
+		if _, repo, _ := strings.Cut(name, "/"); repo == "" {
+			return Use{}, fmt.Errorf("line %d: USES reference must be host/org/name:version (got %q)", lineNo, ref)
+		}
+	}
 	return Use{Ref: name, Version: version}, nil
+}
+
+// useHostForm reports whether ref pins an explicit registry host: a dot or a
+// port colon in its first path segment.
+func useHostForm(ref string) bool {
+	first, _, ok := strings.Cut(ref, "/")
+	return ok && (strings.Contains(first, ".") || strings.Contains(first, ":"))
 }
 
 // parseBan records an agent the root forbids anywhere in its subtree:

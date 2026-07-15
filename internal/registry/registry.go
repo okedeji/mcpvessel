@@ -115,6 +115,47 @@ func (c *Client) Resolve(ctx context.Context, ref reference.Reference) (string, 
 	return desc.Digest.String(), nil
 }
 
+// IsBundleArtifact reports whether ref names a published mcpvessel bundle
+// rather than a runnable container image: the manifest's artifact type, with
+// the bundle layer's media type as the fallback for a registry that strips
+// artifact types. Only the manifest is fetched, no layers, so the check is
+// cheap enough to run before deciding how to treat an OCI source.
+func (c *Client) IsBundleArtifact(ctx context.Context, ref reference.Reference) (bool, error) {
+	repo, err := c.repository(ref)
+	if err != nil {
+		return false, err
+	}
+	desc, err := repo.Resolve(ctx, resolveTarget(ref))
+	if err != nil {
+		return false, fmt.Errorf("resolving %s: %w", ref.OCIRef(), err)
+	}
+	rc, err := repo.Fetch(ctx, desc)
+	if err != nil {
+		return false, fmt.Errorf("fetching %s manifest: %w", ref.OCIRef(), err)
+	}
+	manifestBytes, err := content.ReadAll(rc, desc)
+	_ = rc.Close()
+	if err != nil {
+		return false, fmt.Errorf("reading %s manifest: %w", ref.OCIRef(), err)
+	}
+	return manifestIsBundle(manifestBytes), nil
+}
+
+// manifestIsBundle classifies raw manifest bytes: an mcpvessel bundle by
+// artifact type, or by a bundle layer when a registry strips artifact types.
+// Anything that is not an OCI image manifest (an index, junk) is not one.
+func manifestIsBundle(manifestBytes []byte) bool {
+	var manifest ocispec.Manifest
+	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
+		return false
+	}
+	if manifest.ArtifactType == ArtifactType {
+		return true
+	}
+	_, ok := bundleLayer(manifest.Layers)
+	return ok
+}
+
 // Pull fetches the bundle into the local cache and returns its path plus the
 // resolved manifest digest. A digest-pinned reference already in the cache
 // returns with no network access.
