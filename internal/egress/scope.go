@@ -42,6 +42,24 @@ func HostsFor(scoped map[string][]string, agent string) []string {
 	return out
 }
 
+// AllowHosts parses an "allow:h1,h2" EGRESS policy into its host list. Any
+// other policy (deny-default, empty) allows nothing. Single owner of the
+// policy grammar's host side: the runtime's proxy planning and the CLI's
+// boot-time egress report both read through it, so what is printed is what
+// is enforced.
+func AllowHosts(policy string) []string {
+	if !strings.HasPrefix(policy, "allow:") {
+		return nil
+	}
+	var hosts []string
+	for _, h := range strings.Split(strings.TrimPrefix(policy, "allow:"), ",") {
+		if h = strings.TrimSpace(h); h != "" {
+			hosts = append(hosts, h)
+		}
+	}
+	return hosts
+}
+
 // ScopedNames returns the agent names a scoped map targets, excluding the
 // broadcast key, so a caller can check them against the real agent set.
 func ScopedNames(scoped map[string][]string) []string {

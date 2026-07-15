@@ -58,16 +58,7 @@ func unionHosts(base, extra []string) []string {
 // egressHosts parses an EGRESS allow: policy into its host list. Any
 // non-allow policy has none and never routes through the proxy.
 func egressHosts(policy string) []string {
-	if !strings.HasPrefix(policy, "allow:") {
-		return nil
-	}
-	var hosts []string
-	for _, h := range strings.Split(strings.TrimPrefix(policy, "allow:"), ",") {
-		if h = strings.TrimSpace(h); h != "" {
-			hosts = append(hosts, h)
-		}
-	}
-	return hosts
+	return egress.AllowHosts(policy)
 }
 
 // egressProxyEnv routes an allow: agent's external traffic through the run's

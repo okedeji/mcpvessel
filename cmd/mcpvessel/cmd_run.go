@@ -95,6 +95,8 @@ A bundle with no MAIN is a tool collection. Call one of its tools by name with
 				return err
 			}
 			scoped := egress.ParseScoped(egressFlags)
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "egress: %s\n",
+				formatEgress(egress.AllowHosts(manifest.Vesselfile.Egress), egress.HostsFor(scoped, b.Name)))
 			runtimeEgress := scoped
 			if save {
 				if err := saveEgress(cmd.Context(), cmd.ErrOrStderr(), args[:1], scoped, envPool, secretPool); err != nil {

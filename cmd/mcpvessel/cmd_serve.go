@@ -16,6 +16,7 @@ import (
 	"github.com/okedeji/mcpvessel/internal/egress"
 	"github.com/okedeji/mcpvessel/internal/locate"
 	"github.com/okedeji/mcpvessel/internal/progress"
+	"github.com/okedeji/mcpvessel/internal/reference"
 	"github.com/okedeji/mcpvessel/internal/runtime"
 	"github.com/okedeji/mcpvessel/internal/store"
 )
@@ -78,7 +79,8 @@ shuts down.`,
 					return err
 				}
 			}
-			if err := prebuildServeImages(cmd.Context(), cmd.ErrOrStderr(), targets, expose, noExpose); err != nil {
+			bakedEgress, err := prebuildServeImages(cmd.Context(), cmd.ErrOrStderr(), targets, expose, noExpose)
+			if err != nil {
 				return err
 			}
 			res, err := daemon.Dial(socket).Serve(cmd.Context(), targets, listen, expose, noExpose, false, runtimeEgress, envPool, secretPool)
@@ -109,6 +111,14 @@ shuts down.`,
 				}
 				_, _ = fmt.Fprintln(out)
 			}
+			// The effective allowlist per agent, baked hosts included: a
+			// pulled bundle's author-declared egress applies with no flag, so
+			// this is where the operator sees it before any traffic flows.
+			_, _ = fmt.Fprintln(out, "Egress:")
+			for _, a := range res.Agents {
+				_, _ = fmt.Fprintf(out, "  %s: %s\n", a.Address,
+					formatEgress(egress.AllowHosts(bakedEgress[a.Address]), egress.HostsFor(scoped, a.Address)))
+			}
 			_, _ = fmt.Fprintln(out, "Plain HTTP on the same port:")
 			_, _ = fmt.Fprintln(out, "  POST /agents/<name>/tools/<tool>  call a tool with JSON args")
 			_, _ = fmt.Fprintln(out, "  POST /agents/<name>               prompt an agent with {\"prompt\": ...}")
@@ -135,35 +145,48 @@ shuts down.`,
 // only narrow the race with the client's first call, and a build failure
 // belongs in this terminal, not inside an MCP error in Cursor. Everything is
 // content-addressed, so already-built bundles cost an existence check.
-func prebuildServeImages(ctx context.Context, stderr io.Writer, targets []daemon.ServeTarget, expose, noExpose []string) error {
+//
+// It also returns each exposed agent's baked EGRESS policy by address, for
+// the boot-time egress report: the daemon honors a bundle's baked hosts with
+// no flag at all, so serve must show them before any traffic flows.
+func prebuildServeImages(ctx context.Context, stderr io.Writer, targets []daemon.ServeTarget, expose, noExpose []string) (map[string]string, error) {
 	prebuilt := map[string]bool{}
+	baked := map[string]string{}
 	for _, t := range targets {
 		b, err := locate.Bundle(ctx, t.Ref)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		name := t.Name
-		if name == "" {
-			name = b.Name
+		// Mirrors the daemon's root address derivation in handleServe, so the
+		// addresses reported here are the ones it serves under.
+		name := b.Name
+		if ref, perr := reference.Parse(t.Ref); perr == nil && ref.Repository != "" {
+			name = ref.Repository
+		}
+		if t.Name != "" {
+			name = t.Name
 		}
 		exposed, err := runtime.ResolveExposure(ctx, b.Path, name, runtime.ExposureOverrides{
 			Expose:   expose,
 			NoExpose: noExpose,
 		})
 		if err != nil {
-			return err
+			return nil, err
 		}
 		for _, ea := range exposed {
+			if m, err := bundle.ReadManifest(ea.Bundle); err == nil {
+				baked[ea.Address] = m.Vesselfile.Egress
+			}
 			if prebuilt[ea.Bundle] {
 				continue
 			}
 			prebuilt[ea.Bundle] = true
 			if err := runtime.PrebuildImages(ctx, ea.Bundle, stderr); err != nil {
-				return fmt.Errorf("preparing images for %s: %w", ea.Address, err)
+				return nil, fmt.Errorf("preparing images for %s: %w", ea.Address, err)
 			}
 		}
 	}
-	return nil
+	return baked, nil
 }
 
 // resolveServeTarget turns one serve argument into a daemon-resolvable

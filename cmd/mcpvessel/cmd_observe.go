@@ -48,7 +48,7 @@ here: observe only records, then you add the line and rebuild.`,
 				return err
 			}
 			targets := []daemon.ServeTarget{target}
-			if err := prebuildServeImages(cmd.Context(), cmd.ErrOrStderr(), targets, nil, nil); err != nil {
+			if _, err := prebuildServeImages(cmd.Context(), cmd.ErrOrStderr(), targets, nil, nil); err != nil {
 				return err
 			}
 
