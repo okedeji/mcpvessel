@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -181,23 +182,40 @@ func buildIntoStore(ctx context.Context, stdout, stderr io.Writer, cfg buildConf
 	return hash, cfg.outPath, nil
 }
 
-// stageBridge copies the mcp-bridge binary into srcDir when the Vesselfile's
-// ENTRYPOINT runs it and it is not already present, so `mcpvessel build` on a
-// hand-written agent works without the author staging a linux binary by hand.
-// import already does this for generated agents; this brings build to parity. A
-// Vesselfile that does not parse or does not use the bridge is left untouched.
+// stageBridge stages the mcp-bridge binary into srcDir when the Vesselfile's
+// ENTRYPOINT runs it, so `mcpvessel build` on a hand-written agent works
+// without the author staging a linux binary by hand. import already does this
+// for generated agents; this brings build to parity. A staged copy that no
+// longer matches this host's companion is replaced: a stale or wrong-arch
+// binary would otherwise bake into the bundle and its hash. Runs before
+// hashing, so the sealed files carry the same companion the introspection
+// image reuses. A Vesselfile that does not parse or does not use the bridge
+// is left untouched.
 func stageBridge(srcDir string, stderr io.Writer) error {
 	af, err := vesselfile.ParseFile(filepath.Join(srcDir, bundle.VesselfileName))
 	if err != nil || !strings.Contains(af.Entrypoint, wrap.BridgeSubcommand) {
 		return nil
 	}
-	if _, err := os.Stat(filepath.Join(srcDir, wrap.BridgeBinaryName)); err == nil {
-		return nil // already staged, by import or by hand
+	bin, err := runtime.FindLinuxBinary()
+	if err != nil {
+		return fmt.Errorf("locating the bridge binary: %w", err)
 	}
-	if err := writeBridgeBinary(srcDir); err != nil {
-		return err
+	want, err := os.ReadFile(bin)
+	if err != nil {
+		return fmt.Errorf("reading the bridge binary %s: %w", bin, err)
 	}
-	_, _ = fmt.Fprintf(stderr, "Staged the mcp-bridge into %s.\n", srcDir)
+	dst := filepath.Join(srcDir, wrap.BridgeBinaryName)
+	if have, err := os.ReadFile(dst); err == nil {
+		if bytes.Equal(have, want) {
+			return nil // already staged, by import or a previous build
+		}
+		_, _ = fmt.Fprintf(stderr, "Replaced the staged mcp-bridge in %s; it did not match this host's companion.\n", srcDir)
+	} else {
+		_, _ = fmt.Fprintf(stderr, "Staged the mcp-bridge into %s.\n", srcDir)
+	}
+	if err := os.WriteFile(dst, want, 0o755); err != nil {
+		return fmt.Errorf("writing the bridge binary %s: %w", dst, err)
+	}
 	return nil
 }
 
@@ -294,7 +312,7 @@ func introspectionOption(ctx context.Context, stdout, stderr io.Writer, cfg buil
 	tools, err := runtime.Introspect(ctx, runtime.IntrospectInput{
 		Vesselfile: af,
 		SourceDir:  cfg.srcDir,
-		ImageRef:   runtime.ImageRef(cfg.outPath, hash),
+		ImageRef:   runtime.ImageRef(cfg.outPath, hash, af),
 		NoCache:    cfg.noCache,
 		Env:        cfg.env,
 		Secrets:    cfg.secrets,

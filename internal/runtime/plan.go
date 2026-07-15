@@ -407,17 +407,14 @@ func mergeDeny(a, b []string) []string {
 
 // agentImageRef is the local image ref a tree node builds into: the repository
 // name tagged with the locked digest, so two pins of the same agent stay
-// distinct and a built image is reused.
+// distinct and a built image is reused. The tag folds in the codegen and
+// injected-bridge fingerprints, like every agent image ref.
 func agentImageRef(node *agentNode) string {
 	name := node.Ref.Repository
 	if i := strings.LastIndex(name, "/"); i >= 0 {
 		name = name[i+1:]
 	}
-	tag := shortDigest(node.Ref.Digest)
-	if tag == "" {
-		tag = "build"
-	}
-	return "mcpvessel/" + sanitizeRef(name) + ":" + tag
+	return "mcpvessel/" + sanitizeRef(name) + ":" + imageTag(node.Ref.Digest, manifestUsesBridge(node.Manifest))
 }
 
 // capabilityToken is the unguessable path a caller addresses one gateway route

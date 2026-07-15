@@ -46,10 +46,11 @@ func PrebuildImages(ctx context.Context, bundlePath string, stderr io.Writer) er
 	}
 
 	if err := buildImage(ctx, sess, BuildInput{
-		Vesselfile: af,
-		Manifest:   manifest,
-		SourceDir:  srcDir,
-		ImageRef:   deriveImageRef(bundlePath, manifest.FilesHash),
+		Vesselfile:   af,
+		Manifest:     manifest,
+		SourceDir:    srcDir,
+		ImageRef:     deriveImageRef(bundlePath, manifest),
+		InjectBridge: manifestUsesBridge(manifest),
 	}, false, stderr); err != nil {
 		return err
 	}

@@ -8,7 +8,10 @@ import (
 	"github.com/okedeji/mcpvessel/internal/identity"
 )
 
-func TestGatewayImageRef_TaggedByVersion(t *testing.T) {
+func TestGatewayImageRef_FallsBackToVersionWithoutCompanion(t *testing.T) {
+	// The test tree has no companion linux binary (see the FindLinuxBinary
+	// test below), so the content-tagged branch cannot fire and the ref
+	// falls back to the version tag.
 	want := "mcpvessel/gateway:" + identity.Version
 	if got := GatewayImageRef(); got != want {
 		t.Errorf("GatewayImageRef = %q, want %q", got, want)

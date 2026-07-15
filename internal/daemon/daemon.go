@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
@@ -310,7 +311,49 @@ func (d *Daemon) Handler() http.Handler {
 	mux.HandleFunc("POST /runs/{id}/stop", d.handleStopRun)
 	mux.HandleFunc("POST /serve", d.handleServe)
 	mux.HandleFunc("POST /shutdown", d.handleShutdown)
-	return mux
+	return stampIdentity(mux)
+}
+
+// Identity headers stamped on every control-plane response. The client
+// compares them against itself and the binary on disk to catch a daemon
+// still running a build that has since been replaced; without the check the
+// mismatch is invisible and the daemon keeps orchestrating with old code.
+const (
+	headerVersion     = "Mcpvessel-Version"
+	headerBinary      = "Mcpvessel-Binary"
+	headerBinaryMtime = "Mcpvessel-Binary-Mtime"
+)
+
+// daemonBinary captures the serving executable's path and mtime once, at
+// first request, which for mtime purposes is the daemon's start. A later
+// rebuild changes the file's mtime but not this stamp; that gap is what the
+// client detects.
+var daemonBinary = sync.OnceValue(func() (id struct {
+	Exe     string
+	ModTime int64
+}) {
+	exe, err := os.Executable()
+	if err != nil {
+		return
+	}
+	info, err := os.Stat(exe)
+	if err != nil {
+		return
+	}
+	id.Exe, id.ModTime = exe, info.ModTime().Unix()
+	return
+})
+
+func stampIdentity(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set(headerVersion, identity.Version)
+		if id := daemonBinary(); id.Exe != "" {
+			h.Set(headerBinary, id.Exe)
+			h.Set(headerBinaryMtime, strconv.FormatInt(id.ModTime, 10))
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // handleShutdown acks first, then signals the serve loop: the caller's request

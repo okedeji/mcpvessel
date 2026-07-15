@@ -351,10 +351,11 @@ func buildAgentImage(ctx context.Context, sess *bootSession, node *agentNode, im
 		return fmt.Errorf("re-parsing %s Vesselfile: %w", node.Key, err)
 	}
 	return buildImage(ctx, sess, BuildInput{
-		Vesselfile: af,
-		Manifest:   manifest,
-		SourceDir:  srcDir,
-		ImageRef:   imageRef,
+		Vesselfile:   af,
+		Manifest:     manifest,
+		SourceDir:    srcDir,
+		ImageRef:     imageRef,
+		InjectBridge: manifestUsesBridge(manifest),
 	}, noCache, stderr)
 }
 

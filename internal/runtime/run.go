@@ -178,7 +178,8 @@ func Acquire(ctx context.Context, in RunInput) (*Session, error) {
 		Vesselfile:    af,
 		Manifest:      manifest,
 		SourceDir:     srcDir,
-		ImageRef:      deriveImageRef(in.BundlePath, manifest.FilesHash),
+		ImageRef:      deriveImageRef(in.BundlePath, manifest),
+		InjectBridge:  manifestUsesBridge(manifest),
 		RunID:         runID,
 		Budget:        in.Budget,
 		OpEnv:         in.Env,
@@ -243,6 +244,11 @@ type bootInput struct {
 
 	NoCache bool
 	Managed bool
+
+	// InjectBridge stages this host's linux companion over the bundle's
+	// mcp-bridge at image build. Set on bundle-extraction boots; never for a
+	// source-directory introspection, whose bridge stageBridge already owns.
+	InjectBridge bool
 
 	// Interaction injects VESSEL_INTERACTION; empty injects nothing.
 	Interaction string
@@ -464,6 +470,13 @@ func buildImage(ctx context.Context, sess *bootSession, in BuildInput, noCache b
 	if !noCache && imageExists(ctx, sess.provisioner, in.ImageRef) {
 		return nil
 	}
+	// Injection happens only when a build will: an existing image's ref
+	// already covers the injected companion, so the skip above is safe.
+	if in.InjectBridge {
+		if err := injectBridgeBinary(in.SourceDir, stderr); err != nil {
+			return err
+		}
+	}
 	in.NoCache = noCache
 	err := buildWithProgress(ctx, sess.bk, in, stderr)
 	if err == nil || ctx.Err() != nil || !isTransientBuildError(err) {
@@ -505,10 +518,11 @@ func isTransientBuildError(err error) bool {
 // exit signal; sub-agents start detached and speak HTTP instead.
 func startAttachedAgent(ctx context.Context, sess *bootSession, in bootInput, td *teardown) (*mcp.Client, error) {
 	if err := buildImage(ctx, sess, BuildInput{
-		Vesselfile: in.Vesselfile,
-		Manifest:   in.Manifest,
-		SourceDir:  in.SourceDir,
-		ImageRef:   in.ImageRef,
+		Vesselfile:   in.Vesselfile,
+		Manifest:     in.Manifest,
+		SourceDir:    in.SourceDir,
+		ImageRef:     in.ImageRef,
+		InjectBridge: in.InjectBridge,
 	}, in.NoCache, in.Stderr); err != nil {
 		return nil, err
 	}
@@ -591,17 +605,8 @@ func killedBySignal(err error) bool {
 // basename tagged with the source files hash, so an unchanged agent reuses its
 // image and a changed one rebuilds. Never pushed; the no-latest rule for USES
 // does not apply.
-func deriveImageRef(bundlePath, filesHash string) string {
-	base := filepath.Base(bundlePath)
-	base = strings.TrimSuffix(base, filepath.Ext(base))
-	if base == "" {
-		base = "agent"
-	}
-	tag := shortDigest(filesHash)
-	if tag == "" {
-		tag = "build"
-	}
-	return "mcpvessel/" + sanitizeRef(base) + ":" + tag
+func deriveImageRef(bundlePath string, m *bundle.Manifest) string {
+	return imageRefFor(bundlePath, m.FilesHash, manifestUsesBridge(m))
 }
 
 // shortDigest returns the first 12 hex chars of a sha256 digest.

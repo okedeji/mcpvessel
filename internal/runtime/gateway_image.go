@@ -2,6 +2,8 @@ package runtime
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
@@ -14,10 +16,18 @@ import (
 	"github.com/okedeji/mcpvessel/internal/identity"
 )
 
-// GatewayImageRef is the gateway container's image ref, tagged by build
-// version so a new mcpvessel rebuilds it rather than reuse a stale gateway.
+// GatewayImageRef is the gateway container's image ref, tagged by the baked
+// binary's content plus the gateway definition so a changed gateway rebuilds
+// rather than reuse a stale image. Version tagging is the fallback when no
+// companion exists; dev builds share one version string, so a content tag is
+// the only thing that rebuilds between them.
 func GatewayImageRef() string {
-	return "mcpvessel/gateway:" + identity.Version
+	fp, ok := bridgeFingerprint()
+	if !ok {
+		return "mcpvessel/gateway:" + identity.Version
+	}
+	h := sha256.Sum256([]byte(fp + "\x00" + gatewayDockerfile()))
+	return "mcpvessel/gateway:" + shortDigest(hex.EncodeToString(h[:]))
 }
 
 // FindLinuxBinary returns the path to the linux mcpvessel binary baked into

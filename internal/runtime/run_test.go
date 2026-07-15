@@ -3,30 +3,34 @@ package runtime
 import (
 	"strings"
 	"testing"
+
+	"github.com/okedeji/mcpvessel/internal/bundle"
 )
 
 func TestDeriveImageRef(t *testing.T) {
 	const hash = "sha256:abcdef0123456789abcdef"
+	m := &bundle.Manifest{FilesHash: hash}
+	tag := imageTag(hash, false)
 	cases := []struct {
 		in   string
 		want string
 	}{
-		// The name is the basename; the tag is the short files hash.
-		{"researcher.agent", "mcpvessel/researcher:abcdef012345"},
-		{"./researcher.agent", "mcpvessel/researcher:abcdef012345"},
-		{"/tmp/dir/hello.agent", "mcpvessel/hello:abcdef012345"},
-		{"a/b/Researcher.agent", "mcpvessel/Researcher:abcdef012345"},
+		// The name is the basename; the tag is the content tag.
+		{"researcher.agent", "mcpvessel/researcher:" + tag},
+		{"./researcher.agent", "mcpvessel/researcher:" + tag},
+		{"/tmp/dir/hello.agent", "mcpvessel/hello:" + tag},
+		{"a/b/Researcher.agent", "mcpvessel/Researcher:" + tag},
 		// Bad characters in the basename get sanitized to dashes.
-		{"my agent.agent", "mcpvessel/my-agent:abcdef012345"},
-		{"weird@name.agent", "mcpvessel/weird-name:abcdef012345"},
+		{"my agent.agent", "mcpvessel/my-agent:" + tag},
+		{"weird@name.agent", "mcpvessel/weird-name:" + tag},
 	}
 	for _, tc := range cases {
-		if got := deriveImageRef(tc.in, hash); got != tc.want {
+		if got := deriveImageRef(tc.in, m); got != tc.want {
 			t.Errorf("deriveImageRef(%q) = %q, want %q", tc.in, got, tc.want)
 		}
 	}
 	// A missing hash still yields a valid ref.
-	if got := deriveImageRef("x.agent", ""); got != "mcpvessel/x:build" {
+	if got := deriveImageRef("x.agent", &bundle.Manifest{}); got != "mcpvessel/x:build" {
 		t.Errorf("deriveImageRef with empty hash = %q, want mcpvessel/x:build", got)
 	}
 }

@@ -83,7 +83,10 @@ func introspectRunID(imageRef string) string {
 
 // ImageRef is the local image ref a bundle builds and runs under,
 // content-addressed from the source files hash so build introspection and a
-// later run share one image. Callers pass bundle.HashSource of the tree.
-func ImageRef(bundlePath, filesHash string) string {
-	return deriveImageRef(bundlePath, filesHash)
+// later run share one image. Callers pass bundle.HashSource of the tree and
+// the parsed Vesselfile; a bridge-launching entrypoint folds the host's
+// companion into the tag, matching the ref the run derives from the sealed
+// manifest.
+func ImageRef(bundlePath, filesHash string, af *vesselfile.Vesselfile) string {
+	return imageRefFor(bundlePath, filesHash, vesselfileUsesBridge(af))
 }

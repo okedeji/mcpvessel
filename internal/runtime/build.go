@@ -35,6 +35,11 @@ type BuildInput struct {
 
 	// NoCache rebuilds every step, ignoring BuildKit's layer cache.
 	NoCache bool
+
+	// InjectBridge overwrites SourceDir's staged mcp-bridge with this host's
+	// linux companion before the build. Set by bundle-extraction paths, where
+	// SourceDir is a temp dir; never for a user's source directory.
+	InjectBridge bool
 }
 
 // BuildAgent generates a Dockerfile from the Vesselfile and solves it via

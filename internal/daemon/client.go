@@ -8,8 +8,12 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
+	"strconv"
+	"sync"
 	"time"
 
+	"github.com/okedeji/mcpvessel/internal/identity"
 	"github.com/okedeji/mcpvessel/internal/llmgateway"
 	"github.com/okedeji/mcpvessel/internal/runtime"
 	"github.com/okedeji/mcpvessel/internal/telemetry"
@@ -18,6 +22,44 @@ import (
 // Client talks to a running daemon over its Unix socket.
 type Client struct {
 	http *http.Client
+
+	// staleOnce gates the stale-daemon warning to once per process; every
+	// response carries the identity headers, one warning is enough.
+	staleOnce sync.Once
+}
+
+// StaleWarnWriter receives the one-line warning when the daemon's build no
+// longer matches the binary on disk. Package-level so every command inherits
+// the check without wiring; tests may point it elsewhere.
+var StaleWarnWriter io.Writer = os.Stderr
+
+// checkStale compares the daemon's stamped identity against this process's
+// version and the daemon's binary on disk. A daemon spawned before a rebuild
+// or upgrade keeps running old orchestration code while looking healthy;
+// this is the only place that mismatch becomes visible. Headers absent (an
+// older daemon) skip the check rather than false-positive.
+func (c *Client) checkStale(h http.Header) {
+	c.staleOnce.Do(func() {
+		version := h.Get(headerVersion)
+		if version == "" {
+			return
+		}
+		stale := version != identity.Version
+		if !stale {
+			exe := h.Get(headerBinary)
+			mtime, err := strconv.ParseInt(h.Get(headerBinaryMtime), 10, 64)
+			if exe == "" || err != nil {
+				return
+			}
+			// A stat error means the daemon's binary is gone from disk
+			// (an upgrade unlinked it): stale by definition.
+			info, statErr := os.Stat(exe)
+			stale = statErr != nil || info.ModTime().Unix() != mtime
+		}
+		if stale {
+			_, _ = fmt.Fprintln(StaleWarnWriter, "warning: the daemon is running a stale mcpvessel build; restart it with 'mcpvessel daemon stop && mcpvessel init'")
+		}
+	})
 }
 
 // Unreachable wraps a failure to reach the daemon at all, distinct from an
@@ -337,6 +379,7 @@ func (c *Client) get(ctx context.Context, path string, out any) error {
 		return &Unreachable{fmt.Errorf("contacting the daemon: %w", err)}
 	}
 	defer func() { _ = resp.Body.Close() }()
+	c.checkStale(resp.Header)
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("daemon %s: %s", path, errorBody(resp))
 	}
@@ -369,6 +412,7 @@ func (c *Client) post(ctx context.Context, path string, body, out any) error {
 		return &Unreachable{fmt.Errorf("contacting the daemon: %w", err)}
 	}
 	defer func() { _ = resp.Body.Close() }()
+	c.checkStale(resp.Header)
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
 		return fmt.Errorf("daemon %s: %s", path, errorBody(resp))
 	}
