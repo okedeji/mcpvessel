@@ -71,7 +71,7 @@ here: observe only records, then you add the line and rebuild.`,
 				return err
 			}
 			if len(hosts) == 0 {
-				_, _ = fmt.Fprintln(out, "\nNo outbound hosts observed. If the server needs none, leave it deny-default.")
+				_, _ = fmt.Fprintln(out, "\nNo outbound hosts observed. If nothing exercised its tools during the window, re-run and drive them (--for extends the window); if the server truly needs no network, leave it deny-default.")
 				return nil
 			}
 			joined := strings.Join(hosts, ",")
@@ -105,10 +105,14 @@ func observeEgressHosts(ctx context.Context, out io.Writer, socket string, targe
 		}
 	}()
 
-	_, _ = fmt.Fprintf(out, "Observing egress in audit mode on %s for %s.\n", res.Listen, dur)
+	_, _ = fmt.Fprintf(out, "Observing egress in audit mode on %s for %s (Ctrl-C ends early).\n", res.Listen, dur)
 	_, _ = fmt.Fprintln(out, "Point your MCP client at the URL below and exercise the tools you use; every host it reaches is recorded.")
 	for _, a := range res.Agents {
 		_, _ = fmt.Fprintf(out, "  http://%s/agents/%s/mcp\n", res.Listen, a.Address)
+	}
+	_, _ = fmt.Fprintln(out, "Plain HTTP works too, no MCP client needed:")
+	for _, a := range res.Agents {
+		_, _ = fmt.Fprintf(out, "  curl -X POST http://%s/agents/%s/tools/<tool> -d '{\"arg\": \"value\"}'\n", res.Listen, a.Address)
 	}
 
 	select {
