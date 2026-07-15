@@ -6,13 +6,23 @@
 [![Release](https://img.shields.io/github/v/release/okedeji/mcpvessel?include_prereleases&sort=semver)](https://github.com/okedeji/mcpvessel/releases)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 
+An MCP server runs as a subprocess with your full user permissions. The protocol does not sandbox it, so an installed server can:
+
+- read your SSH keys, cloud credentials, and `.env` files
+- run arbitrary commands on your machine
+- send any of it anywhere
+
+This is not theoretical. [CVE-2025-6514](https://nvd.nist.gov/vuln/detail/CVE-2025-6514) (rated critical) is host remote code execution from connecting to an untrusted server, and audits keep finding thousands of vulnerable public servers. Safe today does not mean safe after the next update.
+
+mcpvessel runs each MCP server in an isolated container instead:
+
+- no access to your host or files
+- no outbound network unless you allow it
+- no provider keys inside the sandbox
+
+It brings its own runtime, so there is no Docker or container engine to install. It can also compose several caged servers into a single LLM agent and distribute them over an OCI registry, both covered below.
+
 <!-- DEMO GIF GOES HERE: docs/demo.gif -- the 30-second "malicious server tries to steal keys, gets blocked" recording -->
-
-An MCP server runs as a subprocess with your full user permissions. Nothing in the protocol sandboxes it, so a server you install can read your SSH keys, your cloud credentials, and your `.env` files, run commands on your machine, and send any of it anywhere. This is not hypothetical: connecting to an untrusted MCP server has already produced remote code execution on the host ([CVE-2025-6514](https://nvd.nist.gov/vuln/detail/CVE-2025-6514), rated critical), and audits keep finding thousands of public servers with exploitable flaws. A server that is safe today can also ship a malicious update tomorrow, so vetting one once is not enough.
-
-mcpvessel runs MCP servers in isolated containers instead: no host access, no outbound network unless you allow it, and no provider keys inside the sandbox. It brings its own runtime, so there is no Docker or container engine to install. The same tool can also compose several caged servers into an LLM agent and distribute them over an OCI registry, both covered below.
-
-> **Status: pre-1.0** (`v0.1.0-rc.x`). It works, but the CLI surface may still change between releases. Pin a release if you need something stable. See [supported versions](SECURITY.md#supported-versions).
 
 ## Contents
 
@@ -38,12 +48,20 @@ brew install --cask okedeji/tap/mcpvessel
 mcpvessel init
 ```
 
-Take a real MCP server, GitHub's, and put it behind a caged endpoint. It needs a token, so store that first (read from stdin, never on the command line):
+Try it in one command. This pulls mcpvessel's own docs as a signed MCP server and runs it caged, no token, no config:
+
+```sh
+mcpvessel serve --listen 127.0.0.1:7000 io.github.okedeji/mcpvessel-docs
+# point your MCP client at http://127.0.0.1:7000/mcp and ask it anything about mcpvessel
+```
+
+Caging a server of your own works the same way, whichever server it is. The example below uses GitHub's, because it carries a real token the cage must keep from leaking. Three steps: store the token, wrap the server, expose it on one URL:
 
 ```sh
 mcpvessel secrets set GITHUB_PERSONAL_ACCESS_TOKEN
-mcpvessel import io.github.github/github-mcp-server --secret GITHUB_PERSONAL_ACCESS_TOKEN --dir ./github
-mcpvessel serve --listen 127.0.0.1:7000 --secret GITHUB_PERSONAL_ACCESS_TOKEN --egress api.github.com ./github
+# Value: <paste the token; typing stays hidden. Or pipe it: mcpvessel secrets set NAME < token.txt>
+mcpvessel import io.github.github/github-mcp-server --secret GITHUB_PERSONAL_ACCESS_TOKEN
+mcpvessel serve --listen 127.0.0.1:7000 --secret GITHUB_PERSONAL_ACCESS_TOKEN --egress api.github.com ./github-mcp-server
 ```
 
 That prints one URL. Point Claude, Cursor, or any MCP client at it:
@@ -57,7 +75,7 @@ All of GitHub's tools appear on that URL, and your client calls them exactly as 
 Not sure which hosts a server needs? Run it in audit mode and mcpvessel prints the exact line to allow:
 
 ```sh
-mcpvessel observe --secret GITHUB_PERSONAL_ACCESS_TOKEN ./github
+mcpvessel observe --secret GITHUB_PERSONAL_ACCESS_TOKEN ./github-mcp-server
 # exercise it through your client, then it reports:
 #   Observed egress:
 #     EGRESS allow:api.github.com
@@ -66,12 +84,15 @@ mcpvessel observe --secret GITHUB_PERSONAL_ACCESS_TOKEN ./github
 Put several servers behind the same endpoint by importing more and serving them together, each in its own container with no route to the others:
 
 ```sh
-mcpvessel import pypi:mcp-server-time --dir ./time
+mcpvessel import pypi:mcp-server-time
 mcpvessel serve --listen 127.0.0.1:7000 \
-  --secret GITHUB_PERSONAL_ACCESS_TOKEN --egress github:api.github.com ./github ./time
+  --secret GITHUB_PERSONAL_ACCESS_TOKEN --egress github-mcp-server:api.github.com \
+  ./github-mcp-server ./mcp-server-time
 ```
 
-Every server's tools appear together on that single URL. `--egress github:...` scopes the allowance to the one server that needs it; the time server gets no network, since it needs none. It accepts any MCP server from npm, PyPI, or a container image, whether or not it is in a registry.
+Every server's tools appear together on that single URL. `--egress github-mcp-server:...` scopes the allowance to the one server that needs it; the time server gets no network, since it needs none.
+
+mcpvessel accepts any MCP server from npm, PyPI, or a container image, whether or not it is in a registry. If it runs as an MCP server, it can be caged.
 
 ## Give it a brain
 
@@ -128,9 +149,9 @@ It is signed on push and verified on pull, so they run exactly what you built, c
 
 Three things, and they are the whole point.
 
-**No network unless you allow it.** A caged server starts with the internet switched off. If it genuinely needs to reach `api.github.com`, you say so, and that becomes the only place it can go. It can't phone home, and it can't ship your data anywhere you didn't approve.
+**No network beyond the allowlist.** A caged server starts with the internet switched off. Hosts get onto its allowlist exactly two ways: you pass `--egress`, or the bundle's author baked them into its manifest. Either way that list is the whole world the server can reach: `serve` and `run` print it before any traffic flows, and `mcpvessel inspect` shows a bundle's baked hosts before you ever run it. It can't phone home to anywhere that is not on the list.
 
-**Your keys can't leak out.** A server that needs a credential to do its job, a GitHub token or a database password, gets only the ones it declared, and nothing else. It can use that key to reach the one API you allowed, but it can't send the key, or your data, anywhere else. Reaching an unknown server is off by default, and it stays off until you deliberately turn it on.
+**Your keys can't leak out.** A server that needs a credential to do its job, a GitHub token or a database password, gets only the ones you explicitly grant with `--secret`, and nothing else. Declaring a secret never auto-pulls it from your store or environment; the grant is yours, per run, every time. Inside the cage it can use that key against the hosts on its allowlist, but it can't send the key, or your data, anywhere else.
 
 **Each server is on its own.** Caged servers can't see each other, and they can't see your host. One bad server can't reach the good ones sitting next to it.
 
