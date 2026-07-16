@@ -14,6 +14,42 @@ import (
 	"github.com/okedeji/mcpvessel/internal/wrap"
 )
 
+func TestResolveSystemPrompt(t *testing.T) {
+	// Inline prompt passes through.
+	if got, err := resolveSystemPrompt("be terse", ""); err != nil || got != "be terse" {
+		t.Errorf("inline = %q, %v; want the prompt", got, err)
+	}
+	// No prompt at all is fine (harness uses its internal prompt alone).
+	if got, err := resolveSystemPrompt("", ""); err != nil || got != "" {
+		t.Errorf("none = %q, %v; want empty", got, err)
+	}
+	// Both at once is refused.
+	if _, err := resolveSystemPrompt("x", "y"); err == nil {
+		t.Error("want an error when both --prompt and --prompt-file are given")
+	}
+
+	// A file preserves multi-line content, trimmed.
+	dir := t.TempDir()
+	file := filepath.Join(dir, "prompt.md")
+	if err := os.WriteFile(file, []byte("\nYou are an SRE.\nEscalate P1s.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := resolveSystemPrompt("", file)
+	if err != nil {
+		t.Fatalf("prompt-file: %v", err)
+	}
+	if got != "You are an SRE.\nEscalate P1s." {
+		t.Errorf("prompt-file = %q, want the multi-line prompt trimmed", got)
+	}
+
+	// An empty file is a mistake, not a silent no-prompt.
+	empty := filepath.Join(dir, "empty.md")
+	_ = os.WriteFile(empty, []byte("   \n"), 0o644)
+	if _, err := resolveSystemPrompt("", empty); err == nil {
+		t.Error("want an error for an empty --prompt-file")
+	}
+}
+
 func TestResolveImportSource_DirectCoordinate(t *testing.T) {
 	src, err := resolveImportSource(context.Background(), "npm:@modelcontextprotocol/server-filesystem@1.0")
 	if err != nil {

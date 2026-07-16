@@ -16,6 +16,7 @@ import (
 // without booting a container.
 type managedSession interface {
 	Call(ctx context.Context, tool string, args map[string]any) (string, error)
+	CallStream(ctx context.Context, tool string, args map[string]any, onProgress mcp.ProgressHandler) (string, error)
 	BindElicit(target mcp.ElicitHandler) func()
 	RunID() string
 	Release() error

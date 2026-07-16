@@ -108,6 +108,14 @@ func (s *Session) Call(ctx context.Context, tool string, args map[string]any) (s
 	return s.root.CallTool(ctx, tool, args)
 }
 
+// CallStream is Call with a progress sink: an agent that reports progress
+// mid-call streams it to onProgress, and the return value is still the whole
+// result. The serve REST SSE path uses this; other callers use Call and pass
+// no token, so an agent's progress notifications are simply not requested.
+func (s *Session) CallStream(ctx context.Context, tool string, args map[string]any, onProgress mcp.ProgressHandler) (string, error) {
+	return s.root.CallToolStream(ctx, tool, args, onProgress)
+}
+
 // BindElicit installs target as the operator's answer channel for one call and
 // returns a release. With no router it returns a no-op.
 func (s *Session) BindElicit(target mcp.ElicitHandler) func() {

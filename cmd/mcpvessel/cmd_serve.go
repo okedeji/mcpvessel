@@ -131,6 +131,7 @@ shuts down.`,
 			_, _ = fmt.Fprintln(out, "Plain HTTP on the same port:")
 			_, _ = fmt.Fprintln(out, "  POST /agents/<name>/tools/<tool>  call a tool with JSON args")
 			_, _ = fmt.Fprintln(out, "  POST /agents/<name>               prompt an agent with {\"prompt\": ...}")
+			_, _ = fmt.Fprintln(out, "  add {\"stream\": true} (or Accept: text/event-stream) for SSE answer chunks")
 			return nil
 		},
 	}

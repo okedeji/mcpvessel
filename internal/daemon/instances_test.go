@@ -16,6 +16,9 @@ type fakeSession struct {
 	released atomic.Bool
 }
 
+func (f *fakeSession) CallStream(context.Context, string, map[string]any, mcp.ProgressHandler) (string, error) {
+	return "", nil
+}
 func (f *fakeSession) Call(context.Context, string, map[string]any) (string, error) {
 	return f.id, nil
 }

@@ -29,7 +29,7 @@ import (
 func newImportCmd() *cobra.Command {
 	var dir, tag, entrypoint, progressFlag string
 	var reasoning, noReuse bool
-	var model, prompt, reasonerPath string
+	var model, prompt, promptFile, reasonerPath string
 	var envFlags, secretFlags []string
 	var envFile, secretFile string
 	var egressFlags []string
@@ -91,13 +91,17 @@ tools: a single brain reasoning across every server.`,
 				if entrypoint != "" && len(args) > 1 {
 					return fmt.Errorf("--entrypoint applies to a single SOURCE; give a multi-source launch inline as \"oci:img -- cmd args\"")
 				}
+				systemPrompt, err := resolveSystemPrompt(prompt, promptFile)
+				if err != nil {
+					return err
+				}
 				return buildReasoningImport(cmd, reasoningParams{
 					sources:    args,
 					entrypoint: entrypoint,
 					parentDir:  dir,
 					agentTag:   tag,
 					model:      model,
-					prompt:     prompt,
+					prompt:     systemPrompt,
 					harness:    reasonerPath,
 					mode:       mode,
 					noReuse:    noReuse,
@@ -142,7 +146,8 @@ tools: a single brain reasoning across every server.`,
 	cmd.Flags().BoolVar(&reasoning, "reasoning", false, "compose the SOURCEs under one reasoning agent that answers prompts over their tools")
 	cmd.Flags().BoolVar(&noReuse, "no-reuse", false, "with --reasoning, wrap a fresh tool collection instead of reusing an existing wrapper of the same server")
 	cmd.Flags().StringVar(&model, "model", "", "pin the reasoning agent's provider/model (default: defer to your configured default)")
-	cmd.Flags().StringVar(&prompt, "prompt", "", "the reasoning agent's system prompt (default: a generic tool-using prompt)")
+	cmd.Flags().StringVar(&prompt, "prompt", "", "the reasoning agent's system prompt, appended to the harness's built-in prompt (default: none)")
+	cmd.Flags().StringVar(&promptFile, "prompt-file", "", "read the reasoning agent's system prompt from a file, for a multi-line prompt (mutually exclusive with --prompt)")
 	cmd.Flags().StringVar(&reasonerPath, "reasoner", "", "path to a custom reasoning harness .py to use instead of the built-in one")
 	cmd.Flags().StringArrayVar(&envFlags, "env", nil, "supply an env value for a server that needs one to start: KEY=VALUE, or KEY to pass it through from your environment (repeatable)")
 	cmd.Flags().StringVar(&envFile, "env-file", "", "read env values (KEY=VALUE per line) from a file")
@@ -585,7 +590,39 @@ func writeReasoningAgent(dir string, params reasoner.Params, harnessPath string)
 	if err := os.WriteFile(filepath.Join(dir, reasoner.HarnessFileName), harness, 0o644); err != nil {
 		return fmt.Errorf("writing %s: %w", reasoner.HarnessFileName, err)
 	}
+	// The operator prompt rides a file so it keeps newlines and any characters;
+	// the Vesselfile ENV only points the harness at it. Written only when set,
+	// so the harness falls back to its internal prompt alone.
+	if params.SystemPrompt != "" {
+		promptFile := filepath.Join(dir, reasoner.SystemPromptFileName)
+		if err := os.WriteFile(promptFile, []byte(params.SystemPrompt), 0o644); err != nil {
+			return fmt.Errorf("writing %s: %w", reasoner.SystemPromptFileName, err)
+		}
+	}
 	return nil
+}
+
+// resolveSystemPrompt returns the operator's system prompt from --prompt or
+// --prompt-file, refusing both at once. The prompt is the agent's identity, so
+// it is set here at build time and baked into the bundle, not passed per run;
+// a file lets the author write a real multi-line prompt. The harness appends
+// whatever is returned to its own built-in prompt.
+func resolveSystemPrompt(prompt, promptFile string) (string, error) {
+	if prompt != "" && promptFile != "" {
+		return "", fmt.Errorf("--prompt and --prompt-file are mutually exclusive; use one")
+	}
+	if promptFile == "" {
+		return prompt, nil
+	}
+	data, err := os.ReadFile(promptFile)
+	if err != nil {
+		return "", fmt.Errorf("reading --prompt-file: %w", err)
+	}
+	text := strings.TrimSpace(string(data))
+	if text == "" {
+		return "", fmt.Errorf("--prompt-file %s is empty", promptFile)
+	}
+	return text, nil
 }
 
 // resolveImportSource parses a direct coordinate as-is; anything else resolves

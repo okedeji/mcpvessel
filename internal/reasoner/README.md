@@ -32,11 +32,38 @@ sub-agents expose a tool of the same name.
 `model` and any api key; the LLM gateway holds the real provider key, rewrites
 the `model` field to the operator's configured default, meters spend against the
 run's budget, and forwards `tools`/`tool_choice` untouched, so native
-function-calling works. A reasoner never sees or needs a provider key.
+function-calling works. A reasoner never sees or needs a provider key. The
+endpoint speaks streaming too (`stream: true`), so a long completion does not
+risk a read timeout and cost meters incrementally.
+
+**Streaming (optional).** A REST caller can ask `mcpvessel serve` for
+Server-Sent Events (`{"stream": true}` in the body, or `Accept:
+text/event-stream`). serve sets an MCP progress token on the tool call and
+turns the agent's progress notifications into SSE `delta` events, with a final
+`done` carrying the whole result. To participate, emit `notifications/progress`
+carrying each answer chunk in `message` during your tool call (this harness
+does, via `ctx.report_progress`); FastMCP sends them only when the caller set a
+token, so `run`, `call`, and non-streaming callers see no change. An agent that
+emits none still works: the caller just gets one `done` event. So streaming is a
+capability an agent opts into, not a mcpvessel-reasoner special case.
 
 **Operator knobs.** Read configuration from non-`VESSEL_`-prefixed names; the
 Vesselfile parser reserves that prefix for the runtime's own injected variables.
-This harness uses `REASONER_SYSTEM_PROMPT` and `REASONER_MAX_TURNS`.
+This harness reads `REASONER_MAX_TURNS`, `REASONER_MAX_RETRIES`, and
+`REASONER_MAX_TOOL_CHARS`, and takes the operator's system prompt from
+`REASONER_SYSTEM_PROMPT_FILE` (a file COPY'd into the image) or, as a fallback,
+an inline `REASONER_SYSTEM_PROMPT`.
+
+## The system prompt
+
+The harness ships with a robust built-in prompt (tool-use discipline, no
+fabricated results, honest uncertainty). The agent's author sets an additional
+prompt at build time, which the harness appends to the built-in one, never
+replacing it. Set it with `import --reasoning --prompt "..."` or, for a real
+multi-line prompt, `--prompt-file ./prompt.md`. It lands in the generated agent
+as `system_prompt.txt`, a plain file you can edit and rebuild. The prompt is the
+agent's identity, so it is baked into the bundle and travels with `push`/`pull`,
+not passed per run.
 
 ## One rule that is not optional
 

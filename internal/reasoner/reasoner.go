@@ -17,6 +17,16 @@ var harness []byte
 // HarnessFileName is the harness's filename in a generated agent.
 const HarnessFileName = "reasoner.py"
 
+// SystemPromptFileName is where the operator's --prompt lands in a generated
+// agent: a plain file COPY'd into the image, so the prompt can be multi-line
+// and hold any characters, unlike a single-line ENV. The harness reads it via
+// REASONER_SYSTEM_PROMPT_FILE and appends it to its internal prompt.
+const SystemPromptFileName = "system_prompt.txt"
+
+// systemPromptEnv names the file for the harness. Not a VESSEL_ name: the
+// Vesselfile parser reserves that prefix for the runtime's injected variables.
+const systemPromptEnv = "REASONER_SYSTEM_PROMPT_FILE"
+
 // HarnessSource is the reasoning-loop source written into a generated agent.
 func HarnessSource() []byte { return harness }
 
@@ -59,9 +69,10 @@ func Vesselfile(p Params) (string, error) {
 		lines = append(lines, "USES "+ref)
 	}
 	if p.SystemPrompt != "" {
-		// Not an VESSEL_ name: the parser reserves that prefix for the
-		// runtime's own injected variables.
-		lines = append(lines, "ENV REASONER_SYSTEM_PROMPT="+strings.ReplaceAll(p.SystemPrompt, "\n", " "))
+		// The value rides a file COPY'd into the image, not this ENV, so it
+		// keeps its newlines and needs no Dockerfile escaping. The caller
+		// writes SystemPromptFileName; here we only point the harness at it.
+		lines = append(lines, "ENV "+systemPromptEnv+"="+SystemPromptFileName)
 	}
 	// Exec form so the reasoner needs no shell in its base image, matching the
 	// wrapped tool collections it composes.

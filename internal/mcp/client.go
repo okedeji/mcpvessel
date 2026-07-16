@@ -2,9 +2,12 @@ package mcp
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
+	"sync"
 	"time"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -20,7 +23,59 @@ const connectRetryInterval = 100 * time.Millisecond
 // Client is an open MCP session against a single agent process. Close it
 // to release the session goroutines and stream readers.
 type Client struct {
-	session *mcpsdk.ClientSession
+	session  *mcpsdk.ClientSession
+	progress *progressRouter
+}
+
+// ProgressChunk is one MCP progress notification an agent emits mid-call: the
+// message text (an answer token or a status line) and any structured metadata.
+type ProgressChunk struct {
+	Message string
+	Meta    map[string]any
+}
+
+// ProgressHandler receives an in-flight call's progress chunks in order.
+type ProgressHandler func(ProgressChunk)
+
+// progressRouter fans a session's progress notifications to the right in-flight
+// call. Notifications are session-wide but carry the call's progress token, so
+// concurrent streamed calls on one shared session never cross streams.
+type progressRouter struct {
+	mu       sync.Mutex
+	handlers map[string]ProgressHandler
+}
+
+func newProgressRouter() *progressRouter {
+	return &progressRouter{handlers: map[string]ProgressHandler{}}
+}
+
+func (r *progressRouter) register(token string, h ProgressHandler) {
+	r.mu.Lock()
+	r.handlers[token] = h
+	r.mu.Unlock()
+}
+
+func (r *progressRouter) unregister(token string) {
+	r.mu.Lock()
+	delete(r.handlers, token)
+	r.mu.Unlock()
+}
+
+func (r *progressRouter) dispatch(token string, chunk ProgressChunk) {
+	r.mu.Lock()
+	h := r.handlers[token]
+	r.mu.Unlock()
+	if h != nil {
+		h(chunk)
+	}
+}
+
+func newProgressToken() string {
+	var b [12]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return fmt.Sprintf("p%d", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b[:])
 }
 
 // ElicitRequest is a question an agent raises mid-call: a message and,
@@ -56,20 +111,26 @@ func WithElicitation(h ElicitHandler) Option {
 	return func(o *options) { o.onElicit = h }
 }
 
-// clientOptions returns nil when nothing is set: the SDK auto-advertises
-// elicitation the moment an ElicitationHandler is non-nil, so one is wired
-// only when the caller asked.
-func clientOptions(opts []Option) *mcpsdk.ClientOptions {
+// clientOptions wires the progress router (always, so any call can stream) and
+// the elicitation handler (only when the caller asked, since the SDK
+// auto-advertises elicitation the moment ElicitationHandler is non-nil).
+func clientOptions(router *progressRouter, opts []Option) *mcpsdk.ClientOptions {
 	var o options
 	for _, opt := range opts {
 		opt(&o)
 	}
-	if o.onElicit == nil {
-		return nil
+	co := &mcpsdk.ClientOptions{
+		ProgressNotificationHandler: func(_ context.Context, req *mcpsdk.ProgressNotificationClientRequest) {
+			token, _ := req.Params.ProgressToken.(string)
+			if token == "" {
+				return
+			}
+			router.dispatch(token, ProgressChunk{Message: req.Params.Message, Meta: req.Params.Meta})
+		},
 	}
-	h := o.onElicit
-	return &mcpsdk.ClientOptions{
-		ElicitationHandler: func(ctx context.Context, req *mcpsdk.ElicitRequest) (*mcpsdk.ElicitResult, error) {
+	if o.onElicit != nil {
+		h := o.onElicit
+		co.ElicitationHandler = func(ctx context.Context, req *mcpsdk.ElicitRequest) (*mcpsdk.ElicitResult, error) {
 			res, err := h(ctx, &ElicitRequest{
 				Message: req.Params.Message,
 				Schema:  schemaToMap(req.Params.RequestedSchema),
@@ -78,18 +139,20 @@ func clientOptions(opts []Option) *mcpsdk.ClientOptions {
 				return nil, err
 			}
 			return &mcpsdk.ElicitResult{Action: res.Action, Content: res.Content}, nil
-		},
+		}
 	}
+	return co
 }
 
 // Connect establishes an MCP session over a stdio pair: reader is the
 // agent's stdout, writer its stdin. The caller owns both streams. The MCP
 // initialize handshake completes before Connect returns.
 func Connect(ctx context.Context, reader io.Reader, writer io.Writer, opts ...Option) (*Client, error) {
+	router := newProgressRouter()
 	c := mcpsdk.NewClient(&mcpsdk.Implementation{
 		Name:    identity.Name,
 		Version: identity.Version,
-	}, clientOptions(opts))
+	}, clientOptions(router, opts))
 	session, err := c.Connect(ctx, &mcpsdk.IOTransport{
 		Reader: io.NopCloser(reader),
 		Writer: nopWriteCloser{writer},
@@ -97,7 +160,7 @@ func Connect(ctx context.Context, reader io.Reader, writer io.Writer, opts ...Op
 	if err != nil {
 		return nil, fmt.Errorf("mcp connect: %w", err)
 	}
-	return &Client{session: session}, nil
+	return &Client{session: session, progress: router}, nil
 }
 
 // ConnectHTTP establishes an MCP session against an agent serving
@@ -106,14 +169,15 @@ func Connect(ctx context.Context, reader io.Reader, writer io.Writer, opts ...Op
 // its port yet, so the handshake is retried until it succeeds or ctx is
 // done; connection-refused fails fast, so ctx bounds the wait.
 func ConnectHTTP(ctx context.Context, endpoint string, opts ...Option) (*Client, error) {
+	router := newProgressRouter()
 	c := mcpsdk.NewClient(&mcpsdk.Implementation{
 		Name:    identity.Name,
 		Version: identity.Version,
-	}, clientOptions(opts))
+	}, clientOptions(router, opts))
 	for {
 		session, err := c.Connect(ctx, &mcpsdk.StreamableClientTransport{Endpoint: endpoint}, nil)
 		if err == nil {
-			return &Client{session: session}, nil
+			return &Client{session: session, progress: router}, nil
 		}
 		select {
 		case <-ctx.Done():
@@ -193,6 +257,29 @@ func (c *Client) CallTool(ctx context.Context, name string, args any) (string, e
 		Name:      name,
 		Arguments: args,
 	})
+	if err != nil {
+		return "", fmt.Errorf("mcp tools/call %s: %w", name, err)
+	}
+	if res.IsError {
+		return "", fmt.Errorf("mcp tools/call %s: tool returned an error: %s", name, firstText(res.Content))
+	}
+	return firstText(res.Content), nil
+}
+
+// CallToolStream is CallTool with a progress token attached, so an agent that
+// reports progress mid-call streams it to onProgress in order. The final
+// result is still the complete text, exactly as CallTool returns it, so a
+// caller can render chunks live and rely on the return value for the whole
+// answer. onProgress runs on the session's read goroutine, so it must not
+// block; the serve layer hands off to a buffered writer.
+func (c *Client) CallToolStream(ctx context.Context, name string, args any, onProgress ProgressHandler) (string, error) {
+	token := newProgressToken()
+	c.progress.register(token, onProgress)
+	defer c.progress.unregister(token)
+
+	params := &mcpsdk.CallToolParams{Name: name, Arguments: args}
+	params.SetProgressToken(token)
+	res, err := c.session.CallTool(ctx, params)
 	if err != nil {
 		return "", fmt.Errorf("mcp tools/call %s: %w", name, err)
 	}

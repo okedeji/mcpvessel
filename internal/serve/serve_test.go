@@ -26,6 +26,139 @@ func staticAgent(addr string, tools []mcp.Tool, call func(context.Context, strin
 	}
 }
 
+// streamingAgent replays fixed chunks through CallStream, then returns the
+// joined text, so the SSE path can be exercised without a real cage.
+func streamingAgent(addr, main string, chunks []string) Agent {
+	full := strings.Join(chunks, "")
+	stream := func(_ context.Context, _ string, _ map[string]any, onProgress mcp.ProgressHandler) (string, error) {
+		for _, c := range chunks {
+			onProgress(mcp.ProgressChunk{Message: c})
+		}
+		return full, nil
+	}
+	call := func(context.Context, string, map[string]any) (string, error) { return full, nil }
+	return Agent{
+		Address: addr,
+		Main:    main,
+		Tools:   []mcp.Tool{{Name: main, Schema: map[string]any{"type": "object"}}},
+		Resolve: func(context.Context, string) (Target, func(), error) {
+			return Target{Call: call, CallStream: stream}, func() {}, nil
+		},
+	}
+}
+
+// sseEvents parses an SSE body into (event, data) pairs, skipping heartbeats.
+func sseEvents(body string) [][2]string {
+	var out [][2]string
+	for _, block := range strings.Split(body, "\n\n") {
+		var ev, data string
+		for _, line := range strings.Split(block, "\n") {
+			switch {
+			case strings.HasPrefix(line, "event: "):
+				ev = strings.TrimPrefix(line, "event: ")
+			case strings.HasPrefix(line, "data: "):
+				data = strings.TrimPrefix(line, "data: ")
+			}
+		}
+		if ev != "" {
+			out = append(out, [2]string{ev, data})
+		}
+	}
+	return out
+}
+
+func TestHandler_PromptStreamsSSEChunks(t *testing.T) {
+	agent := streamingAgent("oncall", "respond", []string{"The top ", "error is ", "a null deref."})
+	srv := httptest.NewServer(Handler([]Agent{agent}, nil))
+	defer srv.Close()
+
+	// Opt in via the body field.
+	resp, err := http.Post(srv.URL+"/agents/oncall", "application/json",
+		strings.NewReader(`{"prompt":"what broke","stream":true}`))
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/event-stream") {
+		t.Fatalf("content-type = %q, want text/event-stream", ct)
+	}
+	raw, _ := io.ReadAll(resp.Body)
+	events := sseEvents(string(raw))
+
+	var deltas []string
+	var done string
+	for _, e := range events {
+		switch e[0] {
+		case "delta":
+			var d struct{ Text string }
+			_ = json.Unmarshal([]byte(e[1]), &d)
+			deltas = append(deltas, d.Text)
+		case "done":
+			var d struct{ Result string }
+			_ = json.Unmarshal([]byte(e[1]), &d)
+			done = d.Result
+		}
+	}
+	if strings.Join(deltas, "") != "The top error is a null deref." {
+		t.Errorf("delta stream = %q, want the joined chunks", strings.Join(deltas, ""))
+	}
+	if done != "The top error is a null deref." {
+		t.Errorf("done result = %q, want the full answer", done)
+	}
+}
+
+func TestHandler_DefaultPromptStaysJSON(t *testing.T) {
+	agent := streamingAgent("oncall", "respond", []string{"hi"})
+	srv := httptest.NewServer(Handler([]Agent{agent}, nil))
+	defer srv.Close()
+
+	// No opt-in: the classic one-JSON response, unchanged.
+	resp, err := http.Post(srv.URL+"/agents/oncall", "application/json", strings.NewReader(`{"prompt":"x"}`))
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Fatalf("content-type = %q, want application/json", ct)
+	}
+	var body struct{ Result string }
+	_ = json.NewDecoder(resp.Body).Decode(&body)
+	if body.Result != "hi" {
+		t.Errorf("result = %q, want hi", body.Result)
+	}
+}
+
+func TestHandler_StreamDegradesWhenTargetHasNoCallStream(t *testing.T) {
+	// A target with only Call (a non-streaming agent) still yields valid SSE:
+	// a single done event, never an error.
+	call := func(context.Context, string, map[string]any) (string, error) { return "whole answer", nil }
+	agent := Agent{
+		Address: "plain", Main: "respond",
+		Tools: []mcp.Tool{{Name: "respond", Schema: map[string]any{"type": "object"}}},
+		Resolve: func(context.Context, string) (Target, func(), error) {
+			return Target{Call: call}, func() {}, nil
+		},
+	}
+	srv := httptest.NewServer(Handler([]Agent{agent}, nil))
+	defer srv.Close()
+
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/agents/plain", strings.NewReader(`{"prompt":"x"}`))
+	req.Header.Set("Accept", "text/event-stream") // opt in via header this time
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	raw, _ := io.ReadAll(resp.Body)
+	events := sseEvents(string(raw))
+	if len(events) != 1 || events[0][0] != "done" {
+		t.Fatalf("want exactly one done event, got %v", events)
+	}
+	if !strings.Contains(events[0][1], "whole answer") {
+		t.Errorf("done event missing the answer: %q", events[0][1])
+	}
+}
+
 func TestHandler_ListsAndCallsPublicTools(t *testing.T) {
 	var called string
 	agent := staticAgent("researcher",

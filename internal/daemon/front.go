@@ -253,7 +253,11 @@ func (d *Daemon) registerExposed(services []exposedService, cfg config.Serve, ob
 					res, err := session.Call(ctx, tool, args)
 					return res, enrichEgressError(err, d.denials.hosts(runID))
 				}
-				return serve.Target{Call: call, BindElicit: session.BindElicit}, release, nil
+				callStream := func(ctx context.Context, tool string, args map[string]any, onProgress mcp.ProgressHandler) (string, error) {
+					res, err := session.CallStream(ctx, tool, args, onProgress)
+					return res, enrichEgressError(err, d.denials.hosts(runID))
+				}
+				return serve.Target{Call: call, CallStream: callStream, BindElicit: session.BindElicit}, release, nil
 			},
 		})
 	}

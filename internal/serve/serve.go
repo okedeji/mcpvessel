@@ -11,6 +11,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -36,9 +38,11 @@ type Agent struct {
 
 // Target is one client instance a call dispatches into. BindElicit, when set,
 // binds the calling client as the agent's answer channel for the call's
-// duration.
+// duration. CallStream is Call with a progress sink, used by the REST SSE
+// path; when nil the SSE path falls back to Call and delivers one final event.
 type Target struct {
 	Call       func(ctx context.Context, tool string, args map[string]any) (string, error)
+	CallStream func(ctx context.Context, tool string, args map[string]any, onProgress mcp.ProgressHandler) (string, error)
 	BindElicit func(elicit mcp.ElicitHandler) (release func())
 }
 
@@ -167,6 +171,13 @@ func httpCallTool(w http.ResponseWriter, r *http.Request, a Agent, tool string) 
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	// The tool body is the tool's own arguments, so streaming is asked for out
+	// of band (Accept header or ?stream=), never a body field that would land
+	// in the arguments.
+	if wantsStream(r) {
+		httpInvokeStream(w, r, a, tool, args)
+		return
+	}
 	httpInvoke(w, r, a, tool, args)
 }
 
@@ -176,6 +187,7 @@ func httpPrompt(w http.ResponseWriter, r *http.Request, a Agent) {
 	var body struct {
 		Prompt   string           `json:"prompt"`
 		Messages []map[string]any `json:"messages"`
+		Stream   bool             `json:"stream"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && err != io.EOF {
 		writeJSONError(w, http.StatusBadRequest, "decoding request: "+err.Error())
@@ -191,7 +203,112 @@ func httpPrompt(w http.ResponseWriter, r *http.Request, a Agent) {
 		writeJSONError(w, http.StatusBadRequest, "provide a prompt or messages in the body")
 		return
 	}
+	// The prompt envelope is ours, so "stream": true in the body is a clean
+	// opt-in alongside the Accept header and query param.
+	if body.Stream || wantsStream(r) {
+		httpInvokeStream(w, r, a, a.Main, args)
+		return
+	}
 	httpInvoke(w, r, a, a.Main, args)
+}
+
+// wantsStream reports an out-of-band request for SSE: the streaming Accept
+// header (what an EventSource sends) or ?stream=true|1.
+func wantsStream(r *http.Request) bool {
+	if strings.Contains(r.Header.Get("Accept"), "text/event-stream") {
+		return true
+	}
+	switch strings.ToLower(r.URL.Query().Get("stream")) {
+	case "1", "true", "yes":
+		return true
+	}
+	return false
+}
+
+// sseHeartbeat is how often an idle stream sends an SSE comment, so a proxy or
+// client does not time out during a long tool-call phase that emits no deltas.
+const sseHeartbeat = 15 * time.Second
+
+// httpInvokeStream answers over Server-Sent Events: `delta` events carry answer
+// chunks as the agent generates them, a final `done` event carries the whole
+// result, and `error` carries a failure. An agent that reports no progress (or
+// a target with no streaming path) still works, delivering one `done`. The
+// event vocabulary is documented in the reasoner contract, so any agent that
+// emits MCP progress notifications streams here for free.
+func httpInvokeStream(w http.ResponseWriter, r *http.Request, a Agent, tool string, args map[string]any) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		// No flushing means no live stream; fall back to one JSON object rather
+		// than buffer an SSE body the caller only sees at the end.
+		httpInvoke(w, r, a, tool, args)
+		return
+	}
+	target, release, err := a.Resolve(r.Context(), httpSessionID)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer release()
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.WriteHeader(http.StatusOK)
+	flusher.Flush()
+
+	// One writer at a time: progress arrives on the session's read goroutine,
+	// the heartbeat on a ticker goroutine, and the terminal event on this one.
+	var mu sync.Mutex
+	writeEvent := func(event string, data any) {
+		b, _ := json.Marshal(data)
+		mu.Lock()
+		_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, b)
+		flusher.Flush()
+		mu.Unlock()
+	}
+
+	stop := make(chan struct{})
+	go func() {
+		t := time.NewTicker(sseHeartbeat)
+		defer t.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-t.C:
+				mu.Lock()
+				_, _ = fmt.Fprint(w, ": keepalive\n\n")
+				flusher.Flush()
+				mu.Unlock()
+			}
+		}
+	}()
+	defer close(stop)
+
+	// A target with no streaming path (or an agent that emits no progress)
+	// still yields a valid stream: one final `done` with the whole answer.
+	if target.CallStream == nil {
+		text, err := target.Call(r.Context(), tool, args)
+		if err != nil {
+			writeEvent("error", map[string]any{"error": err.Error()})
+			return
+		}
+		writeEvent("done", map[string]any{"result": text})
+		return
+	}
+
+	onProgress := func(chunk mcp.ProgressChunk) {
+		if chunk.Message == "" {
+			return
+		}
+		writeEvent("delta", map[string]any{"text": chunk.Message})
+	}
+	text, err := target.CallStream(r.Context(), tool, args, onProgress)
+	if err != nil {
+		writeEvent("error", map[string]any{"error": err.Error()})
+		return
+	}
+	writeEvent("done", map[string]any{"result": text})
 }
 
 // httpInvoke resolves the agent's shared HTTP instance and calls tool. It binds
