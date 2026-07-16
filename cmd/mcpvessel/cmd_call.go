@@ -12,7 +12,6 @@ import (
 
 	"github.com/okedeji/mcpvessel/internal/bundle"
 	"github.com/okedeji/mcpvessel/internal/daemon"
-	"github.com/okedeji/mcpvessel/internal/locate"
 )
 
 func newCallCmd() *cobra.Command {
@@ -24,8 +23,9 @@ func newCallCmd() *cobra.Command {
 'mcpvessel run' does. Use it for tool collections (no MAIN) or to hit a specific
 tool on an agent directly.
 
-BUNDLE is a reference (resolved store-first, then pulled), a content hash from
-an untagged build, or a path to a .agent file, the same as 'mcpvessel run'.
+BUNDLE is a source directory (built first, like 'mcpvessel serve'), a reference
+(resolved store-first, then pulled), a content hash from an untagged build, or a
+path to a .agent file, the same as 'mcpvessel run'.
 
 A tool is callable only if the Vesselfile EXPOSEs it; MAIN is implicitly public.
 Tools the agent serves over MCP but does not EXPOSE stay private.`,
@@ -33,13 +33,13 @@ Tools the agent serves over MCP but does not EXPOSE stay private.`,
   mcpvessel call researcher.agent fetch_paper --arg doi=10.1234/x.2026`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			b, err := locate.Bundle(cmd.Context(), args[0])
+			t, err := resolveLocalTarget(cmd.Context(), cmd.ErrOrStderr(), args[0])
 			if err != nil {
 				return err
 			}
 			toolName := args[1]
 
-			manifest, err := bundle.ReadManifest(b.Path)
+			manifest, err := bundle.ReadManifest(t.Path)
 			if err != nil {
 				return err
 			}
@@ -56,7 +56,7 @@ Tools the agent serves over MCP but does not EXPOSE stay private.`,
 				return err
 			}
 			result, err := daemon.Dial(socket).RunOnce(cmd.Context(), daemon.RunRequest{
-				Ref:  args[0],
+				Ref:  t.Ref,
 				Tool: toolName,
 				Args: toolArgs,
 			}, cmd.ErrOrStderr())

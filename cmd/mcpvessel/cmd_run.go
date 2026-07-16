@@ -13,7 +13,6 @@ import (
 	"github.com/okedeji/mcpvessel/internal/config"
 	"github.com/okedeji/mcpvessel/internal/daemon"
 	"github.com/okedeji/mcpvessel/internal/egress"
-	"github.com/okedeji/mcpvessel/internal/locate"
 	"github.com/okedeji/mcpvessel/internal/runtime"
 	"github.com/okedeji/mcpvessel/internal/secrets"
 )
@@ -28,9 +27,10 @@ func newRunCmd() *cobra.Command {
 		Short: "Run an agent (routes the prompt to its MAIN tool)",
 		Long: `Run an agent and print its response.
 
-BUNDLE is a reference ('mcpvessel build -t' put it in the store), the content
-hash an untagged build printed, or a path to a .agent file. A reference resolves
-store-first and is pulled from the registry only when the store does not hold it.
+BUNDLE is a source directory (built first, like 'mcpvessel serve'), a reference
+('mcpvessel build -t' put it in the store), the content hash an untagged build
+printed, or a path to a .agent file. A reference resolves store-first and is
+pulled from the registry only when the store does not hold it.
 mcpvessel builds the image on first use, starts a container, and routes the
 prompt to the tool the Vesselfile declared as MAIN.
 
@@ -43,7 +43,7 @@ A bundle with no MAIN is a tool collection. Call one of its tools by name with
   mcpvessel run researcher.agent "summarize Q3 earnings"`,
 		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			b, err := locate.Bundle(cmd.Context(), args[0])
+			t, err := resolveLocalTarget(cmd.Context(), cmd.ErrOrStderr(), args[0])
 			if err != nil {
 				return err
 			}
@@ -52,12 +52,12 @@ A bundle with no MAIN is a tool collection. Call one of its tools by name with
 				prompt = args[1]
 			}
 
-			manifest, err := bundle.ReadManifest(b.Path)
+			manifest, err := bundle.ReadManifest(t.Path)
 			if err != nil {
 				return err
 			}
 			if manifest.Vesselfile.Main == "" {
-				return fmt.Errorf("bundle %s has no MAIN; it is a tool collection. Use 'mcpvessel call %s TOOL --arg KEY=VALUE' to call one of its tools directly", b.Display, args[0])
+				return fmt.Errorf("bundle %s has no MAIN; it is a tool collection. Use 'mcpvessel call %s TOOL --arg KEY=VALUE' to call one of its tools directly", t.Display, args[0])
 			}
 
 			// The prompt becomes a single-user-turn messages array, the
@@ -97,9 +97,9 @@ A bundle with no MAIN is a tool collection. Call one of its tools by name with
 			}
 			scoped := egress.ParseScoped(egressFlags)
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "egress: %s\n",
-				formatEgress(egress.AllowHosts(manifest.Vesselfile.Egress), egress.HostsFor(scoped, b.Name)))
+				formatEgress(egress.AllowHosts(manifest.Vesselfile.Egress), egress.HostsFor(scoped, t.Name)))
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "secrets: %s\n",
-				formatSecretGrants(manifest.Vesselfile.Secrets, manifest.Vesselfile.Optional, secretPool.For(b.Name)))
+				formatSecretGrants(manifest.Vesselfile.Secrets, manifest.Vesselfile.Optional, secretPool.For(t.Name)))
 			runtimeEgress := scoped
 			if save {
 				if err := saveEgress(cmd.Context(), cmd.ErrOrStderr(), args[:1], scoped, envPool, secretPool.Flatten()); err != nil {
@@ -108,7 +108,7 @@ A bundle with no MAIN is a tool collection. Call one of its tools by name with
 				runtimeEgress = nil
 			}
 			result, err := daemon.Dial(socket).RunOnce(cmd.Context(), daemon.RunRequest{
-				Ref:       args[0],
+				Ref:       t.Ref,
 				Tool:      manifest.Vesselfile.Main,
 				Args:      toolArgs,
 				Budget:    budgetMicros,
