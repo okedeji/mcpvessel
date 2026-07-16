@@ -176,6 +176,190 @@ func List() ([]Entry, error) {
 	return out, nil
 }
 
+// Removed reports what Remove deleted, so the caller can tell the operator
+// whether a bundle's bytes went with the reference or were kept because
+// another reference still points at them.
+type Removed struct {
+	Ref         string   // the reference removed; empty when a hash was given
+	Hash        string   // the bundle's files hash
+	RemovedRefs []string // references deleted (the one ref, or all refs of a hash)
+	BundleGone  bool     // whether the bundle file itself was deleted
+}
+
+// Remove deletes id from the store. A reference (@org/name:tag) removes that
+// tag, and the bundle's bytes with it when no other reference points at them.
+// A content hash (or unique prefix) removes the bundle and every reference to
+// it. It touches only the local store; a copy pushed to a registry is
+// untouched.
+func (s *Store) Remove(id string) (Removed, error) {
+	if looksLikeHash(id) {
+		return s.removeByHash(id)
+	}
+	ref, err := reference.Parse(id)
+	if err != nil {
+		return Removed{}, fmt.Errorf("%q is neither a store reference nor a content hash: %w", id, err)
+	}
+	return s.removeByRef(ref)
+}
+
+func (s *Store) removeByRef(ref reference.Reference) (Removed, error) {
+	if ref.Tag == "" {
+		return Removed{}, fmt.Errorf("removing a reference needs a version tag, %s has none", ref.Original)
+	}
+	path := s.refPath(ref)
+	hashBytes, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return Removed{}, fmt.Errorf("%s is not in the store", ref.Display())
+	}
+	if err != nil {
+		return Removed{}, fmt.Errorf("reading store ref %s: %w", ref.OCIRef(), err)
+	}
+	hash := strings.TrimSpace(string(hashBytes))
+	if err := os.Remove(path); err != nil {
+		return Removed{}, fmt.Errorf("removing store ref %s: %w", ref.OCIRef(), err)
+	}
+	s.pruneRefDirs(filepath.Dir(path))
+
+	res := Removed{Ref: ref.Display(), Hash: hash, RemovedRefs: []string{ref.Display()}}
+	// The bundle's bytes go only when nothing else points at them.
+	remaining, err := s.refsForHash(hash)
+	if err != nil {
+		return res, err
+	}
+	if len(remaining) == 0 {
+		gone, err := s.removeBundleFile(hash)
+		if err != nil {
+			return res, err
+		}
+		res.BundleGone = gone
+	}
+	return res, nil
+}
+
+func (s *Store) removeByHash(id string) (Removed, error) {
+	// store ls prints bare hex; FindByHash matches the sha256-prefixed
+	// filename, so a bare hash needs the algorithm prefix restored.
+	if !strings.HasPrefix(id, "sha256:") {
+		id = "sha256:" + id
+	}
+	path, ok, err := s.FindByHash(id)
+	if err != nil {
+		return Removed{}, err
+	}
+	if !ok {
+		return Removed{}, fmt.Errorf("no bundle with content hash %s in the store", id)
+	}
+	hash := unsanitizeHash(strings.TrimSuffix(filepath.Base(path), ".agent"))
+	refs, err := s.removeRefsForHash(hash)
+	if err != nil {
+		return Removed{}, err
+	}
+	if err := os.Remove(path); err != nil {
+		return Removed{}, fmt.Errorf("removing bundle %s: %w", shortHash(hash), err)
+	}
+	return Removed{Hash: hash, RemovedRefs: refs, BundleGone: true}, nil
+}
+
+// refsForHash returns the display references that point at filesHash.
+func (s *Store) refsForHash(filesHash string) ([]string, error) {
+	byHash, err := s.refsByHash()
+	if err != nil {
+		return nil, err
+	}
+	return byHash[filesHash], nil
+}
+
+// removeRefsForHash deletes every ref file pointing at filesHash and returns
+// their display forms, sorted. Ref directories left empty are pruned.
+func (s *Store) removeRefsForHash(filesHash string) ([]string, error) {
+	root := filepath.Join(s.dir, "refs")
+	var removed []string
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("reading store ref: %w", err)
+		}
+		if strings.TrimSpace(string(data)) != filesHash {
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		if err := os.Remove(path); err != nil {
+			return fmt.Errorf("removing store ref: %w", err)
+		}
+		removed = append(removed, refFromRelPath(rel))
+		s.pruneRefDirs(filepath.Dir(path))
+		return nil
+	})
+	if os.IsNotExist(err) {
+		return removed, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	sort.Strings(removed)
+	return removed, nil
+}
+
+// removeBundleFile deletes the bundle for filesHash. ok is false when it was
+// already absent, which is not an error: the point is that it is gone.
+func (s *Store) removeBundleFile(filesHash string) (bool, error) {
+	path := s.PathFor(filesHash)
+	if err := os.Remove(path); err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("removing bundle %s: %w", shortHash(filesHash), err)
+	}
+	return true, nil
+}
+
+// pruneRefDirs removes now-empty ref directories from dir up toward refs/, so
+// deleting the last tag under an org leaves no empty scaffolding behind. It
+// stops at the refs root and is best effort: a non-empty dir simply ends it.
+func (s *Store) pruneRefDirs(dir string) {
+	root := filepath.Join(s.dir, "refs")
+	for dir != root && strings.HasPrefix(dir, root) {
+		if err := os.Remove(dir); err != nil {
+			return
+		}
+		dir = filepath.Dir(dir)
+	}
+}
+
+// looksLikeHash reports whether id is a bare content hash (or prefix) rather
+// than a reference: hex, optionally sha256:-prefixed. A reference carries a
+// '@', '/', or ':' and so is never all-hex.
+func looksLikeHash(id string) bool {
+	id = strings.TrimPrefix(id, "sha256:")
+	if len(id) < 6 {
+		return false
+	}
+	for _, c := range id {
+		isHexDigit := (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')
+		if !isHexDigit {
+			return false
+		}
+	}
+	return true
+}
+
+func shortHash(hash string) string {
+	h := strings.TrimPrefix(hash, "sha256:")
+	if len(h) > 12 {
+		h = h[:12]
+	}
+	return h
+}
+
 // refsByHash inverts the ref index: files_hash -> reference strings.
 func (s *Store) refsByHash() (map[string][]string, error) {
 	root := filepath.Join(s.dir, "refs")

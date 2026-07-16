@@ -26,12 +26,69 @@ func newStoreCmd() *cobra.Command {
 The store is where 'mcpvessel build' writes and where run, call, and push read
 back by reference, with no daemon and no network. 'store ls' shows what resolves
 locally; 'store load' adds a .agent file someone handed you, so you can run it
-or depend on it via USES without pulling it from a registry.`,
+or depend on it via USES without pulling it from a registry; 'store rm' clears
+bundles you no longer need.`,
 		Example: `  mcpvessel store ls
-  mcpvessel store load researcher.agent -t @okedeji/researcher:0.1`,
+  mcpvessel store load researcher.agent -t @okedeji/researcher:0.1
+  mcpvessel store rm @me/oldagent:0.1`,
 	}
-	cmd.AddCommand(newStoreLsCmd(), newStoreLoadCmd())
+	cmd.AddCommand(newStoreLsCmd(), newStoreLoadCmd(), newStoreRmCmd())
 	return cmd
+}
+
+func newStoreRmCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "rm REF|HASH...",
+		Short: "Remove bundles from the local store",
+		Long: `Remove one or more bundles from the local store, by reference or content hash.
+
+A reference (@org/name:tag) removes that tag; the bundle's bytes go with it when
+no other reference still points at them. A content hash (or unique prefix)
+removes the bundle and every reference to it. Several are removed in one call,
+continuing past any that are not found. This only touches the local store; a
+copy pushed to a registry is untouched.`,
+		Example: `  mcpvessel store rm @me/oncall:0.1
+  mcpvessel store rm @me/a:0.1 @me/b:0.1 353c68abb588`,
+		Args: cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			st, err := store.New()
+			if err != nil {
+				return err
+			}
+			out, stderr := cmd.OutOrStdout(), cmd.ErrOrStderr()
+			failed := 0
+			for _, arg := range args {
+				res, err := st.Remove(arg)
+				if err != nil {
+					failed++
+					_, _ = fmt.Fprintf(stderr, "%s: %v\n", arg, err)
+					continue
+				}
+				_, _ = fmt.Fprintln(out, formatRemoved(res))
+			}
+			if failed > 0 {
+				return fmt.Errorf("failed to remove %d of %d", failed, len(args))
+			}
+			return nil
+		},
+	}
+	return cmd
+}
+
+// formatRemoved renders what a single Remove deleted: a reference with the fate
+// of its bundle, or a hash with the references that went with it.
+func formatRemoved(r store.Removed) string {
+	if r.Ref != "" {
+		if r.BundleGone {
+			return fmt.Sprintf("Removed %s and its bundle", r.Ref)
+		}
+		return fmt.Sprintf("Removed %s (bundle kept; another reference still points at it)", r.Ref)
+	}
+	if len(r.RemovedRefs) > 0 {
+		return fmt.Sprintf("Removed bundle %s and %d reference(s): %s",
+			shortStoreHash(r.Hash), len(r.RemovedRefs), strings.Join(r.RemovedRefs, ", "))
+	}
+	return fmt.Sprintf("Removed bundle %s", shortStoreHash(r.Hash))
 }
 
 func newStoreLsCmd() *cobra.Command {
