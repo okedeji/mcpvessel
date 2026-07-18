@@ -12,12 +12,12 @@ import (
 	"github.com/okedeji/mcpvessel/internal/env"
 )
 
-// newEgressCmd runs the in-run egress proxy. Hidden: the runtime starts it
+// newEgressProxyCmd runs the in-run egress proxy. Hidden: the runtime starts it
 // inside the egress container; its per-source allow lists arrive as injected
 // environment.
-func newEgressCmd() *cobra.Command {
+func newEgressProxyCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:    "egress",
+		Use:    "egress-proxy",
 		Short:  "Run the in-run egress proxy (internal)",
 		Hidden: true,
 		Args:   cobra.NoArgs,
@@ -34,8 +34,51 @@ func newEgressCmd() *cobra.Command {
 			if addr == "" {
 				addr = ":" + env.DefaultEgressPort
 			}
-			srv := &http.Server{Addr: addr, Handler: egress.Handler(cfg, os.Stdout)}
+			proxy := egress.New(cfg, os.Stdout)
+
+			// Loopback only: cages on the run network cannot reach the control
+			// surface; the daemon drives it via nerdctl exec inside this
+			// container's namespace, mirroring the LLM gateway.
+			control := &http.Server{Addr: "127.0.0.1:" + env.DefaultEgressControlPort, Handler: proxy.Control()}
+			go func() {
+				if err := control.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+					fmt.Fprintf(os.Stderr, "egress control listener: %v\n", err)
+				}
+			}()
+
+			srv := &http.Server{Addr: addr, Handler: proxy.Handler()}
 			return srv.ListenAndServe()
 		},
 	}
+}
+
+// newEgressControlCmd is the internal client the daemon execs inside the egress
+// proxy container to approve or reject a held host, reaching the proxy's
+// loopback control surface. Mirrors llm-control.
+func newEgressControlCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:    "egress-control",
+		Short:  "Drive the in-run egress proxy's control surface (internal)",
+		Hidden: true,
+	}
+	post := func(path string) *cobra.Command {
+		return &cobra.Command{
+			Use:  path[1:] + " HOST",
+			Args: cobra.ExactArgs(1),
+			RunE: func(cmd *cobra.Command, args []string) error {
+				url := "http://127.0.0.1:" + env.DefaultEgressControlPort + path + "?host=" + args[0]
+				resp, err := http.Post(url, "", nil)
+				if err != nil {
+					return err
+				}
+				defer func() { _ = resp.Body.Close() }()
+				if resp.StatusCode >= 300 {
+					return fmt.Errorf("egress control %s: %s", path, resp.Status)
+				}
+				return nil
+			},
+		}
+	}
+	cmd.AddCommand(post("/allow"), post("/deny"))
+	return cmd
 }

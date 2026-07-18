@@ -1,0 +1,5 @@
+FROM python:3.12-slim
+RUN pip install --no-cache-dir mcp-server-fetch
+META imported_from pypi:mcp-server-fetch
+EXPOSE *
+ENTRYPOINT ["./mcpvessel","mcp-bridge","--","mcp-server-fetch"]

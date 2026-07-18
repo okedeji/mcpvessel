@@ -63,6 +63,9 @@ type Daemon struct {
 	// denials tracks per-run egress denials, parsed from the run log, so a
 	// served tool error can name what the cage blocked.
 	denials *egressDenials
+	// pending tracks per-run hosts the egress proxy is holding for approval,
+	// parsed from the same log, and drives the approval event feed.
+	pending *pendingEgress
 }
 
 // front is one serve front door: an HTTP server and the runs it exposes.
@@ -82,13 +85,14 @@ type heldRun struct {
 
 // New returns a daemon with an empty registry.
 func New() *Daemon {
-	return &Daemon{runs: map[string]*heldRun{}, shutdown: make(chan struct{}), events: newEventBus(), denials: newEgressDenials()}
+	return &Daemon{runs: map[string]*heldRun{}, shutdown: make(chan struct{}), events: newEventBus(), denials: newEgressDenials(), pending: newPendingEgress()}
 }
 
 // runLogSink opens the run's durable log and, on the way, records the egress
-// denials the proxy writes into it so tool errors can name blocked hosts.
+// denials the proxy writes into it so tool errors can name blocked hosts, and
+// publishes the pending/approved markers to the event feed.
 func (d *Daemon) runLogSink(runID string) io.WriteCloser {
-	return &denialScanSink{w: openRunLogSink(runID), runID: runID, den: d.denials}
+	return &denialScanSink{w: openRunLogSink(runID), runID: runID, den: d.denials, pend: d.pending, events: d.events}
 }
 
 func (d *Daemon) hold(info RunInfo, session *runtime.Session) {
@@ -194,6 +198,7 @@ func (d *Daemon) recordStart(info RunInfo) {
 // (0 when the run made no metered call).
 func (d *Daemon) finish(runID, ref, status string, callErr error) int64 {
 	d.denials.clear(runID)
+	d.pending.clear(runID)
 	report, calls, ok := runtime.RunTelemetry(context.Background(), runID)
 	if status == history.StatusFailed && ok && report.BudgetMicroUSD > 0 && report.TotalMicroUSD >= report.BudgetMicroUSD {
 		status = history.StatusOverBudget
@@ -302,6 +307,9 @@ func (d *Daemon) Handler() http.Handler {
 	mux.HandleFunc("POST /runs", d.handleStartRun)
 	mux.HandleFunc("POST /runs/{id}/call", d.handleCallRun)
 	mux.HandleFunc("POST /runs/{id}/budget", d.handleSetBudget)
+	mux.HandleFunc("GET /egress/pending", d.handleEgressPending)
+	mux.HandleFunc("POST /runs/{id}/egress/allow", d.handleEgressAllow)
+	mux.HandleFunc("POST /runs/{id}/egress/deny", d.handleEgressDeny)
 	mux.HandleFunc("GET /events", d.handleEvents)
 	mux.HandleFunc("GET /stats", d.handleStats)
 	mux.HandleFunc("GET /runs/{id}/logs", d.handleRunLogs)

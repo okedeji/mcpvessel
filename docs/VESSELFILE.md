@@ -132,7 +132,13 @@ EGRESS deny-default
 EGRESS allow:api.example.com,cdn.example.com
 ```
 
-The server's default network policy, baked into the bundle. May appear once. Two forms: `deny-default` gives the server no outbound network at all, and `allow:` followed by a comma-separated host list grants exactly those hosts and nothing else. This is the author's baseline; the operator can widen it per run with `--egress`, and `observe --observe-egress` writes the `allow:` line for you by watching what the server actually reaches. With no `EGRESS` the server starts with no egress, the safe default.
+The server's network policy, baked into the bundle. May appear once. Two forms, and their absence is a third, meaningfully distinct case:
+
+- **`EGRESS allow:host,host`** grants exactly those hosts and nothing else, the author's baseline.
+- **`EGRESS deny-default`** is hard isolation: no egress proxy runs, the server has no outbound path, and any attempt fails immediately. Use it for a pure-compute tool where any outbound connection is a red flag.
+- **No `EGRESS` directive** is deny-default *with interactive approval*: the server starts reaching nothing, but the first time it reaches a new host the connection is held and the operator approves it with [egress](egress.md) allow rather than the call hard-failing.
+
+Either way the operator can widen it per run with `--egress`, persist hosts with `config egress`, or approve them live. `EGRESS` is the author's starting point, not the last word.
 
 ## Reasoning
 

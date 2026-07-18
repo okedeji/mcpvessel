@@ -20,7 +20,7 @@ Two commands set up the machine. `init` prepares the runtime (on macOS it downlo
 ## Cage a server
 
 - [import](import.md): turn a server into a caged, content-addressed bundle.
-- [observe](observe.md): run a server in audit mode and see the exact egress it needs.
+- [egress](egress.md): approve or reject the hosts a running server reaches; a run is deny-default and holds a new host until you allow it.
 - [build](build.md): rebuild a bundle from an edited source tree.
 - [inspect](inspect.md): print a bundle's resolved manifest, tools, and directives.
 - [tree](tree.md): show an agent's `USES` dependency graph and where `BAN` and `DENY` cut it.

@@ -95,6 +95,6 @@ cat ~/.mcpvessel/replays/researcher-1f3c-*.replay | jq '.events[].type'
 
 - [run](run.md): the same boot and `MAIN` routing without capture, plus the flags (`--budget`, `--secret`, `--egress`, and the rest) `record` does not take.
 - [inspect](inspect.md): resolves a `BUNDLE` the same way, to see what an agent is before you record it.
-- [observe](observe.md), [trace](trace.md), [spend](spend.md): the other ways to watch what a run does.
+- [trace](trace.md), [spend](spend.md): the other ways to watch what a run does.
 - [call](call.md): drive a single tool of a tool collection, which `record` cannot record.
 - [Commands](../README.md#commands): the full command list.

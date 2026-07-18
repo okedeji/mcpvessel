@@ -91,6 +91,9 @@ A bundle with no MAIN is a tool collection. Call one of its tools by name with
 			if err != nil {
 				return err
 			}
+			if err := applyConfigSecrets(secretPool, t.Ref, cmd.ErrOrStderr()); err != nil {
+				return err
+			}
 			socket, err := daemon.SocketPath()
 			if err != nil {
 				return err

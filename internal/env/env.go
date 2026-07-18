@@ -94,6 +94,11 @@ const (
 
 const DefaultEgressPort = "9002"
 
+// DefaultEgressControlPort serves the egress proxy's operator control surface
+// (approve or reject a held host). Loopback only inside the proxy container;
+// the daemon drives it via nerdctl exec, the same pattern as the LLM gateway.
+const DefaultEgressControlPort = "9005"
+
 const (
 	// ServeHTTP, when set to a bind address, tells an agent to serve MCP over
 	// streamable-HTTP instead of stdio. Set on every sub-agent; the root

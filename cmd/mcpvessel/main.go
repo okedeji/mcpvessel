@@ -36,12 +36,12 @@ func main() {
 	}
 	add("setup", newInitCmd(), newDaemonCmd())
 	add("ship", newBuildCmd(), newImportCmd(), newPushCmd(), newPullCmd(), newRegisterCmd(), newSearchCmd(), newLoginCmd(), newInspectCmd(), newTreeCmd(), newStoreCmd())
-	add("run", newRunCmd(), newCallCmd(), newEvalCmd(), newServeCmd(), newObserveCmd(), newStopCmd(), newBudgetCmd())
+	add("run", newRunCmd(), newCallCmd(), newEvalCmd(), newServeCmd(), newEgressCmd(), newStopCmd(), newBudgetCmd())
 	add("observe", newPsCmd(), newLogsCmd(), newSpendCmd(), newEventsCmd(), newTraceCmd(), newStatsCmd(), newReplayCmd())
 	add("configure", newConfigCmd(), newSecretsCmd(), newKeysCmd(), newTrustCmd())
 
 	// Hidden internal commands the runtime execs inside gateway and cage containers.
-	root.AddCommand(newMCPGatewayCmd(), newMCPControlCmd(), newLLMGatewayCmd(), newLLMControlCmd(), newEgressCmd(), newMCPBridgeCmd())
+	root.AddCommand(newMCPGatewayCmd(), newMCPControlCmd(), newLLMGatewayCmd(), newLLMControlCmd(), newEgressProxyCmd(), newEgressControlCmd(), newMCPBridgeCmd())
 
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)

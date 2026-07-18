@@ -262,9 +262,13 @@ func buildRunPlan(tree *runTree, runID string, ops operatorInputs) (*runPlan, er
 		}
 		// The operator's per-run --egress reaches every agent in the run, so a
 		// reasoning agent can allow the hosts its sub-servers need without
-		// rebuilding each one.
-		if hosts := unionHosts(egressHosts(nodeEgress(node)), ops.egressAllow); len(hosts) > 0 {
-			plan.EgressAgents[containerName(key)] = egressAgent{Network: nodeNet(key), Hosts: hosts}
+		// rebuilding each one. The operator's persisted config egress is keyed
+		// per agent, so each cage also gets the hosts approved for its own ref.
+		// The proxy runs deny-default even with no hosts, so a cage's first
+		// contact with a new host is held for approval, not hard-failed.
+		nodeHosts := unionHosts(egressHosts(nodeEgress(node)), ops.egressAllow, configEgressFor(node, ops.configEgress))
+		if wantsEgress(nodeEgress(node), nodeHosts) {
+			plan.EgressAgents[containerName(key)] = egressAgent{Network: nodeNet(key), Hosts: nodeHosts}
 			for k, v := range egressProxyEnv(runID) {
 				agentEnv[k] = v
 			}
@@ -304,8 +308,9 @@ func buildRunPlan(tree *runTree, runID string, ops operatorInputs) (*runPlan, er
 		plan.LLMAgents[tree.Root] = effectiveModel(model, tree.Nodes[tree.Root], ops.models)
 	}
 	plan.RootCap = agentCap(tree.Nodes[tree.Root], ops.resources)
-	if hosts := unionHosts(egressHosts(nodeEgress(tree.Nodes[tree.Root])), ops.egressAllow); len(hosts) > 0 {
-		plan.EgressAgents[containerName(tree.Root)] = egressAgent{Network: nodeNet(tree.Root), Hosts: hosts}
+	rootHosts := unionHosts(egressHosts(nodeEgress(tree.Nodes[tree.Root])), ops.egressAllow, configEgressFor(tree.Nodes[tree.Root], ops.configEgress))
+	if wantsEgress(nodeEgress(tree.Nodes[tree.Root]), rootHosts) {
+		plan.EgressAgents[containerName(tree.Root)] = egressAgent{Network: nodeNet(tree.Root), Hosts: rootHosts}
 		for k, v := range egressProxyEnv(runID) {
 			plan.RootEnv[k] = v
 		}

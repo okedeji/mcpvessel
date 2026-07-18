@@ -15,8 +15,8 @@ func TestDenialSink_RecordsFromLogLines(t *testing.T) {
 	_, _ = sink.Write([]byte("agent starting...\negress denied: api.github.co"))
 	_, _ = sink.Write([]byte("m (agent github) — add it...\n"))
 	_, _ = sink.Write([]byte("egress denied: objects.githubusercontent.com (agent github) — ...\n"))
-	// An observation is not a denial.
-	_, _ = sink.Write([]byte("egress observed: example.com (agent github)\n"))
+	// A plain agent log line is not a denial.
+	_, _ = sink.Write([]byte("fetched example.com ok\n"))
 
 	got := den.hosts("run-1")
 	want := []string{"api.github.com", "objects.githubusercontent.com"}

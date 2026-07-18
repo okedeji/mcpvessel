@@ -12,6 +12,7 @@ import (
 
 	"github.com/okedeji/mcpvessel/internal/bundle"
 	"github.com/okedeji/mcpvessel/internal/daemon"
+	"github.com/okedeji/mcpvessel/internal/runtime"
 )
 
 func newCallCmd() *cobra.Command {
@@ -55,10 +56,17 @@ Tools the agent serves over MCP but does not EXPOSE stay private.`,
 			if err != nil {
 				return err
 			}
+			// Config-bound secrets flow to a called tool the same as to run/serve,
+			// so a tool collection gets the keys it declares without a flag.
+			secretPool := runtime.ScopedSecrets{}
+			if err := applyConfigSecrets(secretPool, t.Ref, cmd.ErrOrStderr()); err != nil {
+				return err
+			}
 			result, err := daemon.Dial(socket).RunOnce(cmd.Context(), daemon.RunRequest{
-				Ref:  t.Ref,
-				Tool: toolName,
-				Args: toolArgs,
+				Ref:     t.Ref,
+				Tool:    toolName,
+				Args:    toolArgs,
+				Secrets: secretPool,
 			}, cmd.ErrOrStderr())
 			if err != nil {
 				var unreachable *daemon.Unreachable

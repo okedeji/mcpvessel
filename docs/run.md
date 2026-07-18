@@ -45,7 +45,7 @@ bundle @me/fetch:0.1 has no MAIN; it is a tool collection. Use
 
 Before the cage boots, `run` prints two lines to stderr so you see exactly what the run will grant before any traffic or credential enters the cage.
 
-**egress** is the effective outbound allowlist and where each host came from: hosts the bundle's author baked in (`from bundle`), hosts you added with `--egress` (`from --egress`), or `none (no network)` when both are empty. An operator host already baked is not repeated. This union mirrors what the runtime enforces, so the line is the truth of what the cage can reach, including a pulled bundle's baked hosts that apply with no flag from you.
+**egress** is the effective outbound allowlist and where each host came from: hosts the bundle's author baked in (`from bundle`), hosts you added with `--egress` (`from --egress`), or `none` when both are empty. An operator host already baked is not repeated. This is the starting allow-set, not a hard ceiling: a run is deny-default, so a host outside it is held at run time and you approve it with [egress](egress.md) allow rather than the call failing. A bundle that declares `EGRESS deny-default` is the exception, hard-isolated with no network at all.
 
 **secrets** is each secret the agent declares against the pool it will draw from: `granted`, `optional, not granted` for one marked optional in the Vesselfile, or `missing; pass --secret NAME` for a required one you did not supply (fatal at boot). Names only, never values.
 
@@ -102,7 +102,7 @@ Three flags cap the cage's resources for this run, each overriding the configure
 | `--secret-file PATH` | Read secret values (`[agent:]NAME=VALUE` per line) from a permissions-restricted file. |
 | `--env KEY=VALUE` | Supply an env value, or `KEY` to pass it through from your environment. Repeatable. |
 | `--env-file PATH` | Read env values (`KEY=VALUE` per line) from a file. |
-| `--egress HOSTS` | Allow the agent hosts for this run: `host,host`, or `agent:host,host` to scope one. Added on top of the bundle's baked egress. Repeatable. Default is no network. |
+| `--egress HOSTS` | Allow the agent hosts for this run: `host,host`, or `agent:host,host` to scope one. Added on top of the bundle's baked egress. Repeatable. With none, the run is deny-default and holds a new host for approval. |
 | `--save` | With `--egress`, write the hosts into the agent's Vesselfile and rebuild instead of allowing them for this run only. Source directories only. |
 | `--memory SIZE` | Per-cage memory cap for this run, e.g. `2g`. Overrides the configured default. |
 | `--cpus N` | Per-cage CPU cap for this run, e.g. `2` or `0.5`. |

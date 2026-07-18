@@ -24,7 +24,7 @@ func formatEgress(baked, operator []string) string {
 	}
 	switch {
 	case len(baked) == 0 && len(extra) == 0:
-		return "none (no network)"
+		return "none preset (deny-default: a new host is held for approval)"
 	case len(extra) == 0:
 		return strings.Join(baked, ", ") + " (from bundle)"
 	case len(baked) == 0:

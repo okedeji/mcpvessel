@@ -74,9 +74,7 @@ A wrapped server is deny-default: no outbound network unless you allow it.
 - **`--egress host,host`** allows hosts for every server in the import.
 - **`--egress agent:host,host`** scopes hosts to one server, matched by its generated directory name, so a batch can give each server its own allowance.
 
-The hosts land in the Vesselfile as an `EGRESS allow:` line, so they travel with the bundle. Leave `--egress` off and the cage reaches nothing.
-
-**`--observe-egress`** discovers the hosts for you. After the build, it serves the server in audit mode (every outbound host allowed and recorded), you exercise its tools through the printed URL, and when the window ends it rewrites the Vesselfile's `EGRESS` with the hosts it saw and rebuilds. A server that reaches nothing is left deny-default. `--observe-egress` handles one SOURCE at a time and is mutually exclusive with `--egress` (observe discovers the hosts; `--egress` sets them) and with `--reasoning`.
+The hosts land in the Vesselfile as an `EGRESS allow:` line, so they travel with the bundle. You do not have to know the hosts at import time, though. Leave `--egress` off and the cage starts deny-default: the first time the server reaches a new host at run time, the connection is held and you approve it with [egress](egress.md) allow, which remembers it for next time. `--egress` here just bakes a known allowance into the bundle up front.
 
 ## Launch command for OCI images
 
@@ -109,8 +107,7 @@ When you compose with `--reasoning`, `import` avoids rebuilding a server you hav
 | `--secret-file PATH` | Read secret values (`NAME=VALUE` per line) from a permissions-restricted file. |
 | `--env KEY=VALUE` | Supply an env value the server needs to start, or `KEY` to pass it through from your environment. Repeatable. |
 | `--env-file PATH` | Read env values (`KEY=VALUE` per line) from a file. |
-| `--egress HOSTS` | Hosts a server may reach: `host,host`, or `agent:host,host` to scope one of several. Repeatable. Default is no network. |
-| `--observe-egress` | After building, watch the server in audit mode to discover its egress hosts, then write `EGRESS` and rebuild. Single SOURCE, not with `--egress` or `--reasoning`. |
+| `--egress HOSTS` | Hosts a server may reach: `host,host`, or `agent:host,host` to scope one of several. Repeatable. Default is deny-default with approval at run time. |
 | `--force` | Overwrite an existing generated Vesselfile instead of refusing. |
 | `--progress auto\|plain\|tty` | Build progress output. Default `auto`. |
 
@@ -137,8 +134,8 @@ mcpvessel import oci:ghcr.io/acme/mcp-slack:1.2 --entrypoint "mcp-slack --stdio"
 # Wrap several servers, each its own bundle.
 mcpvessel import npm:server-github pypi:mcp-server-time
 
-# Discover the egress hosts instead of guessing.
-mcpvessel import io.github.github/github-mcp-server --observe-egress --secret GITHUB_PERSONAL_ACCESS_TOKEN
+# Import without guessing hosts: run it deny-default and approve hosts as they come up.
+mcpvessel import io.github.github/github-mcp-server --secret GITHUB_PERSONAL_ACCESS_TOKEN
 
 # Compose two servers into one reasoning agent with a role.
 mcpvessel import io.github.getsentry/sentry-mcp io.github.brave/brave-search-mcp-server \

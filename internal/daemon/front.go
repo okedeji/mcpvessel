@@ -27,7 +27,6 @@ type serveRequest struct {
 	Listen   string              `json:"listen"`
 	Expose   []string            `json:"expose,omitempty"`
 	NoExpose []string            `json:"no_expose,omitempty"`
-	Observe  bool                `json:"observe,omitempty"`
 	Egress   map[string][]string `json:"egress,omitempty"` // scoped per-agent operator override
 	Env      map[string]string   `json:"env,omitempty"`    // operator env pool, scoped per agent by declaration
 	// Secrets is the operator secret pool: broadcast under "", or granted to
@@ -132,7 +131,7 @@ func (d *Daemon) handleServe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	agents, ids, err := d.registerExposed(services, cfg.Serve, req.Observe, req.Egress, req.Env, req.Secrets)
+	agents, ids, err := d.registerExposed(services, cfg.Serve, req.Egress, req.Env, req.Secrets)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -178,7 +177,7 @@ func (d *Daemon) handleServe(w http.ResponseWriter, r *http.Request) {
 // read from the bundle's catalog (no boot needed to list them), an instance
 // manager booting per-client instances on demand, and a serve entry in the
 // registry. On error it rolls back the entries already created.
-func (d *Daemon) registerExposed(services []exposedService, cfg config.Serve, observe bool, scopedEgress map[string][]string, envPool map[string]string, secretPool runtime.ScopedSecrets) ([]serve.Agent, []string, error) {
+func (d *Daemon) registerExposed(services []exposedService, cfg config.Serve, scopedEgress map[string][]string, envPool map[string]string, secretPool runtime.ScopedSecrets) ([]serve.Agent, []string, error) {
 	agents := make([]serve.Agent, 0, len(services))
 	ids := make([]string, 0, len(services))
 	for _, svc := range services {
@@ -195,6 +194,7 @@ func (d *Daemon) registerExposed(services []exposedService, cfg config.Serve, ob
 				session, err := runtime.Acquire(ctx, runtime.RunInput{
 					BundlePath:  ea.Bundle,
 					Name:        ea.Address,
+					Ref:         display,
 					RunID:       runID,
 					Interaction: env.InteractionInteractive,
 					Managed:     true,
@@ -203,9 +203,8 @@ func (d *Daemon) registerExposed(services []exposedService, cfg config.Serve, ob
 					// A served instance is a run; give it a durable log so its
 					// output and egress denials show in `mcpvessel logs`, and so
 					// the daemon can name blocked hosts in a tool error.
-					LogFile:       d.runLogSink,
-					ObserveEgress: observe,
-					EgressAllow:   egress.HostsFor(scopedEgress, ea.Address),
+					LogFile:     d.runLogSink,
+					EgressAllow: egress.HostsFor(scopedEgress, ea.Address),
 					// Pools are scoped per agent by declaration at injection, so
 					// every served instance can carry the same maps safely.
 					Env:     envPool,

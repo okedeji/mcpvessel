@@ -151,12 +151,12 @@ curl -N -H 'Accept: text/event-stream' \
 - `--save` mutates and rebuilds your source directory. Without it, `--egress` is purely for the current serve and never touches the bundle.
 - The boot-time Egress and Secrets reports are the last chance to see what the cage will get before any call runs. A pulled bundle's baked egress applies with no flag, so it shows there.
 - The plain-HTTP prompt route (`POST /agents/<address>`) exists only for an agent with a `MAIN`. A tool collection has none; call its tools by name at `POST /agents/<address>/tools/<tool>`.
-- `serve` does not discover egress hosts. To learn what a server reaches, use [observe](observe.md), which serves it in audit mode and prints the hosts it saw.
+- `serve` is deny-default. A served server reaching a new host has the connection held, surfaced on the `events` feed and `mcpvessel egress ls`; approve it with [egress](egress.md) allow and it is remembered for next time.
 
 ## See also
 
 - [import](import.md), [build](build.md): produce the bundle `serve` exposes.
 - [run](run.md), [call](call.md): drive an agent from the CLI instead of over HTTP.
-- [observe](observe.md): serve one agent in audit mode to discover its egress hosts.
+- [egress](egress.md): approve the hosts a served agent is held on.
 - [VESSELFILE.md](VESSELFILE.md): `EGRESS`, `EXPOSE`, `USES PUBLIC`, `MAIN`, and `SECRETS`, the directives that decide what `serve` exposes and injects.
 - [Cage it](../README.md#cage-it) and [Give it a brain](../README.md#give-it-a-brain): end-to-end walkthroughs that serve a caged server and a reasoning agent.

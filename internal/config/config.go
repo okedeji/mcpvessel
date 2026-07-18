@@ -20,7 +20,9 @@ import (
 type Config struct {
 	Providers []Endpoint        `json:"providers,omitempty"`
 	Resources Resources         `json:"resources,omitempty"`
-	Models    map[string]string `json:"models,omitempty"` // agent ref (@org/name) -> provider/model override
+	Egress    EgressPolicy      `json:"egress,omitempty"`  // operator egress allow-lists, general and per-agent, added on top of the bundle's own EGRESS
+	Secrets   SecretPolicy      `json:"secrets,omitempty"` // operator secret bindings, general and per-agent, injected without repeating --secret
+	Models    map[string]string `json:"models,omitempty"`  // agent ref (@org/name) -> provider/model override
 	Cages     Cages             `json:"cages,omitempty"`
 	Machine   Machine           `json:"machine,omitempty"`
 	Serve     Serve             `json:"serve,omitempty"`
@@ -187,7 +189,6 @@ func (cg Cages) Validate() error {
 type Serve struct {
 	MaxClients           int `json:"max_clients,omitempty"`             // concurrent client instances per served agent
 	ClientIdleTTLSeconds int `json:"client_idle_ttl_seconds,omitempty"` // reap an instance whose client has gone quiet this long
-	ObserveSeconds       int `json:"observe_seconds,omitempty"`         // how long `mcpvessel observe` records egress before reporting
 }
 
 // Serve policy defaults. Each instance is a whole agent tree, so the client
@@ -197,9 +198,6 @@ type Serve struct {
 const (
 	DefaultMaxClients           = 8
 	DefaultClientIdleTTLSeconds = 900
-	// DefaultObserveSeconds is a window long enough to drive a few tool calls
-	// through a client while staying short enough not to feel stuck.
-	DefaultObserveSeconds = 60
 )
 
 // EffectiveMaxClients and EffectiveClientIdleTTL resolve each knob to the
@@ -216,13 +214,6 @@ func (s Serve) EffectiveClientIdleTTL() time.Duration {
 		return time.Duration(s.ClientIdleTTLSeconds) * time.Second
 	}
 	return DefaultClientIdleTTLSeconds * time.Second
-}
-
-func (s Serve) EffectiveObserveDuration() time.Duration {
-	if s.ObserveSeconds > 0 {
-		return time.Duration(s.ObserveSeconds) * time.Second
-	}
-	return DefaultObserveSeconds * time.Second
 }
 
 // Validate rejects negative values. Zero means default; a negative fails
@@ -322,6 +313,12 @@ func (c *Config) Validate() error {
 	}
 	if err := c.Serve.Validate(); err != nil {
 		return fmt.Errorf("serve policy: %w", err)
+	}
+	if err := validateAccess("egress config", c.Egress.Agents); err != nil {
+		return err
+	}
+	if err := validateAccess("secret config", c.Secrets.Agents); err != nil {
+		return err
 	}
 	return nil
 }

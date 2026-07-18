@@ -13,8 +13,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/okedeji/mcpvessel/internal/bundle"
-	"github.com/okedeji/mcpvessel/internal/config"
-	"github.com/okedeji/mcpvessel/internal/daemon"
 	"github.com/okedeji/mcpvessel/internal/egress"
 	"github.com/okedeji/mcpvessel/internal/locate"
 	"github.com/okedeji/mcpvessel/internal/mcpregistry"
@@ -33,7 +31,7 @@ func newImportCmd() *cobra.Command {
 	var envFlags, secretFlags []string
 	var envFile, secretFile string
 	var egressFlags []string
-	var force, observeEgress bool
+	var force bool
 	cmd := &cobra.Command{
 		Use:   "import SOURCE...",
 		Short: "Wrap existing MCP servers as agents",
@@ -76,16 +74,6 @@ tools: a single brain reasoning across every server.`,
 			// wrapped server; agent:host scopes to one by its generated name, so
 			// a batch can give each server its own hosts.
 			egressScoped := egress.ParseScoped(egressFlags)
-			if observeEgress {
-				switch {
-				case len(args) > 1:
-					return fmt.Errorf("--observe-egress applies to a single SOURCE; import servers one at a time")
-				case len(egressFlags) > 0:
-					return fmt.Errorf("--observe-egress and --egress are mutually exclusive: observe discovers the hosts, --egress sets them")
-				case reasoning:
-					return fmt.Errorf("--observe-egress is not supported with --reasoning yet; import the server on its own to observe it")
-				}
-			}
 
 			if reasoning {
 				if entrypoint != "" && len(args) > 1 {
@@ -127,7 +115,7 @@ tools: a single brain reasoning across every server.`,
 
 			usedDir := map[string]bool{}
 			for _, arg := range args {
-				if err := importCollection(cmd, arg, dir, tag, entrypoint, mode, usedDir, env, secrets.Flatten(), egressScoped, force, observeEgress); err != nil {
+				if err := importCollection(cmd, arg, dir, tag, entrypoint, mode, usedDir, env, secrets.Flatten(), egressScoped, force); err != nil {
 					return err
 				}
 			}
@@ -153,9 +141,8 @@ tools: a single brain reasoning across every server.`,
 	cmd.Flags().StringVar(&envFile, "env-file", "", "read env values (KEY=VALUE per line) from a file")
 	cmd.Flags().StringArrayVar(&secretFlags, "secret", nil, "supply a secret NAME a server needs to start, resolved from your environment or the mcpvessel secret store (repeatable)")
 	cmd.Flags().StringVar(&secretFile, "secret-file", "", "read secret values (NAME=VALUE per line) from a perms-restricted file")
-	cmd.Flags().StringArrayVar(&egressFlags, "egress", nil, "hosts a server may reach, written as EGRESS allow: (host,host or agent:host,host to scope one of several; repeatable). Default is no network")
+	cmd.Flags().StringArrayVar(&egressFlags, "egress", nil, "hosts a server may reach, written as EGRESS allow: (host,host or agent:host,host to scope one of several; repeatable). Omit to leave it deny-default, approving hosts at run time")
 	cmd.Flags().BoolVar(&force, "force", false, "overwrite an existing generated Vesselfile instead of refusing")
-	cmd.Flags().BoolVar(&observeEgress, "observe-egress", false, "after building, watch the server in audit mode to discover its egress hosts, then write EGRESS and rebuild")
 	return cmd
 }
 
@@ -164,9 +151,8 @@ tools: a single brain reasoning across every server.`,
 // directories distinct. env and secrets feed the introspection boot, so a
 // server that needs config to start can be wrapped. scoped names the hosts the
 // server may reach, resolved by the generated directory's name; force overwrites
-// an existing generated Vesselfile. observe watches the built server in audit
-// mode and writes the discovered EGRESS.
-func importCollection(cmd *cobra.Command, arg, dir, tag, entrypoint string, mode progress.Mode, usedDir map[string]bool, env, secrets map[string]string, scoped map[string][]string, force, observe bool) error {
+// an existing generated Vesselfile.
+func importCollection(cmd *cobra.Command, arg, dir, tag, entrypoint string, mode progress.Mode, usedDir map[string]bool, env, secrets map[string]string, scoped map[string][]string, force bool) error {
 	source, launch := parseToolArg(arg)
 	src, err := resolveImportSource(cmd.Context(), source)
 	if err != nil {
@@ -213,58 +199,17 @@ func importCollection(cmd *cobra.Command, arg, dir, tag, entrypoint string, mode
 	}
 	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Generated %s\n", filepath.Join(outDir, bundle.VesselfileName))
 	printImportInputs(cmd.ErrOrStderr(), src.Env, env, secrets)
-	build := func() error {
-		return buildToStore(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), buildConfig{
-			srcDir:  outDir,
-			mode:    mode,
-			tag:     tag,
-			env:     env,
-			secrets: secrets,
-		})
-	}
-	if err := build(); err != nil {
+	if err := buildToStore(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), buildConfig{
+		srcDir:  outDir,
+		mode:    mode,
+		tag:     tag,
+		env:     env,
+		secrets: secrets,
+	}); err != nil {
 		removeGenerated(cmd.ErrOrStderr(), outDir, created)
 		return err
 	}
-	if observe {
-		if err := observeAndSetEgress(cmd, outDir, src, build, env, secrets); err != nil {
-			return err
-		}
-	}
 	return nil
-}
-
-// observeAndSetEgress serves the just-built agent in audit mode, records the
-// hosts it reaches, and if any, rewrites its EGRESS and rebuilds. A server that
-// reaches nothing is left deny-default. env and secrets let a server that needs
-// config to boot start under observation.
-func observeAndSetEgress(cmd *cobra.Command, outDir string, src wrap.Source, rebuild func() error, env, secrets map[string]string) error {
-	socket, err := daemon.SocketPath()
-	if err != nil {
-		return err
-	}
-	cfg, err := config.Load()
-	if err != nil {
-		return err
-	}
-	target, err := resolveServeTarget(cmd.Context(), cmd.ErrOrStderr(), outDir)
-	if err != nil {
-		return err
-	}
-	hosts, err := observeEgressHosts(cmd.Context(), cmd.ErrOrStderr(), socket, target, observeDefaultListen, cfg.Serve.EffectiveObserveDuration(), env, runtime.Broadcast(secrets))
-	if err != nil {
-		return err
-	}
-	if len(hosts) == 0 {
-		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "No outbound hosts observed; leaving the cage deny-default.")
-		return nil
-	}
-	src.Egress = hosts
-	if err := writeGeneratedVesselfile(outDir, src, true); err != nil {
-		return err
-	}
-	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Set EGRESS allow:%s and rebuilding.\n", strings.Join(hosts, ","))
-	return rebuild()
 }
 
 // dirExists reports whether path is an existing directory.

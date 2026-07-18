@@ -78,12 +78,15 @@ shuts down.`,
 				if targets[i], err = resolveServeTarget(cmd.Context(), cmd.ErrOrStderr(), arg); err != nil {
 					return err
 				}
+				if err := applyConfigSecrets(secretPool, targets[i].Ref, cmd.ErrOrStderr()); err != nil {
+					return err
+				}
 			}
 			policies, err := prebuildServeImages(cmd.Context(), cmd.ErrOrStderr(), targets, expose, noExpose)
 			if err != nil {
 				return err
 			}
-			res, err := daemon.Dial(socket).Serve(cmd.Context(), targets, listen, expose, noExpose, false, runtimeEgress, envPool, secretPool)
+			res, err := daemon.Dial(socket).Serve(cmd.Context(), targets, listen, expose, noExpose, runtimeEgress, envPool, secretPool)
 			if err != nil {
 				var unreachable *daemon.Unreachable
 				if errors.As(err, &unreachable) {

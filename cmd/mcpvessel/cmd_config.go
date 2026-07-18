@@ -30,6 +30,7 @@ and point an endpoint at it with --key-ref. The config file never holds a secret
 	}
 	cmd.AddCommand(
 		newConfigProviderCmd(), newConfigResourcesCmd(), newConfigModelsCmd(),
+		newConfigEgressCmd(), newConfigSecretsCmd(),
 		newConfigCagesCmd(), newConfigMachineCmd(), newConfigServeCmd(),
 		newConfigMetricsCmd(), newConfigEnvCmd(), newConfigShowCmd(), newConfigPathCmd(),
 	)
@@ -227,14 +228,14 @@ func newConfigServeCmd() *cobra.Command {
 idle one lives before it is reclaimed. A change takes effect on the next serve. A
 zero means the built-in default.`,
 	}
-	var maxClients, idleTTL, observeSeconds int
+	var maxClients, idleTTL int
 	set := &cobra.Command{
 		Use:   "set",
 		Short: "Set serve policy fields",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if !anyChanged(cmd, "max-clients", "client-idle-ttl", "observe-seconds") {
-				return fmt.Errorf("set at least one of --max-clients, --client-idle-ttl, --observe-seconds")
+			if !anyChanged(cmd, "max-clients", "client-idle-ttl") {
+				return fmt.Errorf("set at least one of --max-clients, --client-idle-ttl")
 			}
 			c, err := config.Load()
 			if err != nil {
@@ -246,9 +247,6 @@ zero means the built-in default.`,
 			if cmd.Flags().Changed("client-idle-ttl") {
 				c.Serve.ClientIdleTTLSeconds = idleTTL
 			}
-			if cmd.Flags().Changed("observe-seconds") {
-				c.Serve.ObserveSeconds = observeSeconds
-			}
 			if err := c.Save(); err != nil {
 				return err
 			}
@@ -258,7 +256,6 @@ zero means the built-in default.`,
 	}
 	set.Flags().IntVar(&maxClients, "max-clients", 0, "concurrent client instances per served agent (0 = default)")
 	set.Flags().IntVar(&idleTTL, "client-idle-ttl", 0, "reap a client instance idle past this many seconds (0 = default)")
-	set.Flags().IntVar(&observeSeconds, "observe-seconds", 0, "how long 'mcpvessel observe' records egress before reporting (0 = default)")
 	cmd.AddCommand(set)
 	return cmd
 }

@@ -55,14 +55,79 @@ func (e *egressDenials) clear(runID string) {
 	delete(e.byRun, runID)
 }
 
+// pendingEgress tracks, per run, the hosts the egress proxy is currently
+// holding for the operator's approval. A host is recorded when its "egress
+// pending:" marker is first seen and cleared when it is approved, so an
+// operator can list what a run is waiting on.
+type pendingEgress struct {
+	mu    sync.Mutex
+	byRun map[string]map[string]bool
+}
+
+func newPendingEgress() *pendingEgress {
+	return &pendingEgress{byRun: map[string]map[string]bool{}}
+}
+
+// add records host as pending, reporting whether it was newly held (so the
+// daemon publishes one event per hold, not one per log line).
+func (e *pendingEgress) add(runID, host string) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	set := e.byRun[runID]
+	if set == nil {
+		set = map[string]bool{}
+		e.byRun[runID] = set
+	}
+	if set[host] {
+		return false
+	}
+	set[host] = true
+	return true
+}
+
+func (e *pendingEgress) remove(runID, host string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if set := e.byRun[runID]; set != nil {
+		delete(set, host)
+	}
+}
+
+func (e *pendingEgress) clear(runID string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	delete(e.byRun, runID)
+}
+
+// list returns every run's currently-held hosts, sorted per run.
+func (e *pendingEgress) list() map[string][]string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	out := map[string][]string{}
+	for runID, set := range e.byRun {
+		if len(set) == 0 {
+			continue
+		}
+		hosts := make([]string, 0, len(set))
+		for h := range set {
+			hosts = append(hosts, h)
+		}
+		sort.Strings(hosts)
+		out[runID] = hosts
+	}
+	return out
+}
+
 // denialScanSink writes the run's log through to its file while scanning each
-// line for the egress proxy's "egress denied: <host>" markers, recording every
-// host so a tool error can name what the cage blocked.
+// line for the egress proxy's markers: "egress denied:" hosts feed a tool
+// error, and "egress pending:"/"egress allowed:" drive the approval event feed.
 type denialScanSink struct {
-	w     io.WriteCloser
-	runID string
-	den   *egressDenials
-	buf   bytes.Buffer
+	w      io.WriteCloser
+	runID  string
+	den    *egressDenials
+	pend   *pendingEgress
+	events *eventBus
+	buf    bytes.Buffer
 }
 
 func (s *denialScanSink) Write(p []byte) (int, error) {
@@ -76,19 +141,48 @@ func (s *denialScanSink) Write(p []byte) (int, error) {
 		}
 		line := string(data[:idx])
 		s.buf.Next(idx + 1)
-		if host, ok := parseDeniedHost(line); ok {
-			s.den.record(s.runID, host)
-		}
+		s.scan(line)
 	}
 	return n, err
 }
 
+// scan turns one proxy log line into denial tracking and approval events.
+func (s *denialScanSink) scan(line string) {
+	if host, ok := parseEgressHost(line, "egress denied: "); ok {
+		s.den.record(s.runID, host)
+		return
+	}
+	if host, ok := parseEgressHost(line, "egress pending: "); ok {
+		if s.pend != nil && s.pend.add(s.runID, host) {
+			s.publish(Event{
+				Type:   EventEgressPending,
+				RunID:  s.runID,
+				Target: host,
+				Detail: "mcpvessel egress allow " + s.runID + " " + host,
+			})
+		}
+		return
+	}
+	if host, ok := parseEgressHost(line, "egress allowed: "); ok {
+		if s.pend != nil {
+			s.pend.remove(s.runID, host)
+		}
+		s.publish(Event{Type: EventEgressApproved, RunID: s.runID, Target: host})
+	}
+}
+
+func (s *denialScanSink) publish(e Event) {
+	if s.events != nil {
+		e.Time = nowFunc()
+		s.events.publish(e)
+	}
+}
+
 func (s *denialScanSink) Close() error { return s.w.Close() }
 
-// parseDeniedHost pulls the host from an "egress denied: <host> (agent ...)"
-// line the proxy writes.
-func parseDeniedHost(line string) (string, bool) {
-	const marker = "egress denied: "
+// parseEgressHost pulls the host that follows marker in an
+// "<marker><host> (agent ...)" proxy line.
+func parseEgressHost(line, marker string) (string, bool) {
 	i := strings.Index(line, marker)
 	if i < 0 {
 		return "", false

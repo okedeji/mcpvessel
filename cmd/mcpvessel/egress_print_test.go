@@ -9,7 +9,7 @@ func TestFormatEgress(t *testing.T) {
 		operator []string
 		want     string
 	}{
-		{"nothing", nil, nil, "none (no network)"},
+		{"nothing", nil, nil, "none preset (deny-default: a new host is held for approval)"},
 		{"bundle only", []string{"api.github.com", "x.com"}, nil, "api.github.com, x.com (from bundle)"},
 		{"operator only", nil, []string{"sentry.io"}, "sentry.io (from --egress)"},
 		{"both", []string{"api.github.com"}, []string{"sentry.io"}, "api.github.com (from bundle) + sentry.io (from --egress)"},

@@ -24,6 +24,12 @@ type Event struct {
 const (
 	EventRunStarted = "run.started"
 	EventRunEnded   = "run.ended"
+	// EventEgressPending fires when the egress proxy holds a cage's connection to
+	// an unapproved host; Target is the host and Detail is the approve command.
+	EventEgressPending = "egress.pending"
+	// EventEgressApproved fires when a held host is approved and the connection
+	// released; Target is the host.
+	EventEgressApproved = "egress.approved"
 )
 
 // eventBufferSize bounds each subscriber's queue. A watcher this far behind

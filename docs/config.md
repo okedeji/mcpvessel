@@ -47,6 +47,18 @@ Set the cpu, memory, and pid caps the runtime hands to nerdctl for each cage. Th
 | `--memory SIZE` | nerdctl `--memory` cap, e.g. `2g` or `512m` (k/m/g suffixes, base 1024). Must be a positive size. |
 | `--pids N` | nerdctl `--pids-limit` cap. Must be positive when set. |
 
+## egress
+
+Set operator egress allow-lists, so a host you always allow is not passed with `--egress` or approved by hand every run. There is one general default plus per-agent lists keyed by `@org/name:version` (or `@org/name` to match any version). These hosts are added on top of what a bundle's own `EGRESS` declares; they only widen your own runs and never change a published bundle. This is the same store an interactive `mcpvessel egress allow` writes to, so an approved host lands here automatically.
+
+**`egress set REF HOST...`** sets the allow-list for one agent. **`egress default HOST...`** sets the general list applied to every agent. **`egress ls`** prints the default then each per-agent list. **`egress rm REF`** drops a per-agent list (`rm default` clears the general one). Hosts may be space or comma separated.
+
+## secrets
+
+Bind the secret names an agent should receive, so you do not re-pass `--secret` every run. Keyed the same way as `egress`: a per-agent binding on `@org/name:version` (or `@org/name`), plus a general default. Only the name is stored here; the value resolves from your secret store (`mcpvessel secrets set NAME`) at run time, and a server only ever receives a name it declares in `SECRETS`, so a general binding cannot leak into a server that did not ask for it.
+
+**`secrets set REF NAME...`**, **`secrets default NAME...`**, **`secrets ls`**, and **`secrets rm REF`** mirror the `egress` subcommands. Scoped bindings are the safe norm; the general default is the convenience.
+
 ## models
 
 Override which model an agent uses, keyed by its `@org/name` registry ref, for example to pin an expensive agent to a cheaper model. Like a resource cap, an override only matches a pulled USES dependency with that ref. An agent you run directly from a `.agent` file has no ref to match, so its model comes from its own MODEL directive and the default provider.
@@ -77,13 +89,11 @@ Set the policy for `mcpvessel serve`, which is a level above `cages`. Each conne
 
 - `--max-clients` caps concurrent client instances per served agent. Default `8`.
 - `--client-idle-ttl` reaps an instance whose client has gone quiet past this many seconds, freeing an abandoned session without cutting off a human mid-chat. Default `900` (fifteen minutes).
-- `--observe-seconds` is how long `mcpvessel observe` records egress before it reports, long enough to drive a few tool calls through, short enough not to feel stuck. Default `60`.
 
 | Flag | Meaning | Default |
 | --- | --- | --- |
 | `--max-clients N` | Concurrent client instances per served agent. | 8 |
 | `--client-idle-ttl SECONDS` | Reap an instance idle past this. | 900 |
-| `--observe-seconds SECONDS` | How long `mcpvessel observe` records egress before reporting. | 60 |
 
 ## machine
 
@@ -155,7 +165,7 @@ mcpvessel daemon restart
 ## See also
 
 - [serve](serve.md): the served-agent scaling this page's `serve` policy governs.
-- [observe](observe.md): the egress recording whose window `serve --observe-seconds` sets.
+- [egress](egress.md): approve held hosts at run time; `config egress` and `egress allow` share one store.
 - [run](run.md): where the `cages`, `resources`, and `models` policies take effect.
 - [init](init.md): provisioning the machine, and `--recreate` to apply a `machine` change.
 - [daemon](daemon.md): the daemon that serves the metrics endpoint and must restart to pick up a `metrics` change.

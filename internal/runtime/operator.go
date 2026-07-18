@@ -1,6 +1,9 @@
 package runtime
 
-import "github.com/okedeji/mcpvessel/internal/config"
+import (
+	"github.com/okedeji/mcpvessel/internal/config"
+	"github.com/okedeji/mcpvessel/internal/reference"
+)
 
 // operatorInputs carries the per-run operator values the planner needs,
 // loaded once per run from RunInput and the config file.
@@ -30,6 +33,10 @@ type operatorInputs struct {
 	// egressAllow is the operator's per-run egress override for the root agent,
 	// added on top of what its Vesselfile declares.
 	egressAllow []string
+	// configEgress is the operator's persisted egress allow-lists (general and
+	// per-agent), resolved per node by ref and unioned on top of everything
+	// above. This is where an interactive `egress allow` approval is remembered.
+	configEgress config.EgressPolicy
 }
 
 // refKey is the config key for an agent: @org/name, version-independent so an
@@ -40,6 +47,39 @@ func refKey(node *agentNode) string {
 		return ""
 	}
 	return "@" + node.Ref.Repository
+}
+
+// tagKey is the version-specific config key for an agent, @org/name:version.
+// Unlike refKey it keeps the version, so an operator's egress or secret binding
+// applies to the exact version they approved and a version bump asks again. A
+// node without a registry ref or version has no tag key.
+func tagKey(node *agentNode) string {
+	if node == nil || node.Ref.Repository == "" || node.Ref.Tag == "" {
+		return ""
+	}
+	return "@" + node.Ref.Repository + ":" + node.Ref.Tag
+}
+
+// configEgressFor resolves the operator's persisted egress hosts for a node:
+// the general default, the any-version key, and the exact-version key.
+func configEgressFor(node *agentNode, p config.EgressPolicy) []string {
+	return p.For(tagKey(node), refKey(node))
+}
+
+// configEgressForRef resolves persisted egress hosts for a ref string, for the
+// single-cage path that has no tree node. An unparsable or local ref still
+// picks up the general default.
+func configEgressForRef(ref string, p config.EgressPolicy) []string {
+	r, err := reference.Parse(ref)
+	if err != nil || r.Repository == "" {
+		return p.For("", "")
+	}
+	nameKey := "@" + r.Repository
+	versionKey := ""
+	if r.Tag != "" {
+		versionKey = nameKey + ":" + r.Tag
+	}
+	return p.For(versionKey, nameKey)
 }
 
 // effectiveModel returns the operator's per-agent model override if set,

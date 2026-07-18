@@ -37,7 +37,7 @@ func bootRun(ctx context.Context, in RunInput, boot bootInput, runID string) (*m
 	// the more specific choice.
 	res := cfg.Resources
 	res.Defaults = overlayCap(in.Resources, res.Defaults)
-	ops := operatorInputs{env: in.Env, secrets: in.Secrets, rootName: in.Name, models: cfg.Models, resources: res, managed: in.Managed, prewarm: cfg.Cages.EffectivePrewarm(), keepWarm: cfg.Cages.KeepWarm, maxLive: cfg.Cages.EffectiveMaxLive(), record: in.Record, egressAllow: in.EgressAllow}
+	ops := operatorInputs{env: in.Env, secrets: in.Secrets, rootName: in.Name, models: cfg.Models, resources: res, managed: in.Managed, prewarm: cfg.Cages.EffectivePrewarm(), keepWarm: cfg.Cages.KeepWarm, maxLive: cfg.Cages.EffectiveMaxLive(), record: in.Record, egressAllow: in.EgressAllow, configEgress: cfg.Egress}
 
 	// The machine memory cap applies to both boot paths; the live-cage caps
 	// and idle TTL only bound a USES tree's elastic set.
@@ -45,7 +45,10 @@ func bootRun(ctx context.Context, in RunInput, boot bootInput, runID string) (*m
 
 	if len(boot.Manifest.Vesselfile.Uses) == 0 {
 		// No registry ref, so per-agent overrides do not key a directly-run
-		// agent; the default caps still apply.
+		// agent; the default caps still apply. The operator's persisted egress
+		// for this ref is unioned in, so a host approved on a past run is not
+		// asked about again.
+		boot.EgressAllow = append(boot.EgressAllow, configEgressForRef(in.Ref, cfg.Egress)...)
 		boot.Cap = agentCap(nil, ops.resources)
 		// A single cage counts against the host cap like a tree's do.
 		boot.HostMax = cfg.Cages.EffectiveHostMaxLive()

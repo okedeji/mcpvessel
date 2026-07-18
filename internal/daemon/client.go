@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -10,11 +11,13 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/okedeji/mcpvessel/internal/identity"
 	"github.com/okedeji/mcpvessel/internal/llmgateway"
+	"github.com/okedeji/mcpvessel/internal/progress"
 	"github.com/okedeji/mcpvessel/internal/runtime"
 	"github.com/okedeji/mcpvessel/internal/telemetry"
 )
@@ -175,11 +178,39 @@ func (c *Client) runStream(ctx context.Context, req RunRequest, logs io.Writer) 
 			result = f.Data
 			usage.CostMicroUSD = f.CostMicroUSD
 			usage.CallDuration = time.Duration(f.CallMS) * time.Millisecond
+		case "approval":
+			// A held egress host. Prompt inline in a goroutine so the decode loop
+			// keeps draining log frames; blocking here could deadlock a daemon
+			// whose stream write is waiting on the full pipe.
+			go c.promptEgressApproval(ctx, usage.RunID, f.Data)
 		case "error":
 			usage.CostMicroUSD = f.CostMicroUSD
 			usage.CallDuration = time.Duration(f.CallMS) * time.Millisecond
 			return result, usage, fmt.Errorf("%s", f.Data)
 		}
+	}
+}
+
+// egressPromptMu serializes inline approval prompts so two held hosts do not
+// read stdin at once.
+var egressPromptMu sync.Mutex
+
+// promptEgressApproval asks the operator, at an attached terminal, whether to
+// allow a held host, and relays the answer to the daemon. When stdin is not a
+// terminal it does nothing: the host stays held for 'mcpvessel egress allow'
+// from another shell, or fails closed at the deadline.
+func (c *Client) promptEgressApproval(ctx context.Context, runID, host string) {
+	if runID == "" || !progress.IsTerminal(os.Stdin) {
+		return
+	}
+	egressPromptMu.Lock()
+	defer egressPromptMu.Unlock()
+	_, _ = fmt.Fprintf(os.Stderr, "\negress pending: %s. Allow this host? [y/N] (or run: mcpvessel egress allow %s %s)\n> ", host, runID, host)
+	line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
+	answer := strings.ToLower(strings.TrimSpace(line))
+	allow := answer == "y" || answer == "yes"
+	if err := c.AllowEgress(ctx, runID, host, allow); err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "egress decision for %s failed: %v\n", host, err)
 	}
 }
 
@@ -309,6 +340,23 @@ func (c *Client) SetBudget(ctx context.Context, id string, microUSD int64) error
 	return c.post(ctx, "/runs/"+id+"/budget", map[string]int64{"micro_usd": microUSD}, nil)
 }
 
+// PendingEgress returns every live run's currently-held hosts, keyed by run id.
+func (c *Client) PendingEgress(ctx context.Context) (map[string][]string, error) {
+	var out map[string][]string
+	err := c.get(ctx, "/egress/pending", &out)
+	return out, err
+}
+
+// AllowEgress approves (allow=true) or rejects a host the run's egress proxy is
+// holding, releasing the parked connection.
+func (c *Client) AllowEgress(ctx context.Context, id, host string, allow bool) error {
+	verb := "allow"
+	if !allow {
+		verb = "deny"
+	}
+	return c.post(ctx, "/runs/"+id+"/egress/"+verb, map[string]string{"host": host}, nil)
+}
+
 // ServedAgent is one endpoint the front door opened: its /agents/ address and
 // the public tools it exposes.
 type ServedAgent struct {
@@ -342,14 +390,13 @@ type ServeTarget struct {
 
 // Serve asks the daemon to register the bundles' exposed sets and open one
 // MCP front door bound to listen.
-func (c *Client) Serve(ctx context.Context, targets []ServeTarget, listen string, expose, noExpose []string, observe bool, egress map[string][]string, env map[string]string, secrets runtime.ScopedSecrets) (ServeResult, error) {
+func (c *Client) Serve(ctx context.Context, targets []ServeTarget, listen string, expose, noExpose []string, egress map[string][]string, env map[string]string, secrets runtime.ScopedSecrets) (ServeResult, error) {
 	var out ServeResult
 	err := c.post(ctx, "/serve", map[string]any{
 		"bundles":   targets,
 		"listen":    listen,
 		"expose":    expose,
 		"no_expose": noExpose,
-		"observe":   observe,
 		"egress":    egress,
 		"env":       env,
 		"secrets":   secrets,

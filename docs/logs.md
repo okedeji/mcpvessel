@@ -67,5 +67,5 @@ mcpvessel logs -f me-github-3f9a1c22-b17e | tee github.log
 
 - [run](run.md), [serve](serve.md): the commands that boot the runs `logs` reads.
 - [daemon](daemon.md): the process that opens each run's durable log and serves `logs` over its socket.
-- [observe](observe.md): discovering the egress hosts a run needs, so its log stops showing `egress denied` lines.
+- [egress](egress.md): approving the hosts a run is held on, which is what the `egress pending` and `egress allowed` log lines are about.
 - [Cage it](../README.md#cage-it): the egress model behind the denials a run log records.

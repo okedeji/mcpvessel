@@ -83,13 +83,13 @@ All of GitHub's tools appear on that URL, and your client calls them exactly as 
 
 `-t @me/github:0.1` is the caged server's handle: what you serve, push, and pull by. `import` also writes the editable source to `./github-mcp-server/`, yours to tweak and rebuild anytime.
 
-Not sure which hosts a server needs? Run it in audit mode and mcpvessel prints the exact line to allow:
+Not sure which hosts a server needs? You do not have to know up front. A run is deny-default: the first time a server reaches a new host, the connection is held and mcpvessel asks you to allow it. Approve it once and it is remembered:
 
 ```sh
-mcpvessel observe @me/github:0.1 --secret GITHUB_PERSONAL_ACCESS_TOKEN
-# exercise its tools (from your MCP client or with curl), then it reports:
-#   Observed egress:
-#     EGRESS allow:api.github.com
+# Serve with no egress set, the first call that reaches out is held, not failed.
+mcpvessel serve @me/github:0.1 --listen 127.0.0.1:7000 --secret GITHUB_PERSONAL_ACCESS_TOKEN
+# mcpvessel egress ls shows the held host; approve it and it is remembered for next time:
+mcpvessel egress allow @me/github:0.1 api.github.com
 ```
 
 Put several servers behind the same endpoint by importing more and serving them together, each in its own container with no route to the others:

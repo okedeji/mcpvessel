@@ -20,7 +20,7 @@ Between the cages and everything outside them sit a few small broker containers 
 
 **The MCP gateway** is the referee for every tool call inside a run. It is the one container that joins every cage's network, and it is how a caller reaches a sub-agent's tools at all: each `USES` edge becomes one route on the gateway, and the caller is handed a `VESSEL_USES_<ALIAS>_URL` that points at the gateway, not at the sub-agent. So every call in the tree passes through the referee, which is where `DENY` and `BAN` are enforced. A cage cannot route around it, because a cage cannot see any network but its own.
 
-**The egress proxy** is the outbound filter. When a server is granted egress (`EGRESS allow:` in the Vesselfile, or `--egress` at run time), an egress proxy joins that server's network and lets through only the permitted hosts, refusing everything else. A server with no grant gets no proxy and no outbound path. `observe --observe-egress` works by watching what a server tries to reach through this layer and printing the `allow:` line it would need.
+**The egress proxy** is the outbound filter, and it is deny-default. An egress proxy joins each server's network and lets through only the hosts that server is allowed (its baked `EGRESS allow:`, the operator's `--egress` or `config egress`, and any live approval). A host that is not allowed is not refused outright: the proxy **holds** the connection and signals the daemon, which asks the operator to approve or reject it (`mcpvessel egress allow`), then releases or drops the held connection through a loopback control surface the daemon drives with `nerdctl exec`. Only a server whose Vesselfile declares `EGRESS deny-default` runs with no proxy and no outbound path at all.
 
 **The LLM gateway** is the key holder, and it exists only when a run has a reasoning agent. It holds your model provider's key, which never enters any cage. A reasoner reaches it through `VESSEL_LLM_URL`, sends a placeholder model and a throwaway key, and the gateway rewrites the model to your configured default, meters the spend against the run's budget, and forwards the request to the real provider. Two properties keep this safe. The gateway routes by an unguessable token baked into each agent's URL, not by the agent's guessable name, so one agent cannot address another's LLM edge. And it joins only the networks of reasoning cages and the reasoning pool, so a non-reasoning cage never shares a network with the container that holds the key.
 
@@ -56,5 +56,5 @@ What it buys: a caged server runs with no access to your host or files, no outbo
 - [VESSELFILE.md](VESSELFILE.md): the `EGRESS`, `USES`, `BAN`, and `SECRETS` directives that configure the wiring above.
 - [REASONER.md](REASONER.md): how an agent reaches the MCP and LLM gateways, and why it holds no key.
 - [daemon](daemon.md), [init](init.md): the control plane and the runtime setup this page describes.
-- [observe](observe.md): watch a server's real egress through the proxy layer.
+- [egress](egress.md): approve or reject the hosts a server is held on at the proxy layer.
 - [SECURITY.md](../SECURITY.md): the full signing, trust, and scope policy.

@@ -4,16 +4,42 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 // testHandler builds the proxy with no event sink; tests that assert on
 // denial lines call Handler directly with a buffer.
 func testHandler(cfg Config) http.Handler { return Handler(cfg, nil) }
+
+// shortProxy builds a proxy whose holds time out fast, so a test that expects a
+// denial does not wait the production deadline.
+func shortProxy(cfg Config, events io.Writer) *Proxy {
+	p := New(cfg, events)
+	p.deadline = 100 * time.Millisecond
+	return p
+}
+
+// waitHold blocks until a CONNECT has parked on host, so a test can approve or
+// reject it without racing the parking goroutine.
+func waitHold(t *testing.T, p *Proxy, host string) {
+	t.Helper()
+	for i := 0; i < 400; i++ {
+		p.mu.Lock()
+		n := len(p.holds[host])
+		p.mu.Unlock()
+		if n > 0 {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("host %s was never held", host)
+}
 
 // connect sends a raw CONNECT for target and returns the status line plus the
 // source IP the proxy saw, so a test can allow or deny exactly it.
@@ -51,10 +77,12 @@ func TestHandler_LogsDenialOncePerHost(t *testing.T) {
 
 	var events bytes.Buffer
 	cfg := Config{Sources: map[string][]string{srcIP: {}}, Names: map[string]string{srcIP: "github"}}
-	srv := httptest.NewServer(Handler(cfg, &events))
+	p := shortProxy(cfg, &events)
+	srv := httptest.NewServer(p.Handler())
 	defer srv.Close()
 
-	// Two denials of the same host should log exactly one line.
+	// Two connects to the same unapproved host: each holds then times out, but
+	// the denial line is logged once.
 	for i := 0; i < 2; i++ {
 		_, _, c := connect(t, srv.Listener.Addr().String(), "objects.githubusercontent.com:443")
 		_ = c.Close()
@@ -66,55 +94,106 @@ func TestHandler_LogsDenialOncePerHost(t *testing.T) {
 	if !strings.Contains(got, "objects.githubusercontent.com") || !strings.Contains(got, "agent github") {
 		t.Errorf("denial line missing host or agent name:\n%s", got)
 	}
-	// Lead with the fast runtime override, then the permanent bake-in.
-	if !strings.Contains(got, "--egress") || !strings.Contains(got, "EGRESS allow:") {
-		t.Errorf("denial line should offer both --egress and the EGRESS bake-in:\n%s", got)
+	// The denial offers the approval command and the permanent bake-in.
+	if !strings.Contains(got, "mcpvessel egress allow") || !strings.Contains(got, "EGRESS allow:") {
+		t.Errorf("denial line should offer the approve command and the bake-in:\n%s", got)
+	}
+	// A held host logs a pending marker before it is denied.
+	if !strings.Contains(got, "egress pending: objects.githubusercontent.com") {
+		t.Errorf("held host should log a pending line:\n%s", got)
 	}
 }
 
-func TestHandler_ObserveRecordsInsteadOfDenying(t *testing.T) {
-	// Learn the source IP, then run in audit mode with no allow list at all.
-	tmp := httptest.NewServer(testHandler(Config{}))
-	_, srcIP, c0 := connect(t, tmp.Listener.Addr().String(), "x:1")
-	_ = c0.Close()
-	tmp.Close()
-
-	var events bytes.Buffer
-	cfg := Config{Observe: true, Names: map[string]string{srcIP: "fetch"}}
-	srv := httptest.NewServer(Handler(cfg, &events))
-	defer srv.Close()
-
-	// The host is recorded even though nothing allows it; the tunnel then fails
-	// to dial, but the observation is written before that.
-	for i := 0; i < 2; i++ {
-		_, _, c := connect(t, srv.Listener.Addr().String(), "api.github.com:443")
-		_ = c.Close()
-	}
-	got := events.String()
-	if strings.Count(got, "egress observed:") != 1 {
-		t.Errorf("want one deduped observation, got:\n%s", got)
-	}
-	if !strings.Contains(got, "api.github.com") || !strings.Contains(got, "agent fetch") {
-		t.Errorf("observation missing host or agent:\n%s", got)
-	}
-	if strings.Contains(got, "denied") {
-		t.Errorf("audit mode must not deny:\n%s", got)
-	}
-}
-
-func TestHandler_RefusesDisallowedHost(t *testing.T) {
+func TestHandler_HoldsThenRefusesDisallowedHost(t *testing.T) {
 	// Learn the source IP from a throwaway connect, then allow only good.test.
 	tmp := httptest.NewServer(testHandler(Config{}))
 	_, srcIP, c0 := connect(t, tmp.Listener.Addr().String(), "x:1")
 	_ = c0.Close()
 	tmp.Close()
 
-	real := httptest.NewServer(testHandler(Config{Sources: map[string][]string{srcIP: {"good.test"}}}))
+	real := httptest.NewServer(shortProxy(Config{Sources: map[string][]string{srcIP: {"good.test"}}}, nil).Handler())
 	defer real.Close()
 	status, _, c := connect(t, real.Listener.Addr().String(), "bad.test:443")
 	_ = c.Close()
 	if !contains(status, "403") {
-		t.Errorf("disallowed host status = %q, want 403", status)
+		t.Errorf("disallowed host status = %q, want 403 after the hold times out", status)
+	}
+}
+
+func TestProxy_HoldThenApproveTunnels(t *testing.T) {
+	// A permissive dialer so an approved host actually tunnels to the backend.
+	old := dialTarget
+	dialTarget = func(target string) (net.Conn, error) { return net.Dial("tcp", target) }
+	defer func() { dialTarget = old }()
+
+	backend, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = backend.Close() }()
+	go func() {
+		conn, err := backend.Accept()
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.Close() }()
+		line, _ := bufio.NewReader(conn).ReadString('\n')
+		_, _ = conn.Write([]byte("echo:" + line))
+	}()
+	backendHost := hostOnly(backend.Addr().String())
+
+	probe := httptest.NewServer(testHandler(Config{}))
+	_, srcIP, pc := connect(t, probe.Listener.Addr().String(), "x:1")
+	_ = pc.Close()
+	probe.Close()
+
+	var events bytes.Buffer
+	p := New(Config{Sources: map[string][]string{srcIP: {}}, Names: map[string]string{srcIP: "fetch"}}, &events)
+	srv := httptest.NewServer(p.Handler())
+	defer srv.Close()
+
+	done := make(chan string, 1)
+	go func() {
+		status, _, c := connect(t, srv.Listener.Addr().String(), backend.Addr().String())
+		defer func() { _ = c.Close() }()
+		if contains(status, "200") {
+			_, _ = fmt.Fprint(c, "ping\n")
+			reply, _ := bufio.NewReader(c).ReadString('\n')
+			done <- status + reply
+			return
+		}
+		done <- status
+	}()
+
+	waitHold(t, p, backendHost)
+	p.decide(backendHost, true) // operator approves
+
+	out := <-done
+	if !contains(out, "200") || !strings.Contains(out, "echo:ping") {
+		t.Errorf("approved host did not tunnel: %q", out)
+	}
+}
+
+func TestProxy_HoldThenDeny(t *testing.T) {
+	probe := httptest.NewServer(testHandler(Config{}))
+	_, srcIP, pc := connect(t, probe.Listener.Addr().String(), "x:1")
+	_ = pc.Close()
+	probe.Close()
+
+	p := New(Config{Sources: map[string][]string{srcIP: {}}}, nil)
+	srv := httptest.NewServer(p.Handler())
+	defer srv.Close()
+
+	done := make(chan string, 1)
+	go func() {
+		status, _, c := connect(t, srv.Listener.Addr().String(), "evil.test:443")
+		_ = c.Close()
+		done <- status
+	}()
+	waitHold(t, p, "evil.test")
+	p.decide("evil.test", false) // operator rejects
+	if status := <-done; !contains(status, "403") {
+		t.Errorf("rejected host status = %q, want 403", status)
 	}
 }
 

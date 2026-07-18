@@ -24,6 +24,11 @@ import (
 type RunInput struct {
 	BundlePath string
 
+	// Ref is the agent's registry reference (@org/name:version) when run by
+	// reference, used to key the operator's persisted egress and secret config.
+	// Empty for a bundle run straight from a path, which keys nothing.
+	Ref string
+
 	// Budget caps LLM spend in micro-USD; 0 defers to the agent's advisory BUDGET.
 	Budget int64
 
@@ -68,11 +73,6 @@ type RunInput struct {
 	// LogFile opens the run's durable log once the run id is known; the agent's
 	// stderr is teed there, build progress is not. Nil logs to Stderr alone.
 	LogFile func(runID string) io.WriteCloser
-
-	// ObserveEgress runs the egress proxy in audit mode: every host is allowed
-	// and recorded, so a run can learn a server's egress profile before it is
-	// locked down. Off leaves the cage deny-default.
-	ObserveEgress bool
 
 	// EgressAllow is the operator's per-run egress override for the root agent:
 	// hosts allowed on top of what the Vesselfile declares, for this run only.
@@ -185,26 +185,25 @@ func Acquire(ctx context.Context, in RunInput) (*Session, error) {
 	}
 
 	boot := bootInput{
-		Vesselfile:    af,
-		Manifest:      manifest,
-		SourceDir:     srcDir,
-		ImageRef:      deriveImageRef(in.BundlePath, manifest),
-		InjectBridge:  manifestUsesBridge(manifest),
-		RunID:         runID,
-		Budget:        in.Budget,
-		OpEnv:         in.Env,
-		OpSecrets:     in.Secrets.For(in.Name),
-		Stdout:        in.Stdout,
-		Stderr:        in.Stderr,
-		Verbose:       in.Verbose,
-		NoCache:       in.NoCache,
-		Managed:       in.Managed,
-		Interaction:   in.Interaction,
-		OnEvent:       in.OnEvent,
-		Record:        in.Record,
-		LogFile:       in.LogFile,
-		ObserveEgress: in.ObserveEgress,
-		EgressAllow:   in.EgressAllow,
+		Vesselfile:   af,
+		Manifest:     manifest,
+		SourceDir:    srcDir,
+		ImageRef:     deriveImageRef(in.BundlePath, manifest),
+		InjectBridge: manifestUsesBridge(manifest),
+		RunID:        runID,
+		Budget:       in.Budget,
+		OpEnv:        in.Env,
+		OpSecrets:    in.Secrets.For(in.Name),
+		Stdout:       in.Stdout,
+		Stderr:       in.Stderr,
+		Verbose:      in.Verbose,
+		NoCache:      in.NoCache,
+		Managed:      in.Managed,
+		Interaction:  in.Interaction,
+		OnEvent:      in.OnEvent,
+		Record:       in.Record,
+		LogFile:      in.LogFile,
+		EgressAllow:  in.EgressAllow,
 	}
 	if router != nil {
 		boot.ElicitHandler = router.route
@@ -270,9 +269,6 @@ type bootInput struct {
 
 	LogFile func(runID string) io.WriteCloser
 
-	// ObserveEgress runs the egress proxy in audit mode for this boot.
-	ObserveEgress bool
-
 	// EgressAllow is the operator's per-run egress override for the root agent.
 	EgressAllow []string
 
@@ -326,12 +322,16 @@ func bootAgent(ctx context.Context, in bootInput) (*mcp.Client, *workingSet, err
 		return nil, nil, err
 	}
 
-	// A lone agent still needs a per-run internal network when it has a MODEL
-	// (LLM gateway) or allow: egress (egress proxy); the gateways are the run's
-	// only doors out. Without either it stays on the default network.
+	// A lone agent needs a per-run internal network when it has a MODEL (LLM
+	// gateway) or runs the egress proxy; the gateways are its only doors out.
+	// The egress proxy runs deny-default unless the agent declares EGRESS
+	// deny-default and the operator granted nothing, so a fresh server can have
+	// its first host held for approval rather than hard-failing.
 	model := manifestModel(in.Manifest)
+	rawEgress := manifestEgress(in.Manifest)
 	// The operator's per-run --egress adds to what the Vesselfile declares.
-	allowHosts := unionHosts(egressHosts(manifestEgress(in.Manifest)), in.EgressAllow)
+	allowHosts := unionHosts(egressHosts(rawEgress), in.EgressAllow)
+	runEgress := wantsEgress(rawEgress, allowHosts)
 
 	// Refuse the run before starting anything if the cage plus gateways does
 	// not fit the machine, the same admission a USES tree gets. Empty Cap means
@@ -373,7 +373,7 @@ func bootAgent(ctx context.Context, in bootInput) (*mcp.Client, *workingSet, err
 	if in.Network == "" {
 		in.Network = "none"
 	}
-	if model != "" || len(allowHosts) > 0 || in.ObserveEgress {
+	if model != "" || runEgress {
 		network := in.RunID + "-net"
 		if err := createNetwork(ctx, sess.provisioner, network, true, in.Managed); err != nil {
 			return nil, nil, err
@@ -407,7 +407,7 @@ func bootAgent(ctx context.Context, in bootInput) (*mcp.Client, *workingSet, err
 			in.Env[env.LLMURL] = llmURL(in.RunID, token)
 		}
 
-		if len(allowHosts) > 0 || in.ObserveEgress {
+		if runEgress {
 			for k, v := range egressProxyEnv(in.RunID) {
 				in.Env[k] = v
 			}
@@ -431,9 +431,8 @@ func bootAgent(ctx context.Context, in bootInput) (*mcp.Client, *workingSet, err
 	}
 
 	// The egress proxy keys its allow-list by the agent's address, known only
-	// once the container is running, so it starts after the agent. Audit mode
-	// runs it even with no allow list, to record what the server reaches.
-	if len(allowHosts) > 0 || in.ObserveEgress {
+	// once the container is running, so it starts after the agent.
+	if runEgress {
 		if err := startEgressProxy(ctx, sess, in.RunID, egressNet, map[string]egressAgent{in.RunID: {Network: in.Network, Hosts: allowHosts}}, in, td); err != nil {
 			return nil, nil, err
 		}

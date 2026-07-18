@@ -14,6 +14,31 @@ import (
 	"github.com/okedeji/mcpvessel/internal/env"
 )
 
+// AllowRunEgress approves (or rejects) a held host on a run's egress proxy,
+// driving the proxy's loopback control surface via nerdctl exec inside its
+// container, the same daemon-to-container path the LLM gateway uses for budget.
+// An approval releases the held connection and joins the proxy's allow-set for
+// the rest of the run.
+func AllowRunEgress(ctx context.Context, runID, host string, allow bool) error {
+	p, err := DefaultProvisioner()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = p.Close() }()
+
+	verb := "allow"
+	if !allow {
+		verb = "deny"
+	}
+	cmd := p.Nerdctl(ctx, "exec", egressProxyName(runID), gatewayBinaryPath, "egress-control", verb, host)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("egress %s %s for run %s (is it running with an egress proxy?): %w: %s",
+			verb, host, runID, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 // egressProxyName is the proxy's container name, also its hostname on the run
 // network.
 func egressProxyName(runID string) string { return runID + "-egress-proxy" }
@@ -32,24 +57,20 @@ func manifestEgress(m *bundle.Manifest) string {
 	return m.Vesselfile.Egress
 }
 
-// unionHosts merges two host lists, deduping while keeping the first list's
-// order and appending new hosts from the second.
-func unionHosts(base, extra []string) []string {
-	if len(extra) == 0 {
-		return base
-	}
-	seen := make(map[string]bool, len(base))
-	out := make([]string, 0, len(base)+len(extra))
-	for _, h := range base {
-		if !seen[h] {
-			seen[h] = true
-			out = append(out, h)
-		}
-	}
-	for _, h := range extra {
-		if !seen[h] {
-			seen[h] = true
-			out = append(out, h)
+// unionHosts merges host lists, deduping while keeping the first appearance
+// order across all lists.
+func unionHosts(lists ...[]string) []string {
+	var seen map[string]bool
+	var out []string
+	for _, list := range lists {
+		for _, h := range list {
+			if seen == nil {
+				seen = map[string]bool{}
+			}
+			if !seen[h] {
+				seen[h] = true
+				out = append(out, h)
+			}
 		}
 	}
 	return out
@@ -59,6 +80,14 @@ func unionHosts(base, extra []string) []string {
 // non-allow policy has none and never routes through the proxy.
 func egressHosts(policy string) []string {
 	return egress.AllowHosts(policy)
+}
+
+// wantsEgress reports whether a cage runs the deny-default egress proxy. Absent
+// or allow: EGRESS runs it, so a host can be held and approved on first contact
+// instead of hard-failing. An explicit EGRESS deny-default is the author's "no
+// network ever": no proxy, hard isolation, unless the operator granted hosts.
+func wantsEgress(rawEgress string, hosts []string) bool {
+	return rawEgress != "deny-default" || len(hosts) > 0
 }
 
 // egressProxyEnv routes an allow: agent's external traffic through the run's
@@ -102,14 +131,14 @@ func startEgressProxy(ctx context.Context, sess *bootSession, runID, egressNetwo
 		names[ip] = container
 		nets = append(nets, agent.Network)
 	}
-	cfgJSON, err := json.Marshal(egress.Config{Sources: sources, Names: names, Observe: in.ObserveEgress})
+	cfgJSON, err := json.Marshal(egress.Config{Sources: sources, Names: names})
 	if err != nil {
 		return fmt.Errorf("encoding egress config: %w", err)
 	}
 	spec := ContainerSpec{
 		RunID:    egressProxyName(runID),
 		ImageRef: GatewayImageRef(),
-		Args:     []string{"egress"},
+		Args:     []string{"egress-proxy"},
 		Networks: nets,
 		Env: map[string]string{
 			env.EgressConfig: string(cfgJSON),

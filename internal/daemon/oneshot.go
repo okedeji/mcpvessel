@@ -94,6 +94,7 @@ func (d *Daemon) handleRun(w http.ResponseWriter, r *http.Request) {
 	session, err := d.boot(r.Context(), runtime.RunInput{
 		BundlePath:  b.Path,
 		Name:        b.Name,
+		Ref:         req.Ref,
 		Budget:      req.Budget,
 		Env:         req.Env,
 		Secrets:     req.Secrets,
@@ -126,7 +127,11 @@ func (d *Daemon) handleRun(w http.ResponseWriter, r *http.Request) {
 		callArgs = map[string]any{}
 	}
 	callStart := nowFunc()
+	// While the call runs, forward any egress hold to the client as an approval
+	// frame so an attached run/call can prompt the operator inline.
+	stopWatch := d.watchEgressPending(session.RunID(), stream)
 	result, callErr := session.Call(callCtx, req.Tool, callArgs)
+	stopWatch()
 	callErr = enrichEgressError(callErr, d.denials.hosts(session.RunID()))
 	callMS := nowFunc().Sub(callStart).Milliseconds()
 	status := history.StatusSucceeded
