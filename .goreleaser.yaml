@@ -90,6 +90,10 @@ release:
 homebrew_casks:
   - name: mcpvessel
     ids: [darwin]
+    # Only publish the cask for a real release. "auto" skips the tap push on any
+    # prerelease (a tag with a "-", e.g. v0.1.0-rc.4), so an rc can still build
+    # and cut a draft for testing without overwriting the stable cask users pull.
+    skip_upload: "auto"
     repository:
       owner: okedeji
       name: homebrew-tap
