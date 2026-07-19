@@ -47,12 +47,14 @@ An **author** builds and signs a bundle; an **operator** runs it. A **bundle** i
 
 Figure 1 shows one run of a two-agent tree. Every later section refers back to it.
 
+<div align="center">
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="figures/fig1-topology-dark.svg">
-  <img alt="One run of a two-agent tree. The operator's CLI and the daemon run on the host, alongside the ~/.mcpvessel store; the cages (reasoner, sub-agents, tool collectors) and the brokers (MCP gateway, LLM gateway, egress proxy) run inside a Lima VM on macOS or directly on the host on Linux. Each cage is on its own private network. The reasoner reaches the MCP gateway for tool calls and the LLM gateway for model calls; the LLM gateway holds the provider key and reaches the provider directly, while the egress proxy filters all other outbound traffic deny-default. The daemon drives the VM via limactl shell and nerdctl exec." src="figures/fig1-topology-light.svg">
+  <img alt="One run of a two-agent tree. The operator's CLI and the daemon run on the host, alongside the ~/.mcpvessel store; the cages (reasoner, sub-agents, tool collectors) and the brokers (MCP gateway, LLM gateway, egress proxy) run inside a Lima VM on macOS or directly on the host on Linux. Each cage is on its own private network. The reasoner reaches the MCP gateway for tool calls and the LLM gateway for model calls; the LLM gateway holds the provider key and reaches the provider directly, while the egress proxy filters all other outbound traffic deny-default. The daemon drives the VM via limactl shell and nerdctl exec." src="figures/fig1-topology-light.svg" width="760">
 </picture>
-
-*Figure 1. One run of a two-agent tree. The CLI, daemon, and `~/.mcpvessel` run on the host; the cages and brokers run in the Lima VM on macOS or on the host on Linux. Cages are untrusted; the brokers and daemon are the TCB, and each cage wall plus the VM wall (macOS) is a boundary. No two cages share a network. The reasoning cage reaches the MCP gateway (tool calls) and the LLM gateway (model calls) on separate URLs; the two brokers never talk. Cage egress is filtered by the proxy deny-default; the LLM gateway reaches the provider directly. Numbered arrows trace the tool-call lifecycle of §8.1.*
+<br>
+<em>Figure 1. One run of a two-agent tree. The CLI, daemon, and <code>~/.mcpvessel</code> run on the host; the cages and brokers run in the Lima VM on macOS or on the host on Linux. Cages are untrusted; the brokers and daemon are the TCB, and each cage wall plus the VM wall (macOS) is a boundary. No two cages share a network. The reasoning cage reaches the MCP gateway (tool calls) and the LLM gateway (model calls) on separate URLs; the two brokers never talk. Cage egress is filtered by the proxy deny-default; the LLM gateway reaches the provider directly. Numbered arrows trace the tool-call lifecycle of §8.1.</em>
+</div>
 
 Three entry surfaces feed this topology and converge on it: `run` and `call` boot a run over a one-shot stdio session; `serve` opens a long-lived MCP-over-HTTP front door; and `serve` also answers plain REST for callers that speak no MCP. All three produce the same cage-and-broker graph behind the entry point, so the guarantees below hold regardless of how a run was started.
 
