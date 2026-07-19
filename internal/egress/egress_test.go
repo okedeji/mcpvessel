@@ -68,6 +68,32 @@ func TestHandler_RefusesUnknownSource(t *testing.T) {
 	}
 }
 
+func TestValidHost(t *testing.T) {
+	for _, h := range []string{"example.com", "api.example.com", "10.0.0.8", "::1", "my_host", "a-b.c"} {
+		if !ValidHost(h) {
+			t.Errorf("ValidHost(%q) = false, want true", h)
+		}
+	}
+	for _, h := range []string{"", "evil com", "evil\x1b[2J.com", "host\nname", "evil.com/path", strings.Repeat("a", 254)} {
+		if ValidHost(h) {
+			t.Errorf("ValidHost(%q) = true, want false", h)
+		}
+	}
+}
+
+func TestHandler_RefusesMalformedHost(t *testing.T) {
+	// A CONNECT host outside the hostname charset is refused before it can be
+	// matched, held, or written to the event stream the operator's terminal
+	// renders.
+	srv := httptest.NewServer(testHandler(Config{Sources: map[string][]string{}}))
+	defer srv.Close()
+	status, _, c := connect(t, srv.Listener.Addr().String(), "bad,host.com:443")
+	_ = c.Close()
+	if !contains(status, "400") {
+		t.Errorf("malformed host status = %q, want 400", status)
+	}
+}
+
 func TestHandler_LogsDenialOncePerHost(t *testing.T) {
 	// Learn the source IP, then deny it everything and watch the event sink.
 	tmp := httptest.NewServer(testHandler(Config{}))

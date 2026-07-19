@@ -68,6 +68,25 @@ func TestDenialSink_AllowedClearsDenial(t *testing.T) {
 	}
 }
 
+func TestDenialSink_IgnoresMalformedHost(t *testing.T) {
+	den := newEgressDenials()
+	pend := newPendingEgress()
+	sink := &denialScanSink{w: nopWriteCloser{}, runID: "run-1", den: den, pend: pend}
+
+	// A host carrying bytes outside the hostname charset (here a terminal
+	// escape sequence) must not surface to the operator or land in a suggested
+	// command; the rule is applied where the host is used, not only where the
+	// proxy produced the line.
+	_, _ = sink.Write([]byte("egress pending: \x1b[2Jevil.com (agent x)\n"))
+	if got := pend.list()["run-1"]; len(got) != 0 {
+		t.Errorf("pending after malformed host = %v, want none", got)
+	}
+	_, _ = sink.Write([]byte("egress denied: \x1b[31mevil.com (agent x) — ...\n"))
+	if got := den.hosts("run-1"); got != nil {
+		t.Errorf("denials after malformed host = %v, want none", got)
+	}
+}
+
 func TestEnrichEgressError(t *testing.T) {
 	base := errors.New("tool returned an error: connection issue")
 	got := enrichEgressError(base, "run-1", []string{"api.github.com"})

@@ -91,6 +91,14 @@ func (p *Proxy) Handler() http.Handler {
 		}
 		host := hostOnly(r.Host)
 		src := hostOnly(r.RemoteAddr)
+		if !ValidHost(host) {
+			// The host string is the caged server's own bytes. Refusing a
+			// malformed one here keeps it out of the allow-set match, the hold
+			// table, and the event lines the daemon parses and shows the
+			// operator, where a control sequence could otherwise ride along.
+			http.Error(w, "malformed egress host", http.StatusBadRequest)
+			return
+		}
 		if !p.await(src, host) {
 			http.Error(w, "egress to "+host+" not allowed", http.StatusForbidden)
 			return
@@ -324,4 +332,26 @@ func hostOnly(hostport string) string {
 		return h
 	}
 	return hostport
+}
+
+// ValidHost bounds a CONNECT host to hostname and IP-literal characters. A
+// name is matched against allow-sets, keyed into the hold table, and written
+// to the event stream the daemon renders in the operator's terminal, so it
+// must never carry spaces, control bytes, or escape sequences. Exported for
+// the daemon, which applies the same rule when it parses a host back out of a
+// proxy event line.
+func ValidHost(h string) bool {
+	if h == "" || len(h) > 253 {
+		return false
+	}
+	for i := 0; i < len(h); i++ {
+		c := h[i]
+		switch {
+		case 'a' <= c && c <= 'z', 'A' <= c && c <= 'Z', '0' <= c && c <= '9':
+		case c == '.' || c == '-' || c == ':' || c == '_':
+		default:
+			return false
+		}
+	}
+	return true
 }

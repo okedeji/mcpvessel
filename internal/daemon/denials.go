@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/okedeji/mcpvessel/internal/egress"
 )
 
 // egressDenials tracks, per run, the hosts the egress proxy denied. It is fed
@@ -201,7 +203,11 @@ func (s *denialScanSink) publish(e Event) {
 func (s *denialScanSink) Close() error { return s.w.Close() }
 
 // parseEgressHost pulls the host that follows marker in an
-// "<marker><host> (agent ...)" proxy line.
+// "<marker><host> (agent ...)" proxy line. The proxy refuses a malformed host
+// before it can appear in a line, but the same charset rule is re-applied
+// here: what this parse extracts is echoed to the operator's terminal and
+// embedded in a suggested command, so it is validated where it is used, not
+// only where it was produced.
 func parseEgressHost(line, marker string) (string, bool) {
 	i := strings.Index(line, marker)
 	if i < 0 {
@@ -209,7 +215,7 @@ func parseEgressHost(line, marker string) (string, bool) {
 	}
 	host, _, _ := strings.Cut(line[i+len(marker):], " ")
 	host = strings.TrimSpace(host)
-	return host, host != ""
+	return host, egress.ValidHost(host)
 }
 
 // enrichEgressError appends the cage's blocked hosts to a tool error, so the
