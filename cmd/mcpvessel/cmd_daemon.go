@@ -17,10 +17,11 @@ func newDaemonCmd() *cobra.Command {
 		Long: `Run the long-lived daemon that supervises agents and answers the CLI.
 
 The daemon listens on a Unix socket under ~/.mcpvessel and tracks running
-agents so 'mcpvessel ps', 'logs', and 'stop' can reach them. It runs where
-containerd does: on Linux that is this host, so you start it directly (under
-systemd in production). On macOS the host starts it inside the hidden Linux VM
-for you, so you do not run this command yourself there.
+agents so 'mcpvessel ps', 'logs', and 'stop' can reach them. It runs as a host
+process on both platforms and 'mcpvessel init' starts it for you. On Linux it
+drives the host's own container runtime directly; on macOS it drives a Lima VM,
+where the cages and brokers run, so the daemon stays on the host and reaches the
+containers through the VM. You rarely run this command yourself.
 
 It runs in the foreground and shuts down cleanly on SIGINT or SIGTERM.`,
 		Example: `  mcpvessel daemon`,
