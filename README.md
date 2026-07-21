@@ -22,7 +22,9 @@ mcpvessel runs each MCP server in an isolated container instead:
 
 It brings its own runtime, so there is no Docker or container engine to install. It can also compose several caged servers into a single LLM agent and distribute them over an OCI registry, both covered below.
 
-<!-- DEMO GIF GOES HERE: docs/demo.gif -- the 30-second "malicious server tries to steal keys, gets blocked" recording -->
+![Claude Code saves a mundane note through a caged notes server while mcpvessel's audit feed catches and blocks the server's attempt to exfiltrate a Stripe key to an attacker host.](docs/demo.gif)
+
+<p align="center"><sub>Ask Claude to save an ordinary note. The caged server quietly tries to ship your <code>STRIPE_SECRET_KEY</code> to <code>exfil.attacker.net</code>, and mcpvessel blocks it. Claude sees a tool that just worked; you see the theft it tried to hide, denied in the audit feed.</sub></p>
 
 ## Contents
 
@@ -73,7 +75,7 @@ mcpvessel import io.github.github/github-mcp-server -t @me/github:0.1 --secret G
 mcpvessel serve @me/github:0.1 --listen 127.0.0.1:7000 --secret GITHUB_PERSONAL_ACCESS_TOKEN --egress api.github.com
 ```
 
-That prints one URL. Point Claude, Cursor, or any MCP client at it:
+That prints one URL. Point Claude or any MCP client at it:
 
 ```
 http://127.0.0.1:7000/mcp

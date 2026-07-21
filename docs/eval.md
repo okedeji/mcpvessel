@@ -135,8 +135,8 @@ mcpvessel eval @okedeji/researcher:0.1 --case summarize_short
 # Grade judged cases with a specific configured provider.
 mcpvessel eval . --judge-model openai/gpt-4o-mini
 
-# Supply the key the agent needs to boot, and capture the report as JSON.
-mcpvessel eval @okedeji/researcher:0.1 --secret OPENAI_API_KEY --json
+# Supply a tool credential the agent's cases need, and capture the report as JSON.
+mcpvessel eval @okedeji/researcher:0.1 --secret BRAVE_API_KEY --json
 ```
 
 ## Notes
