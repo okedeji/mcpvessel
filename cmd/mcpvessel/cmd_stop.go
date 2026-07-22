@@ -50,7 +50,7 @@ func stopRuns(ctx context.Context, stop func(context.Context, string) error, std
 			_, _ = fmt.Fprintf(stderr, "%s: %v\n", id, err)
 			continue
 		}
-		_, _ = fmt.Fprintln(stdout, id)
+		_, _ = fmt.Fprintf(stdout, "Stopped %s\n", id)
 	}
 	if failed > 0 {
 		return fmt.Errorf("failed to stop %d of %d run(s)", failed, len(ids))

@@ -63,9 +63,9 @@ Use this command for local development, where you started the daemon yourself.`,
 			if err != nil {
 				return err
 			}
-			msg := "no daemon is running"
+			msg := "No daemon is running."
 			if stopped {
-				msg = "daemon stopped"
+				msg = "Stopped the daemon"
 			}
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), msg)
 			return nil

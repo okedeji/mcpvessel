@@ -77,7 +77,7 @@ Pass --password-stdin to feed a token without it landing in your shell history.`
 			if err := registry.Login(cmd.Context(), host, user, pass); err != nil {
 				return err
 			}
-			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Login Succeeded")
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Logged in to %s\n", host)
 			return nil
 		},
 	}
@@ -104,7 +104,7 @@ func loginMCPRegistry(cmd *cobra.Command, password string, passwordStdin bool) e
 	if err := mcpregistry.SaveToken(token); err != nil {
 		return err
 	}
-	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Login Succeeded")
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Logged in to the MCP Registry")
 	return nil
 }
 

@@ -51,7 +51,7 @@ func newSecretsSetCmd() *cobra.Command {
 			if err := store.Save(); err != nil {
 				return err
 			}
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Stored %s\n", args[0])
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Stored secret %s\n", args[0])
 			return nil
 		},
 	}

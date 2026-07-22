@@ -169,7 +169,7 @@ run; a zero in any field means "use the built-in default".`,
 			if err := c.Save(); err != nil {
 				return err
 			}
-			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Updated cage policy")
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Set cage policy")
 			return nil
 		},
 	}
@@ -216,7 +216,7 @@ built-in default.`,
 			if err := c.Save(); err != nil {
 				return err
 			}
-			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Updated machine sizing (recreate the machine for it to apply: mcpvessel init --recreate)")
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Set machine sizing (recreate the machine for it to apply: mcpvessel init --recreate)")
 			return nil
 		},
 	}
@@ -257,7 +257,7 @@ zero means the built-in default.`,
 			if err := c.Save(); err != nil {
 				return err
 			}
-			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Updated serve policy")
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Set serve policy")
 			return nil
 		},
 	}
@@ -328,7 +328,7 @@ func newConfigMetricsSetCmd() *cobra.Command {
 				return err
 			}
 			out := cmd.OutOrStdout()
-			_, _ = fmt.Fprintf(out, "Metrics endpoint set to %s\n", addr)
+			_, _ = fmt.Fprintf(out, "Set metrics endpoint to %s\n", addr)
 			if !isLoopbackHost(host) {
 				_, _ = fmt.Fprintln(out, "This binds off-loopback and the endpoint has no auth: restrict access to the port at the network layer.")
 			}
@@ -507,7 +507,7 @@ func newConfigProviderSetCmd() *cobra.Command {
 			if err := c.Save(); err != nil {
 				return err
 			}
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Configured provider %s\n", args[0])
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Set provider %s\n", args[0])
 			return nil
 		},
 	}
