@@ -1,4 +1,0 @@
-FROM ghcr.io/github/github-mcp-server
-META imported_from oci:ghcr.io/github/github-mcp-server
-EXPOSE *
-ENTRYPOINT ["./mcpvessel","mcp-bridge","--","/server/github-mcp-server","stdio"]
