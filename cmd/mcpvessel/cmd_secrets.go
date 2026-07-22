@@ -3,6 +3,10 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"io"
+	"os"
+
+	"golang.org/x/term"
 
 	"github.com/spf13/cobra"
 
@@ -34,12 +38,19 @@ func newSecretsSetCmd() *cobra.Command {
 		Short: "Store a secret value read from stdin",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			_, _ = fmt.Fprint(cmd.ErrOrStderr(), "Value: ")
+			// Prompt only a human: piped stdin needs no "Value:" and a script's
+			// output should not carry one.
+			interactive := stdinIsTerminal(cmd.InOrStdin())
+			if interactive {
+				_, _ = fmt.Fprint(cmd.ErrOrStderr(), "Value: ")
+			}
 			value, err := readSecret(cmd.InOrStdin(), bufio.NewReader(cmd.InOrStdin()))
 			if err != nil {
 				return fmt.Errorf("reading secret: %w", err)
 			}
-			_, _ = fmt.Fprintln(cmd.ErrOrStderr())
+			if interactive {
+				_, _ = fmt.Fprintln(cmd.ErrOrStderr())
+			}
 			if value == "" {
 				return fmt.Errorf("secret %q is empty", args[0])
 			}
@@ -100,4 +111,14 @@ func newSecretsRmCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// stdinIsTerminal reports whether the command's input is an interactive
+// terminal: false for pipes, files, and test buffers.
+func stdinIsTerminal(r io.Reader) bool {
+	f, ok := r.(*os.File)
+	if !ok {
+		return false
+	}
+	return term.IsTerminal(int(f.Fd()))
 }

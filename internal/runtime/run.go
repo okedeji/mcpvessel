@@ -191,6 +191,7 @@ func Acquire(ctx context.Context, in RunInput) (*Session, error) {
 		ImageRef:     deriveImageRef(in.BundlePath, manifest),
 		InjectBridge: manifestUsesBridge(manifest),
 		RunID:        runID,
+		Name:         in.Name,
 		Budget:       in.Budget,
 		OpEnv:        in.Env,
 		OpSecrets:    in.Secrets.For(in.Name),
@@ -224,6 +225,10 @@ type bootInput struct {
 	SourceDir  string
 	ImageRef   string
 	RunID      string
+
+	// Name is the agent's short name, used to attribute its own stderr lines
+	// ("[name] ...") so server noise is never mistaken for mcpvessel output.
+	Name string
 
 	// Network and Env are set by the orchestrator when wiring a USES tree;
 	// empty for a single-cage run, which stays on the default network.
@@ -588,11 +593,19 @@ func startAttachedAgent(ctx context.Context, sess *bootSession, in bootInput, se
 		return nil, fmt.Errorf("stdout pipe: %w", err)
 	}
 	// Tee the agent's stderr to the durable log from its first byte; the build
-	// progress above went to in.Stderr alone and stays out of the log.
-	cmd.Stderr = in.Stderr
+	// progress above went to in.Stderr alone and stays out of the log. The
+	// operator-facing side is line-prefixed with the agent's name so server
+	// noise is attributable; the log side stays raw, because the daemon's log
+	// pump parses its lines (egress pending/denied markers).
+	name := in.Name
+	if name == "" {
+		name = in.RunID
+	}
+	opStderr := io.Writer(&prefixLines{w: in.Stderr, prefix: "[" + name + "] "})
+	cmd.Stderr = opStderr
 	if in.LogFile != nil {
 		lf := in.LogFile(in.RunID)
-		cmd.Stderr = io.MultiWriter(in.Stderr, lf)
+		cmd.Stderr = io.MultiWriter(opStderr, lf)
 		td.push(func() error { return lf.Close() })
 	}
 	if err := cmd.Start(); err != nil {

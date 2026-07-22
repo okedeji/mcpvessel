@@ -84,6 +84,9 @@ func BuildGatewayImage(ctx context.Context, bk *BuildKit, noCache bool, w io.Wri
 		return fmt.Errorf("writing gateway definition: %w", err)
 	}
 
+	// Label the section so this stream is never mistaken for a second agent
+	// build; the gateway image carries mcpvessel's own broker binary.
+	_, _ = fmt.Fprintln(w, "Building the gateway image (mcpvessel's brokers)")
 	statusCh := make(chan *bkclient.SolveStatus, 16)
 	displayDone := make(chan struct{})
 	go func() {

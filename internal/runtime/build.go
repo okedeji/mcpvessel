@@ -172,6 +172,10 @@ func labelsFromManifest(m *bundle.Manifest) map[string]string {
 // CI logs readable. Status names are rewritten to mcpvessel's vocabulary
 // before display.
 func buildWithProgress(ctx context.Context, bk *BuildKit, in BuildInput, w io.Writer) error {
+	// Label the section: a run can emit two BuildKit streams back to back
+	// (agent, then gateway), and without a header they read as one confusing
+	// double build.
+	_, _ = fmt.Fprintln(w, "Building the agent image")
 	statusCh := make(chan *bkclient.SolveStatus, 16)
 	displayDone := make(chan struct{})
 

@@ -29,6 +29,11 @@ JSON object per line.`,
 			if err != nil {
 				return err
 			}
+			// The feed has no backlog, so a quiet start looks hung; tell the
+			// human it is listening. Piped output stays pure JSON lines.
+			if progress.IsTerminal(cmd.OutOrStdout()) {
+				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Listening for daemon events (Ctrl-C to stop)")
+			}
 			emit := eventPrinter(cmd.OutOrStdout())
 			if err := daemon.Dial(socket).Events(cmd.Context(), emit); err != nil {
 				var unreachable *daemon.Unreachable
