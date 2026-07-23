@@ -24,7 +24,7 @@ const DefaultContainerdNamespace = "default"
 // snapshotter cannot be left unset.
 const DefaultSnapshotter = "overlayfs"
 
-// Containerd wraps a containerd client scoped to the mcpvessel namespace.
+// Containerd wraps a containerd client scoped to DefaultContainerdNamespace.
 // Close releases the wrapped client's gRPC connection and goroutines.
 type Containerd struct {
 	client    *client.Client

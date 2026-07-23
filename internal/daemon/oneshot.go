@@ -53,7 +53,7 @@ func (r RunRequest) GoString() string { return r.String() }
 // is the reliable channel for a one-shot's cost, since the best-effort history
 // store may never hold it.
 type runFrame struct {
-	Type         string `json:"type"` // "log" | "run_id" | "result" | "error"
+	Type         string `json:"type"` // "log" | "run_id" | "approval" | "result" | "error"
 	Data         string `json:"data"`
 	CostMicroUSD int64  `json:"cost_micro_usd,omitempty"`
 	CallMS       int64  `json:"call_ms,omitempty"`

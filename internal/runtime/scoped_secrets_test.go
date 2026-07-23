@@ -101,8 +101,8 @@ func TestWarnSecretShapes(t *testing.T) {
 
 func TestWarnSecretShapes_SingleNonRootDeclarerWarns(t *testing.T) {
 	// A broadcast secret that only ONE sub-agent declares must still warn: one
-	// malicious declarer is enough to harvest it, so the fix widens the trigger
-	// past the two-or-more-declarers shape.
+	// malicious declarer is enough to harvest it, so the trigger is any non-root
+	// declarer, not just two or more.
 	tree := treeWith(nil, map[string][]string{"sentry-tools": {"SOLO_TOKEN"}})
 	var buf bytes.Buffer
 	warnSecretShapes(&buf, tree, "oncall", ScopedSecrets{"": {"SOLO_TOKEN": "v"}}, nil)

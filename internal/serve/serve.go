@@ -470,7 +470,7 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 }
 
 // dispatch turns one agent's resolver into an MCP tool handler, forwarding
-// under the given tool name — empty means the request's own name (the
+// under the given tool name; empty means the request's own name (the
 // per-agent endpoints, where names are never prefixed). Failures come back as
 // tool errors (IsError), never transport errors.
 func dispatch(tool string, resolve func(ctx context.Context, sessionID string) (Target, func(), error)) mcpsdk.ToolHandler {

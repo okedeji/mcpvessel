@@ -78,7 +78,7 @@ func bootRun(ctx context.Context, in RunInput, boot bootInput, runID string) (*m
 // lets the operator scope the grant. One malicious declarer is enough, so this
 // fires whenever a broadcast secret reaches at least one non-root agent, not
 // only when two or more declare it. A scope matching no agent in the run grants
-// nothing, silently, which is almost always a typo — unless the scope came from
+// nothing, silently, which is almost always a typo, unless the scope came from
 // a per-agent config binding (cfgScopes), which is global operator config and
 // legitimately covers agents other runs use, so it is not warned about here.
 func warnSecretShapes(w io.Writer, tree *runTree, rootName string, secrets ScopedSecrets, cfgScopes map[string]bool) {

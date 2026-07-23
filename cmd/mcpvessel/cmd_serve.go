@@ -32,8 +32,8 @@ func newServeCmd() *cobra.Command {
 		Long: `Serve agents to external MCP clients over HTTP.
 
 Each BUNDLE is a reference (resolved store-first, then pulled), a content hash
-from an untagged build, a path to a .agent file, or a source directory with an
-Vesselfile — a directory already built or imported serves its stored bundle
+from an untagged build, a path to a .agent file, or a source directory with a
+Vesselfile; a directory already built or imported serves its stored bundle
 without a rebuild.
 
 serve opens one front door for everything named. The merged endpoint at /mcp
@@ -174,7 +174,7 @@ type exposedPolicy struct {
 // prebuildServeImages builds, before the front door opens, every image the
 // serve's instance boots will need: each exposed agent (the roots named plus
 // their USES PUBLIC sub-agents, which serve boots as independent instances)
-// gets its full tree built. Synchronous on purpose — a background build would
+// gets its full tree built. Synchronous on purpose: a background build would
 // only narrow the race with the client's first call, and a build failure
 // belongs in this terminal, not inside an MCP error in Cursor. Everything is
 // content-addressed, so already-built bundles cost an existence check.
@@ -232,7 +232,7 @@ func prebuildServeImages(ctx context.Context, stderr io.Writer, targets []daemon
 // target. A source directory with a Vesselfile resolves by content hash: the
 // stored bundle is served as-is when present (an import or build already
 // introspected it), else the directory is built into the store first. The
-// directory's name becomes the agent's address — a hash prefix would make a
+// directory's name becomes the agent's address; a hash prefix would make a
 // poor one. Anything else passes through for the daemon's locate.
 func resolveServeTarget(ctx context.Context, stderr io.Writer, arg string) (daemon.ServeTarget, error) {
 	info, err := os.Stat(arg)

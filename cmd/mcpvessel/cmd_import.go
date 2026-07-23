@@ -212,7 +212,6 @@ func importCollection(cmd *cobra.Command, arg, dir, tag, entrypoint string, mode
 	return nil
 }
 
-// dirExists reports whether path is an existing directory.
 func dirExists(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.IsDir()

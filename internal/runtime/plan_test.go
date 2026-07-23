@@ -52,7 +52,7 @@ func TestBuildRunPlan_RootCapAndModelHonorOperatorConfig(t *testing.T) {
 		t.Fatalf("buildRunPlan: %v", err)
 	}
 
-	// The root is no longer special-cased to the runtime default: its per-agent
+	// The root is not special-cased to the runtime default: its per-agent
 	// mem override wins, and cpus/pids fall through to the operator default.
 	if plan.RootCap.Mem != "512m" || plan.RootCap.CPUs != "8" || plan.RootCap.Pids != 4096 {
 		t.Errorf("RootCap = %+v, want mem 512m / cpus 8 / pids 4096", plan.RootCap)

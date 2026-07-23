@@ -13,8 +13,8 @@ func TestDenialSink_RecordsFromLogLines(t *testing.T) {
 	// Denial lines arrive split across writes; a partial line must still parse
 	// once its newline lands.
 	_, _ = sink.Write([]byte("agent starting...\negress denied: api.github.co"))
-	_, _ = sink.Write([]byte("m (agent github) — add it...\n"))
-	_, _ = sink.Write([]byte("egress denied: objects.githubusercontent.com (agent github) — ...\n"))
+	_, _ = sink.Write([]byte("m (agent github) - add it...\n"))
+	_, _ = sink.Write([]byte("egress denied: objects.githubusercontent.com (agent github) - ...\n"))
 	// A plain agent log line is not a denial.
 	_, _ = sink.Write([]byte("fetched example.com ok\n"))
 
@@ -42,7 +42,7 @@ func TestDenialSink_DeniedClearsPending(t *testing.T) {
 	}
 
 	// A denial (a rejection or a lapsed hold) clears it from pending and records it.
-	_, _ = sink.Write([]byte("egress denied: api.example (agent x) — ...\n"))
+	_, _ = sink.Write([]byte("egress denied: api.example (agent x) - ...\n"))
 	if got := pend.list()["run-1"]; len(got) != 0 {
 		t.Errorf("pending after denial = %v, want cleared", got)
 	}
@@ -57,7 +57,7 @@ func TestDenialSink_AllowedClearsDenial(t *testing.T) {
 	sink := &denialScanSink{w: nopWriteCloser{}, runID: "run-1", den: den, pend: pend}
 
 	// A served proxy denies a host on first contact (fail fast)...
-	_, _ = sink.Write([]byte("egress denied: api.example (agent x) — ...\n"))
+	_, _ = sink.Write([]byte("egress denied: api.example (agent x) - ...\n"))
 	if got := den.hosts("run-1"); len(got) != 1 || got[0] != "api.example" {
 		t.Fatalf("denials after denial = %v, want [api.example]", got)
 	}
@@ -81,7 +81,7 @@ func TestDenialSink_IgnoresMalformedHost(t *testing.T) {
 	if got := pend.list()["run-1"]; len(got) != 0 {
 		t.Errorf("pending after malformed host = %v, want none", got)
 	}
-	_, _ = sink.Write([]byte("egress denied: \x1b[31mevil.com (agent x) — ...\n"))
+	_, _ = sink.Write([]byte("egress denied: \x1b[31mevil.com (agent x) - ...\n"))
 	if got := den.hosts("run-1"); got != nil {
 		t.Errorf("denials after malformed host = %v, want none", got)
 	}

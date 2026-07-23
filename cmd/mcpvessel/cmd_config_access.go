@@ -241,12 +241,11 @@ func splitList(args []string) []string {
 // binding is injected into just that agent's scope, its short name, mirroring
 // how the runtime scopes egress and --secret grants per node. This keeps a
 // binding meant for one agent (the root or a sub-agent) from reaching a sibling
-// that happens to declare the same name, and it applies sub-agent bindings the
-// old broadcast-only path silently dropped. An explicit --secret already in a
+// that happens to declare the same name. An explicit --secret already in a
 // scope is never overridden. A name with no resolvable value is skipped with a
 // note: a server that requires it still fails closed at injection, and one that
-// never declared it did not need it. ref is unused now that every binding is
-// resolved by its own key rather than the root ref alone.
+// never declared it did not need it. ref is unused; every binding resolves by
+// its own key rather than the root ref.
 func applyConfigSecrets(pool runtime.ScopedSecrets, ref string, stderr io.Writer) error {
 	_ = ref
 	c, err := config.Load()

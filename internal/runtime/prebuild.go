@@ -12,8 +12,8 @@ import (
 )
 
 // PrebuildImages builds every image one instance boot of bundlePath would
-// need — the root's, each USES tree node's, and the shared gateway image when
-// the tree starts a gateway — without booting a container. serve runs this
+// need (the root's, each USES tree node's, and the shared gateway image when
+// the tree starts a gateway) without booting a container. serve runs this
 // before opening its front door so a client's first call never waits on a
 // cold image build (an MCP client's call timeout is shorter than an npm or
 // pip install). Refs are content-addressed, so an already-built bundle is a
@@ -71,7 +71,7 @@ func PrebuildImages(ctx context.Context, bundlePath string, stderr io.Writer) er
 
 	// One shared scratch image backs all three gateways (MCP, LLM, egress).
 	// A tree with edges starts the MCP gateway; any reasoning node starts the
-	// LLM gateway. An egress-only proxy is not detected here — its gateway
+	// LLM gateway. An egress-only proxy is not detected here: its gateway
 	// image builds lazily at boot, a small certs-and-binary build with no
 	// package installs, nothing a client timeout would trip on.
 	if needsGatewayImage(tree) && !imageExists(ctx, sess.provisioner, GatewayImageRef()) {

@@ -54,8 +54,6 @@ func TestGateway_RecordsSubAgentCall(t *testing.T) {
 		t.Fatalf("CallTool: %v", err)
 	}
 
-	// The record hooks run after the response is sent, so wait for the payload
-	// hook before reading rather than racing it.
 	select {
 	case <-recorded:
 	case <-time.After(5 * time.Second):

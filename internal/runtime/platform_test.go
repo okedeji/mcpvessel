@@ -105,8 +105,8 @@ func TestNerdctlRunArgs_SecretValuesStayOffArgv(t *testing.T) {
 }
 
 func TestNerdctlRunArgs_NoSecretsNoEnvFile(t *testing.T) {
-	// A spec with no secrets is byte-for-byte what it was before: no stray
-	// --env-file, and secretEnvFile is empty so nothing is piped.
+	// A spec with no secrets gains no stray --env-file, and secretEnvFile is
+	// empty so nothing is piped.
 	spec := ContainerSpec{RunID: "cg", ImageRef: "img:latest", Detached: true}
 	if got := strings.Join(nerdctlRunArgs(spec), " "); strings.Contains(got, "env-file") {
 		t.Errorf("no-secret spec grew an env-file flag: %q", got)
