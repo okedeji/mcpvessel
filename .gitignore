@@ -30,6 +30,7 @@ vendor/
 .docs
 LAUNCH.md
 DISCOVERY.md
+SECURITY-SWEEP.md
 
 # OS
 .DS_Store
