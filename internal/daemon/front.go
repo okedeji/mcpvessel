@@ -179,10 +179,14 @@ func (d *Daemon) handleServe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var warnings []string
 	if !isLoopbackListen(req.Listen) {
-		fmt.Fprintf(os.Stderr,
-			"WARNING: serving the front door on %s, which is not loopback. The front door has NO authentication: anyone who can reach this address can call every exposed agent. Bind 127.0.0.1 to keep it local.\n",
-			req.Listen)
+		// The operator making the bind decision runs the CLI, not the daemon,
+		// so this rides the serve response to their terminal, not just the
+		// daemon log where it would go unseen.
+		warnings = append(warnings, fmt.Sprintf(
+			"serving on %s, which is not loopback: the front door has NO authentication, so anyone who can reach this address can call every exposed agent. Bind 127.0.0.1, or put TLS and auth in front of it.",
+			req.Listen))
 	}
 	ln, err := net.Listen("tcp", req.Listen)
 	if err != nil {
@@ -216,9 +220,10 @@ func (d *Daemon) handleServe(w http.ResponseWriter, r *http.Request) {
 		flatNames = append(flatNames, ft.Name)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"listen": req.Listen,
-		"flat":   servedFlat{Path: serve.FlatPath, Tools: flatNames},
-		"agents": out,
+		"listen":   req.Listen,
+		"flat":     servedFlat{Path: serve.FlatPath, Tools: flatNames},
+		"agents":   out,
+		"warnings": warnings,
 	})
 }
 
