@@ -51,6 +51,9 @@ func Introspect(ctx context.Context, in IntrospectInput) ([]mcp.Tool, error) {
 		ImageRef:  in.ImageRef,
 		NoCache:   in.NoCache,
 		RunID:     introspectRunID(in.ImageRef),
+		// The stderr prefix; the full introspect run id would drown the line
+		// it labels.
+		Name:      "introspect",
 		OpEnv:     in.Env,
 		OpSecrets: in.Secrets,
 		Stdout:    in.Stdout,
