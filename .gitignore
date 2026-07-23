@@ -41,6 +41,16 @@ Thumbs.db
 *.key
 *.env
 
+# mcpvessel local state (normally under ~/.mcpvessel; guarded here in case a
+# run points VESSEL_HOME at the repo, so a signing key, pinned trust, operator
+# secrets, or a registry token can never be committed)
+signing-key.json
+trust.json
+secrets.json
+mcpregistry-token.json
+history.db
+replays/
+
 # Terraform
 .terraform/
 .terraform.lock.hcl
