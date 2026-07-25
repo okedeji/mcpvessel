@@ -81,7 +81,7 @@ A caged agent reaches no host unless allowed. Three sources of allowance, and `s
 - **`--egress host,host`** allows hosts for every served agent, for this run only, never touching the bundle. **`--egress agent:host,host`** scopes hosts to one agent by its address, so a batch can give each its own allowance (hosts never contain a colon, so the colon unambiguously separates the scope).
 - **`--save`** with `--egress` writes the hosts into the agent's Vesselfile (`EGRESS allow:` line, unioned with what is there) and rebuilds, so they travel with the bundle from then on. It needs a source directory to edit; a built or pulled bundle has no local source, so `--save` on one is a clear error pointing you to `--egress` alone or a re-import. With `--save` the hosts are baked, so the per-run override then adds nothing.
 
-The boot-time **Egress:** report lists each agent's effective allowlist, marking which hosts came from the bundle and which from `--egress`. An agent allowed nothing reads `none (no network)`. A blocked host is named in the tool error the caller gets back and in `mcpvessel logs`.
+The boot-time **Egress:** report lists each agent's effective allowlist, marking which hosts came from the bundle and which from `--egress`. An agent allowed nothing reads `none preset (deny-default: a new host is held for approval)`. A blocked host is named in the tool error the caller gets back and in `mcpvessel logs`.
 
 ## Secrets and env
 

@@ -372,10 +372,12 @@ func (c *Client) AllowEgress(ctx context.Context, id, host, agent string, allow,
 }
 
 // ServedAgent is one endpoint the front door opened: its /agents/ address and
-// the public tools it exposes.
+// the public tools it exposes. Main names the agent's prompt tool, empty for
+// a tool collection with no MAIN.
 type ServedAgent struct {
 	Address string   `json:"address"`
 	Tools   []string `json:"tools"`
+	Main    string   `json:"main,omitempty"`
 }
 
 // ServedFlat is the merged endpoint: one URL advertising every served

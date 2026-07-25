@@ -70,10 +70,13 @@ type serveBundle struct {
 	Name string `json:"name,omitempty"`
 }
 
-// servedAgent reports one endpoint the front door opened.
+// servedAgent reports one endpoint the front door opened. Main is the agent's
+// prompt tool, empty for a tool collection, so the CLI report can advertise
+// the prompt endpoint only where it exists.
 type servedAgent struct {
 	Address string   `json:"address"`
 	Tools   []string `json:"tools"`
+	Main    string   `json:"main,omitempty"`
 }
 
 // servedFlat reports the merged endpoint and the names it advertises.
@@ -213,7 +216,7 @@ func (d *Daemon) handleServe(w http.ResponseWriter, r *http.Request) {
 		for _, t := range a.Tools {
 			names = append(names, t.Name)
 		}
-		out = append(out, servedAgent{Address: a.Address, Tools: names})
+		out = append(out, servedAgent{Address: a.Address, Tools: names, Main: a.Main})
 	}
 	flatNames := make([]string, 0, len(flat))
 	for _, ft := range flat {

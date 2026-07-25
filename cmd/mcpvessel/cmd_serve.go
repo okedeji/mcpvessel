@@ -109,43 +109,7 @@ shuts down.`,
 			for _, warning := range res.Warnings {
 				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "note: %s\n", warning)
 			}
-			out := cmd.OutOrStdout()
-			_, _ = fmt.Fprintf(out, "Serving %d agent(s) on %s\n", len(res.Agents), res.Listen)
-			if res.Flat.Path != "" {
-				_, _ = fmt.Fprintf(out, "  %s  (all public tools, one URL for your MCP client)", res.Flat.Path)
-				if len(res.Flat.Tools) > 0 {
-					_, _ = fmt.Fprintf(out, "  tools: %s", strings.Join(res.Flat.Tools, ", "))
-				}
-				_, _ = fmt.Fprintln(out)
-			}
-			for _, a := range res.Agents {
-				_, _ = fmt.Fprintf(out, "  /agents/%s/mcp", a.Address)
-				if len(a.Tools) > 0 {
-					_, _ = fmt.Fprintf(out, "  tools: %s", strings.Join(a.Tools, ", "))
-				}
-				_, _ = fmt.Fprintln(out)
-			}
-			// The effective allowlist per agent, baked hosts included: a
-			// pulled bundle's author-declared egress applies with no flag, so
-			// this is where the operator sees it before any traffic flows.
-			_, _ = fmt.Fprintln(out, "Egress:")
-			for _, a := range res.Agents {
-				_, _ = fmt.Fprintf(out, "  %s: %s\n", a.Address,
-					formatEgress(egress.AllowHosts(policies[a.Address].Egress), egress.HostsFor(scoped, a.Address)))
-			}
-			// And which declared secrets each agent will actually receive:
-			// a broadcast --secret reaches every agent declaring its name,
-			// agent:NAME pins it to one.
-			_, _ = fmt.Fprintln(out, "Secrets:")
-			for _, a := range res.Agents {
-				pol := policies[a.Address]
-				_, _ = fmt.Fprintf(out, "  %s: %s\n", a.Address,
-					formatSecretGrants(pol.Secrets, pol.Optional, secretPool.For(a.Address)))
-			}
-			_, _ = fmt.Fprintln(out, "Plain HTTP on the same port:")
-			_, _ = fmt.Fprintln(out, "  POST /agents/<name>/tools/<tool>  call a tool with JSON args")
-			_, _ = fmt.Fprintln(out, "  POST /agents/<name>               prompt an agent with {\"prompt\": ...}")
-			_, _ = fmt.Fprintln(out, "  add {\"stream\": true} (or Accept: text/event-stream) for SSE answer chunks")
+			printServeReport(cmd.OutOrStdout(), res, policies, scoped, secretPool)
 			return nil
 		},
 	}
@@ -265,4 +229,100 @@ func resolveServeTarget(ctx context.Context, stderr io.Writer, arg string) (daem
 		return daemon.ServeTarget{}, err
 	}
 	return daemon.ServeTarget{Ref: hash, Name: name}, nil
+}
+
+// printServeReport renders the serve boot report: the URL to paste into an
+// MCP client first, then each agent's effective egress and secret grants,
+// then the REST surface. One served agent collapses to a single endpoint;
+// several keep the merged /mcp plus one endpoint each. Endpoints print as
+// full URLs because the reader's next act is pasting one into a client.
+func printServeReport(out io.Writer, res daemon.ServeResult, policies map[string]exposedPolicy, scoped map[string][]string, secretPool runtime.ScopedSecrets) {
+	base := "http://" + res.Listen
+	single := len(res.Agents) == 1
+	if single {
+		_, _ = fmt.Fprintf(out, "Serving %s on %s\n", res.Agents[0].Address, base)
+	} else {
+		_, _ = fmt.Fprintf(out, "Serving %d agents on %s\n", len(res.Agents), base)
+	}
+
+	_, _ = fmt.Fprintln(out)
+	if single {
+		_, _ = fmt.Fprintln(out, "MCP endpoint, point your client here:")
+		_, _ = fmt.Fprintf(out, "  %s%s\n", base, res.Flat.Path)
+		if len(res.Flat.Tools) > 0 {
+			_, _ = fmt.Fprintf(out, "  %s\n", toolSummary(res.Flat.Tools))
+		}
+	} else {
+		_, _ = fmt.Fprintln(out, "MCP endpoints, one URL for your MCP client:")
+		if res.Flat.Path != "" {
+			line := fmt.Sprintf("  %s%s  (all public tools)", base, res.Flat.Path)
+			if len(res.Flat.Tools) > 0 {
+				line += "  " + toolSummary(res.Flat.Tools)
+			}
+			_, _ = fmt.Fprintln(out, line)
+		}
+		for _, a := range res.Agents {
+			line := fmt.Sprintf("  %s/agents/%s/mcp", base, a.Address)
+			if len(a.Tools) > 0 {
+				line += "  " + toolSummary(a.Tools)
+			}
+			_, _ = fmt.Fprintln(out, line)
+		}
+	}
+
+	// The effective allowlist per agent, baked hosts included: a pulled
+	// bundle's author-declared egress applies with no flag, so this is where
+	// the operator sees it before any traffic flows.
+	_, _ = fmt.Fprintln(out)
+	_, _ = fmt.Fprintln(out, "Egress:")
+	for _, a := range res.Agents {
+		_, _ = fmt.Fprintf(out, "  %s: %s\n", a.Address,
+			formatEgress(egress.AllowHosts(policies[a.Address].Egress), egress.HostsFor(scoped, a.Address)))
+	}
+	// And which declared secrets each agent will actually receive: a
+	// broadcast --secret reaches every agent declaring its name, agent:NAME
+	// pins it to one.
+	_, _ = fmt.Fprintln(out, "Secrets:")
+	for _, a := range res.Agents {
+		pol := policies[a.Address]
+		_, _ = fmt.Fprintf(out, "  %s: %s\n", a.Address,
+			formatSecretGrants(pol.Secrets, pol.Optional, secretPool.For(a.Address)))
+	}
+
+	// The prompt endpoint exists only for a MAIN-bearing agent, so it is
+	// advertised only when one is being served, by name when unambiguous.
+	_, _ = fmt.Fprintln(out)
+	_, _ = fmt.Fprintln(out, "REST on the same port:")
+	toolName := "<name>"
+	if single {
+		toolName = res.Agents[0].Address
+	}
+	_, _ = fmt.Fprintf(out, "  POST %s/agents/%s/tools/<tool>  JSON args in, JSON result out\n", base, toolName)
+	var mains []string
+	for _, a := range res.Agents {
+		if a.Main != "" {
+			mains = append(mains, a.Address)
+		}
+	}
+	switch {
+	case len(mains) == 1:
+		_, _ = fmt.Fprintf(out, "  POST %s/agents/%s  prompt it with {\"prompt\": ...}; add {\"stream\": true} for SSE chunks\n", base, mains[0])
+	case len(mains) > 1:
+		_, _ = fmt.Fprintf(out, "  POST %s/agents/<name>  prompt an agent with {\"prompt\": ...}; add {\"stream\": true} for SSE chunks\n", base)
+	}
+}
+
+// toolSummary caps a tool list so one well-stocked server cannot wrap the
+// report off the terminal: the count, then up to eight names, then an
+// ellipsis ('mcpvessel inspect' lists them all).
+func toolSummary(names []string) string {
+	noun := "tools"
+	if len(names) == 1 {
+		noun = "tool"
+	}
+	shown, suffix := names, ""
+	if len(shown) > 8 {
+		shown, suffix = shown[:8], ", ..."
+	}
+	return fmt.Sprintf("%d %s: %s%s", len(names), noun, strings.Join(shown, ", "), suffix)
 }
