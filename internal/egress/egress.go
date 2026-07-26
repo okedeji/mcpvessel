@@ -38,6 +38,10 @@ type Config struct {
 	Inspect          bool   `json:"inspect,omitempty"`
 	InspectCACertPEM string `json:"inspect_ca_cert_pem,omitempty"`
 	InspectCAKeyPEM  string `json:"inspect_ca_key_pem,omitempty"`
+	// HoldSeconds bounds how long a held connection waits for the operator's
+	// decision before failing closed. Zero uses the built-in default. Applies to
+	// the hold path only (NoHold fails fast and never waits).
+	HoldSeconds int `json:"hold_seconds,omitempty"`
 }
 
 // holdDeadline bounds how long a CONNECT to an unapproved host waits for the
@@ -93,6 +97,11 @@ type Proxy struct {
 	// re-encrypting to the verified upstream. Nil leaves the proxy a pure
 	// pass-through tunnel, the default that never decrypts.
 	insp *inspector
+	// previews holds, per host, the not-yet-approved request a cage wants to
+	// send it, so the operator can see what is about to leave before deciding.
+	// Populated only under inspection; pulled over the loopback control surface,
+	// never written to stdout, so a body never reaches the durable log.
+	previews map[string]*PreviewRequest
 }
 
 // New builds a Proxy from cfg, writing decision lines to events.
@@ -109,6 +118,10 @@ func New(cfg Config, events io.Writer) *Proxy {
 		}
 		static[src] = set
 	}
+	deadline := holdDeadline
+	if cfg.HoldSeconds > 0 {
+		deadline = time.Duration(cfg.HoldSeconds) * time.Second
+	}
 	p := &Proxy{
 		static:     static,
 		runtime:    map[string]map[string]bool{},
@@ -119,9 +132,10 @@ func New(cfg Config, events io.Writer) *Proxy {
 		names:      cfg.Names,
 		logged:     map[string]bool{},
 		events:     events,
-		deadline:   holdDeadline,
+		deadline:   deadline,
 		maxPer:     maxPerSource,
 		noHold:     cfg.NoHold,
+		previews:   map[string]*PreviewRequest{},
 	}
 	if cfg.Inspect && cfg.InspectCACertPEM != "" && cfg.InspectCAKeyPEM != "" {
 		// A malformed CA is a boot misconfiguration; run without inspection
@@ -159,6 +173,16 @@ func (p *Proxy) Handler() http.Handler {
 			http.Error(w, "malformed egress host", http.StatusBadRequest)
 			return
 		}
+		// Under inspection, a not-yet-approved host is not held at the bare CONNECT.
+		// Instead the request is captured and shown to the operator before the
+		// decision (previewConn), so what a cage is about to send is what is
+		// weighed at approval. Everything else keeps the existing path: await
+		// resolves the allowed case immediately and holds/fail-fasts an unapproved
+		// host, then intercept (approved) or tunnel.
+		if allowed, known := p.isAllowed(src, host); known && !allowed && p.insp != nil {
+			p.previewConn(w, r.Host, host, src)
+			return
+		}
 		if !p.await(src, host) {
 			http.Error(w, "egress to "+host+" not allowed", http.StatusForbidden)
 			return
@@ -169,6 +193,145 @@ func (p *Proxy) Handler() http.Handler {
 		}
 		tunnel(w, r.Host)
 	})
+}
+
+// isAllowed reports whether src may already reach host (without holding), and
+// whether src is a known cage at all. An unknown source is refused by await, not
+// previewed.
+func (p *Proxy) isAllowed(src, host string) (allowed, known bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	srcSet, known := p.static[src]
+	if !known {
+		return false, false
+	}
+	return srcSet[host] || p.runtime[src][host] || p.runtimeAll[host], true
+}
+
+// previewConn terminates a not-yet-approved connection's TLS, captures the
+// request the cage wants to send without forwarding it, surfaces it (a
+// secret-safe line to stdout, the full request over the loopback control pull),
+// and gates forwarding on the operator's decision. A run/call holds inline; a
+// served run drops the attempt and relies on the client's retry after approval.
+func (p *Proxy) previewConn(w http.ResponseWriter, target, host, src string) {
+	hj, ok := w.(http.Hijacker)
+	if !ok {
+		http.Error(w, "egress proxy needs a hijackable connection", http.StatusInternalServerError)
+		return
+	}
+	client, _, err := hj.Hijack()
+	if err != nil {
+		return
+	}
+	_, _ = client.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n"))
+
+	cage, cageR, req, prev, err := p.insp.terminateAndRead(client, host)
+	if err != nil {
+		// Pinning, an oversized body, or a read error: the request cannot be
+		// previewed. Surface why and drop; nothing was forwarded.
+		p.writePreview(src, host, nil, err.Error())
+		_ = client.Close()
+		return
+	}
+	defer func() { _ = cage.Close() }()
+
+	p.storePreview(host, prev)
+	p.writePreview(src, host, prev, "")
+
+	if p.noHold {
+		// Served: no operator in the request path. Record the host as pending so
+		// egress ls and the tool error surface it, drop this attempt, and let the
+		// client retry once the operator approves out of band. The "egress
+		// preview:" line already recorded the host for the daemon; emitting a
+		// "denied" here would only make the daemon clear the pending preview, so it
+		// is deliberately not marked denied. The cage still sees a failed request.
+		p.mu.Lock()
+		p.noteRequestLocked(src, host)
+		p.mu.Unlock()
+		writeCageError(cage, "egress to "+host+" is pending approval; approve it and retry")
+		return
+	}
+
+	// Run/call: hold the request on a waiter released by the approval control
+	// path (decide), or the deadline. This mirrors await's hold but keeps the
+	// captured request buffered so it can be replayed on approval.
+	p.mu.Lock()
+	if p.held[src] >= p.maxPer || p.overCapLocked(src, host) {
+		p.mu.Unlock()
+		p.clearPreview(host)
+		writeCageError(cage, "too many pending egress hosts for this agent")
+		p.mark("denied", src, host)
+		return
+	}
+	wtr := &waiter{ch: make(chan struct{}), src: src}
+	p.holds[host] = append(p.holds[host], wtr)
+	p.held[src]++
+	p.noteRequestLocked(src, host)
+	p.mu.Unlock()
+
+	var allowed bool
+	select {
+	case <-wtr.ch:
+		allowed = wtr.allowed
+	case <-time.After(p.deadline):
+		p.removeWaiter(host, wtr)
+	}
+	p.clearPreview(host)
+	if allowed {
+		p.mark("allowed", src, host)
+		p.insp.forwardPreviewed(cage, cageR, req, target, host, p.label(src))
+		return
+	}
+	p.mark("denied", src, host)
+	writeCageError(cage, "egress to "+host+" denied")
+}
+
+// writeCageError sends a minimal HTTP/1.1 error response over a terminated cage
+// connection, so the cage's HTTP client sees a failed request rather than a
+// dropped socket.
+func writeCageError(cage net.Conn, msg string) {
+	_, _ = fmt.Fprintf(cage, "HTTP/1.1 403 Forbidden\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s", len(msg), msg)
+}
+
+func (p *Proxy) storePreview(host string, prev *PreviewRequest) {
+	p.mu.Lock()
+	p.previews[host] = prev
+	p.mu.Unlock()
+}
+
+func (p *Proxy) getPreview(host string) *PreviewRequest {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.previews[host]
+}
+
+func (p *Proxy) clearPreview(host string) {
+	p.mu.Lock()
+	delete(p.previews, host)
+	p.mu.Unlock()
+}
+
+// writePreview emits the secret-safe preview line to stdout: method, path with
+// the query stripped, and byte count, never a body or query value, so a pending
+// request's contents never reach the durable log. The full request is pulled
+// separately over the loopback control surface. A note (empty prev) reports why
+// a request could not be previewed.
+func (p *Proxy) writePreview(src, host string, prev *PreviewRequest, note string) {
+	if p.events == nil {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if prev == nil {
+		_, _ = fmt.Fprintf(p.events, "egress preview: %s (agent %s) [%s]\n", host, p.label(src), sanitizeNote(note))
+		return
+	}
+	q := ""
+	if i := strings.IndexByte(prev.URL, '?'); i >= 0 {
+		q = " +query"
+	}
+	_, _ = fmt.Fprintf(p.events, "egress preview: %s (agent %s) %s %s%s  %dB\n",
+		host, p.label(src), sanitizeMethod(prev.Method), sanitizePath(prev.URL), q, len(prev.Body))
 }
 
 // interceptConn hijacks the approved CONNECT, sends the 200, and hands the raw
@@ -360,6 +523,10 @@ func (p *Proxy) await(src, host string) bool {
 // any that request it later.
 func (p *Proxy) decide(src, host string, allow, all bool) {
 	p.mu.Lock()
+	// A decision resolves the host's pending preview: a held run/call clears its
+	// own after the waiter returns, but a served preview has no waiter, so drop
+	// it here so egress preview stops offering a stale request.
+	delete(p.previews, host)
 	var released []*waiter
 	if all {
 		// Explicit run-wide grant: the operator chose to open this host for every
@@ -535,6 +702,15 @@ func (p *Proxy) Control() http.Handler {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(recs)
+	})
+	// GET /preview returns the full not-yet-approved request (headers and body)
+	// a cage wants to send a host, so the operator can read it before deciding.
+	// Loopback only; the body reaches the operator only through this pull, never
+	// the stdout event stream a shared log would capture.
+	mux.HandleFunc("GET /preview", func(w http.ResponseWriter, r *http.Request) {
+		host := normalizeHost(hostOnly(r.URL.Query().Get("host")))
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(p.getPreview(host))
 	})
 	return mux
 }

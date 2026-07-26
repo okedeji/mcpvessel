@@ -15,6 +15,8 @@ import (
 	"math/big"
 	"net"
 	"net/http"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -83,6 +85,63 @@ type inspector struct {
 // every request still streams regardless; only the artifact's full detail is
 // capped, keeping the newest records.
 const maxCaptures = 512
+
+// maxPreviewBody bounds how much of a not-yet-approved request's body the proxy
+// buffers to preview and, on approval, replay upstream. The whole body must be
+// held (a truncated replay would corrupt the forwarded request), so a request
+// larger than this cannot be previewed and is refused with a note.
+const maxPreviewBody = 1 << 20 // 1 MiB
+
+// PreviewRequest is a not-yet-approved request captured whole so the operator
+// can see what a cage wants to send an approved host before deciding, and so it
+// can be replayed upstream verbatim once approved. Body holds the full bytes
+// (up to maxPreviewBody); the display surface caps what it shows.
+type PreviewRequest struct {
+	Method    string              `json:"method"`
+	URL       string              `json:"url"`
+	Header    map[string][]string `json:"header,omitempty"`
+	Body      []byte              `json:"body,omitempty"`
+	Truncated bool                `json:"truncated,omitempty"`
+}
+
+// previewDisplayBody caps how much of a captured body the preview shows the
+// operator, so a large upload does not flood the terminal. The full body is
+// still replayed on approval; only the display is trimmed.
+const previewDisplayBody = 4 * 1024
+
+// FormatPreview renders a not-yet-approved request for the operator to read
+// before deciding: the request line, its headers, and a capped body. The body
+// is shown in full up to previewDisplayBody because the operator is deciding
+// exactly whether this content should leave, on their own machine.
+func FormatPreview(host string, p *PreviewRequest) string {
+	if p == nil {
+		return ""
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "the cage wants to send %s:\n", host)
+	fmt.Fprintf(&b, "  %s %s\n", p.Method, p.URL)
+	keys := make([]string, 0, len(p.Header))
+	for k := range p.Header {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		fmt.Fprintf(&b, "  %s: %s\n", k, strings.Join(p.Header[k], ", "))
+	}
+	body := p.Body
+	trimmed := false
+	if len(body) > previewDisplayBody {
+		body, trimmed = body[:previewDisplayBody], true
+	}
+	if len(body) > 0 {
+		fmt.Fprintf(&b, "  body: %s", body)
+		if trimmed {
+			fmt.Fprintf(&b, "\n  ... (%d more bytes)", len(p.Body)-previewDisplayBody)
+		}
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
 
 // GenerateInspectCA mints an ephemeral CA for a run's egress inspection,
 // returning the certificate and private key in PEM. The runtime calls it
@@ -213,26 +272,16 @@ func (in *inspector) leafFor(host string) (*tls.Certificate, error) {
 func (in *inspector) intercept(clientConn net.Conn, target, host, agent string) {
 	defer func() { _ = clientConn.Close() }()
 
-	upstreamTCP, err := dialTarget(target)
+	upstream, isHTTP1, err := in.dialUpstream(target, host)
 	if err != nil {
-		in.note(host, agent, "not inspected: "+err.Error())
-		return
-	}
-	upstream := tls.Client(upstreamTCP, &tls.Config{
-		ServerName: host,
-		RootCAs:    in.upstreamRoots,
-		NextProtos: []string{"http/1.1"},
-	})
-	if err := upstream.Handshake(); err != nil {
 		// The real server did not verify, or is not TLS. Failing here is correct:
 		// the proxy took over the cage's verification duty, so a bad upstream cert
 		// must not be waved through, and the cage's call fails with the note.
-		_ = upstream.Close()
 		in.note(host, agent, "not inspected: upstream TLS failed ("+err.Error()+")")
 		return
 	}
 
-	if upstream.ConnectionState().NegotiatedProtocol != "http/1.1" {
+	if !isHTTP1 {
 		// An HTTP/2-only upstream: we cannot parse and capture it as HTTP/1.1.
 		// Fall back to a real pass-through. The cage's TLS is not terminated yet,
 		// so clientConn is still clean; close the probe, dial fresh, and pipe the
@@ -252,6 +301,41 @@ func (in *inspector) intercept(clientConn net.Conn, target, host, agent string) 
 	}
 	defer func() { _ = upstream.Close() }()
 
+	defer func() { _ = upstream.Close() }()
+
+	server, err := in.terminateCageTLS(clientConn, host)
+	if err != nil {
+		in.note(host, agent, "not inspected: cage rejected the inspect certificate (certificate pinning?)")
+		return
+	}
+	in.pump(server, bufio.NewReader(server), upstream, host, agent, nil)
+}
+
+// dialUpstream connects to the real host and verifies its certificate against
+// the roots (system roots in production). It offers only HTTP/1.1; isHTTP1
+// reports whether the server agreed, which the caller needs because an
+// HTTP/2-only upstream cannot be parsed and captured as HTTP/1.1.
+func (in *inspector) dialUpstream(target, host string) (up *tls.Conn, isHTTP1 bool, err error) {
+	tcp, err := dialTarget(target)
+	if err != nil {
+		return nil, false, err
+	}
+	up = tls.Client(tcp, &tls.Config{
+		ServerName: host,
+		RootCAs:    in.upstreamRoots,
+		NextProtos: []string{"http/1.1"},
+	})
+	if err := up.Handshake(); err != nil {
+		_ = up.Close()
+		return nil, false, err
+	}
+	return up, up.ConnectionState().NegotiatedProtocol == "http/1.1", nil
+}
+
+// terminateCageTLS presents a minted leaf for host and completes the cage-side
+// TLS handshake, returning the decrypted connection. A handshake error is the
+// cage rejecting the leaf (certificate pinning).
+func (in *inspector) terminateCageTLS(clientConn net.Conn, host string) (*tls.Conn, error) {
 	server := tls.Server(clientConn, &tls.Config{
 		GetCertificate: func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
 			name := host
@@ -263,26 +347,27 @@ func (in *inspector) intercept(clientConn net.Conn, target, host, agent string) 
 		NextProtos: []string{"http/1.1"},
 	})
 	if err := server.Handshake(); err != nil {
-		// The cage rejected our leaf. The likeliest cause is certificate
-		// pinning, which cannot be detected before presenting a cert, so the
-		// call fails here. Named so the operator is not left guessing.
-		in.note(host, agent, "not inspected: cage rejected the inspect certificate (certificate pinning?)")
-		return
+		return nil, err
 	}
-
-	in.pump(server, upstream, host, agent)
+	return server, nil
 }
 
 // pump proxies HTTP/1.1 requests from the cage to upstream and responses back,
 // capturing each pair. It preserves keep-alive by looping until a read ends the
-// connection.
-func (in *inspector) pump(cage, upstream net.Conn, host, agent string) {
-	cageR := bufio.NewReader(cage)
+// connection. cageR is the buffered reader over the cage (a preview flow has
+// already consumed the first request line into it); first, when non-nil, is a
+// request already read and buffered, replayed before the loop reads more.
+func (in *inspector) pump(cage net.Conn, cageR *bufio.Reader, upstream net.Conn, host, agent string, first *http.Request) {
 	upR := bufio.NewReader(upstream)
 	for {
-		req, err := http.ReadRequest(cageR)
-		if err != nil {
-			return
+		req := first
+		first = nil
+		if req == nil {
+			var err error
+			req, err = http.ReadRequest(cageR)
+			if err != nil {
+				return
+			}
 		}
 		rec := CaptureRecord{Host: host, Agent: agent, Method: req.Method, ReqHeader: req.Header.Clone()}
 		if req.URL != nil {
@@ -307,6 +392,69 @@ func (in *inspector) pump(cage, upstream net.Conn, host, agent string) {
 			return
 		}
 	}
+}
+
+// terminateAndRead is the first half of a preview: it terminates the cage's
+// TLS and reads its first request whole, without dialing upstream, so the
+// operator can see what the cage wants to send a not-yet-approved host before
+// deciding. It returns the live decrypted connection, its buffered reader (which
+// may hold pipelined bytes of a later request), the request with its body reset
+// to a replayable reader, and a PreviewRequest snapshot for surfacing. The body
+// is buffered whole (a truncated replay would corrupt the forwarded request); a
+// body past maxPreviewBody is refused.
+func (in *inspector) terminateAndRead(clientConn net.Conn, host string) (cage net.Conn, cageR *bufio.Reader, req *http.Request, prev *PreviewRequest, err error) {
+	server, err := in.terminateCageTLS(clientConn, host)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	cageR = bufio.NewReader(server)
+	req, err = http.ReadRequest(cageR)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	body, tooLarge := readCapped(req.Body, maxPreviewBody)
+	_ = req.Body.Close()
+	if tooLarge {
+		return nil, nil, nil, nil, fmt.Errorf("request body exceeds the %d-byte preview limit", maxPreviewBody)
+	}
+	req.Body = io.NopCloser(bytes.NewReader(body))
+	prev = &PreviewRequest{Method: req.Method, Header: req.Header.Clone(), Body: body}
+	if req.URL != nil {
+		prev.URL = req.URL.RequestURI()
+	}
+	return server, cageR, req, prev, nil
+}
+
+// forwardPreviewed is the second half of a preview, run only after the operator
+// approves: it dials the (verified) upstream and replays the buffered first
+// request, then pumps the rest of the connection normally. An HTTP/2-only
+// upstream cannot take the replayed HTTP/1.1 request, so it fails with a note
+// rather than corrupting the exchange.
+func (in *inspector) forwardPreviewed(cage net.Conn, cageR *bufio.Reader, first *http.Request, target, host, agent string) {
+	upstream, isHTTP1, err := in.dialUpstream(target, host)
+	if err != nil {
+		in.note(host, agent, "not inspected: upstream TLS failed ("+err.Error()+")")
+		return
+	}
+	defer func() { _ = upstream.Close() }()
+	if !isHTTP1 {
+		in.note(host, agent, "not inspected: upstream is HTTP/2, cannot replay the previewed request")
+		return
+	}
+	in.pump(cage, cageR, upstream, host, agent, first)
+}
+
+// readCapped reads up to limit bytes; tooLarge is true if the source had more,
+// in which case the returned bytes are not the whole body.
+func readCapped(r io.Reader, limit int) (b []byte, tooLarge bool) {
+	b, err := io.ReadAll(io.LimitReader(r, int64(limit)+1))
+	if err != nil {
+		return b, false
+	}
+	if len(b) > limit {
+		return b[:limit], true
+	}
+	return b, false
 }
 
 // bridge pipes bytes both ways between two raw connections without parsing, for

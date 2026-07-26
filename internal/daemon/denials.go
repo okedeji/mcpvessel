@@ -130,16 +130,93 @@ func (e *pendingEgress) list() map[string][]string {
 	return out
 }
 
+// egressPreviews tracks, per run, the not-yet-approved hosts that have a request
+// captured and waiting for the operator's decision (under --egress-inspect). It
+// marks which pending hosts the operator can `egress preview` to read before
+// approving; the request bodies live in the proxy, not here.
+type egressPreviews struct {
+	mu    sync.Mutex
+	byRun map[string]map[string]bool
+}
+
+func newEgressPreviews() *egressPreviews {
+	return &egressPreviews{byRun: map[string]map[string]bool{}}
+}
+
+func (e *egressPreviews) add(runID, host string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	set := e.byRun[runID]
+	if set == nil {
+		set = map[string]bool{}
+		e.byRun[runID] = set
+	}
+	set[host] = true
+}
+
+func (e *egressPreviews) remove(runID, host string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if set := e.byRun[runID]; set != nil {
+		delete(set, host)
+	}
+}
+
+func (e *egressPreviews) clear(runID string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	delete(e.byRun, runID)
+}
+
+// has reports whether a run's host has a pending preview.
+func (e *egressPreviews) has(runID, host string) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.byRun[runID][host]
+}
+
+// list returns every run's hosts with a pending preview, sorted per run.
+func (e *egressPreviews) list() map[string][]string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	out := map[string][]string{}
+	for runID, set := range e.byRun {
+		if len(set) == 0 {
+			continue
+		}
+		hosts := make([]string, 0, len(set))
+		for h := range set {
+			hosts = append(hosts, h)
+		}
+		sort.Strings(hosts)
+		out[runID] = hosts
+	}
+	return out
+}
+
 // denialScanSink writes the run's log through to its file while scanning each
 // line for the egress proxy's markers: "egress denied:" hosts feed a tool
-// error, and "egress pending:"/"egress allowed:" drive the approval event feed.
+// error, "egress pending:"/"egress allowed:" drive the approval event feed, and
+// "egress preview:" holds a captured request for the operator to read before
+// approving.
 type denialScanSink struct {
-	w      io.WriteCloser
-	runID  string
-	den    *egressDenials
-	pend   *pendingEgress
+	w     io.WriteCloser
+	runID string
+	den   *egressDenials
+	pend  *pendingEgress
+	prev  *egressPreviews
+	// live reports whether the run is still held. The proxy's log pump is async,
+	// so a pending/preview line can arrive after the run finished and cleared its
+	// state; skipping the add for a dead run keeps egress ls from listing a host
+	// whose proxy is already gone (and so cannot be approved or previewed anyway).
+	live   func() bool
 	events *eventBus
 	buf    bytes.Buffer
+}
+
+// tracking reports whether the sink should still record pending/preview hosts.
+func (s *denialScanSink) tracking() bool {
+	return s.live == nil || s.live()
 }
 
 func (s *denialScanSink) Write(p []byte) (int, error) {
@@ -168,11 +245,33 @@ func (s *denialScanSink) scan(line string) {
 		if s.pend != nil {
 			s.pend.remove(s.runID, host)
 		}
+		if s.prev != nil {
+			s.prev.remove(s.runID, host)
+		}
 		s.publish(Event{Type: EventEgressDenied, RunID: s.runID, Target: host})
 		return
 	}
+	if host, ok := parseEgressHost(line, "egress preview: "); ok {
+		// A not-yet-approved request was captured and held. Surface the host like a
+		// pending one (egress ls, and the tool error names it for a served run),
+		// mark it as previewable so the operator can read the request before
+		// deciding, and publish the secret-safe summary. The full request is pulled
+		// on demand, never on this line. Skip the tracking adds once the run is
+		// gone: its proxy can no longer serve the preview or the approval.
+		if s.tracking() {
+			if s.pend != nil {
+				s.pend.add(s.runID, host)
+			}
+			s.den.record(s.runID, host)
+			if s.prev != nil {
+				s.prev.add(s.runID, host)
+			}
+		}
+		s.publish(Event{Type: EventEgressPreview, RunID: s.runID, Target: host, Detail: egressMarkerDetail(line, "egress preview: ")})
+		return
+	}
 	if host, ok := parseEgressHost(line, "egress pending: "); ok {
-		if s.pend != nil && s.pend.add(s.runID, host) {
+		if s.pend != nil && s.tracking() && s.pend.add(s.runID, host) {
 			s.publish(Event{
 				Type:   EventEgressPending,
 				RunID:  s.runID,
@@ -184,10 +283,13 @@ func (s *denialScanSink) scan(line string) {
 	}
 	if host, ok := parseEgressHost(line, "egress allowed: "); ok {
 		// An approval resolves any prior denial for the host, so it no longer
-		// belongs in a later tool error's blocked list.
+		// belongs in a later tool error's blocked list, nor as a pending preview.
 		s.den.remove(s.runID, host)
 		if s.pend != nil {
 			s.pend.remove(s.runID, host)
+		}
+		if s.prev != nil {
+			s.prev.remove(s.runID, host)
 		}
 		s.publish(Event{Type: EventEgressApproved, RunID: s.runID, Target: host})
 		return
@@ -196,18 +298,18 @@ func (s *denialScanSink) scan(line string) {
 		// The proxy already reduced this to a secret-safe summary (no body, no
 		// query value), so the detail is the line's tail after the host, forwarded
 		// verbatim to the feed and the log.
-		s.publish(Event{Type: EventEgressInspect, RunID: s.runID, Target: host, Detail: egressInspectDetail(line)})
+		s.publish(Event{Type: EventEgressInspect, RunID: s.runID, Target: host, Detail: egressMarkerDetail(line, "egress inspect: ")})
 	}
 }
 
-// egressInspectDetail returns the summary that follows the host in an
-// "egress inspect: <host> (agent <name>) ..." line, for the event feed.
-func egressInspectDetail(line string) string {
-	i := strings.Index(line, "egress inspect: ")
+// egressMarkerDetail returns the summary that follows the host in an
+// "<marker><host> (agent <name>) ..." line, for the event feed.
+func egressMarkerDetail(line, marker string) string {
+	i := strings.Index(line, marker)
 	if i < 0 {
 		return ""
 	}
-	return strings.TrimSpace(line[i+len("egress inspect: "):])
+	return strings.TrimSpace(line[i+len(marker):])
 }
 
 func (s *denialScanSink) publish(e Event) {

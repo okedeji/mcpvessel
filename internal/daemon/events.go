@@ -37,6 +37,11 @@ const (
 	// request to an approved host; Target is the host and Detail is the
 	// secret-safe summary (method, path, byte counts, status).
 	EventEgressInspect = "egress.inspect"
+	// EventEgressPreview fires, only under --egress-inspect, when a cage's request
+	// to a not-yet-approved host is captured and held for the operator's decision.
+	// Target is the host, Detail the secret-safe summary. The full request is
+	// pulled separately (mcpvessel egress preview) so the body stays off the feed.
+	EventEgressPreview = "egress.preview"
 )
 
 // eventBufferSize bounds each subscriber's queue. A watcher this far behind

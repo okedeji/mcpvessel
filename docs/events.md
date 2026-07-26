@@ -44,7 +44,7 @@ This is the raw event as the daemon sends it (the wire format is `application/x-
 | Field | Meaning |
 | --- | --- |
 | `time` | When the event fired. |
-| `type` | The event type (`run.started`, `run.ended`, `egress.pending`, `egress.approved`, `egress.denied`, `egress.inspect`, `cage.activated`, `cage.evicted`, `elicitation.asked`, `elicitation.answered`). |
+| `type` | The event type (`run.started`, `run.ended`, `egress.pending`, `egress.approved`, `egress.denied`, `egress.inspect`, `egress.preview`, `cage.activated`, `cage.evicted`, `elicitation.asked`, `elicitation.answered`). |
 | `run_id` | The run the event belongs to. |
 | `ref` | The bundle reference the run is executing. Present on run and runtime events. |
 | `target` | The sub-agent node the event concerns, or the host on an egress event. Empty when the event is run-wide. |
@@ -55,7 +55,7 @@ Every field except `time`, `type`, and `run_id` is omitted when empty, so a give
 
 ## Event types
 
-Two kinds of event reach the feed. The daemon emits run lifecycle events (`run.started`, `run.ended`) and egress decisions (`egress.pending`, `egress.approved`, `egress.denied`, `egress.inspect`) directly. The runtime emits in-process events for a run's sub-agent tree (`cage.activated`, `cage.evicted`, `elicitation.*`), which the daemon forwards onto the same feed. Per-LLM-call and per-sub-agent-call telemetry does not appear here; that reaches the daemon over a separate channel and surfaces in a run's trace.
+Two kinds of event reach the feed. The daemon emits run lifecycle events (`run.started`, `run.ended`) and egress decisions (`egress.pending`, `egress.approved`, `egress.denied`, `egress.inspect`, `egress.preview`) directly. The runtime emits in-process events for a run's sub-agent tree (`cage.activated`, `cage.evicted`, `elicitation.*`), which the daemon forwards onto the same feed. Per-LLM-call and per-sub-agent-call telemetry does not appear here; that reaches the daemon over a separate channel and surfaces in a run's trace.
 
 ### run.started
 
@@ -83,6 +83,10 @@ A caged server's outbound connection reached the egress proxy's decision path. `
 ### egress.inspect
 
 Under `--egress-inspect` only, one per inspected request to an approved host. `target` is the host; `detail` is the secret-safe summary the proxy emits, method, path (query stripped), byte counts, and status, never a body or query value. In a terminal the label is `egress.inspect` and the subject is `run_id/target`. The full request and response (headers and bodies) are not on this feed; they are captured into the `.replay` artifact when the run is recorded. See [egress](egress.md#seeing-what-a-server-sends---egress-inspect).
+
+### egress.preview
+
+Under `--egress-inspect` only, when a cage's request to a *not-yet-approved* host is captured and held for the operator's decision. `target` is the host; `detail` is the same secret-safe summary as `egress.inspect`, never the body. It is the signal that a request is waiting to be read before approval: on a `run`/`call` the daemon shows it inline at the prompt, and on `serve` it is read with `mcpvessel egress preview <run> <host>`. The full request (with body) is pulled on demand, never on this feed. See [egress](egress.md#see-the-request-before-you-approve-the-host).
 
 ### cage.activated
 

@@ -99,8 +99,31 @@ func newEgressControlCmd() *cobra.Command {
 		c.Flags().StringVar(&agent, "agent", "", "scope the decision to one agent by name")
 		return c
 	}
-	cmd.AddCommand(post("/allow"), post("/deny"), egressCapturesCmd())
+	cmd.AddCommand(post("/allow"), post("/deny"), egressCapturesCmd(), egressPreviewCtlCmd())
 	return cmd
+}
+
+// egressPreviewCtlCmd GETs the full not-yet-approved request a cage wants to
+// send a host and writes the JSON to stdout, for the daemon to read via nerdctl
+// exec. Mirrors the captures client; loopback only.
+func egressPreviewCtlCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:  "preview HOST",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			endpoint := "http://127.0.0.1:" + env.DefaultEgressControlPort + "/preview?host=" + url.QueryEscape(args[0])
+			resp, err := http.Get(endpoint)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = resp.Body.Close() }()
+			if resp.StatusCode >= 300 {
+				return fmt.Errorf("egress control /preview: %s", resp.Status)
+			}
+			_, err = io.Copy(cmd.OutOrStdout(), resp.Body)
+			return err
+		},
+	}
 }
 
 // egressCapturesCmd GETs the proxy's buffered inspection records and writes the

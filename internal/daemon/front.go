@@ -259,8 +259,12 @@ func (d *Daemon) registerExposed(services []exposedService, cfg config.Serve, sc
 					Inspect:     inspect,
 					Interaction: env.InteractionInteractive,
 					Managed:     true,
-					Stdout:      io.Discard,
-					Stderr:      os.Stderr,
+					// A served instance is driven by a remote MCP client with no
+					// operator in the request path, so a new egress host fails fast
+					// and the client retries after an out-of-band approval.
+					Served: true,
+					Stdout: io.Discard,
+					Stderr: os.Stderr,
 					// A served instance is a run; give it a durable log so its
 					// output and egress denials show in `mcpvessel logs`, and so
 					// the daemon can name blocked hosts in a tool error.

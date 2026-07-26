@@ -9,6 +9,7 @@ import (
 
 	"github.com/okedeji/mcpvessel/internal/config"
 	"github.com/okedeji/mcpvessel/internal/daemon"
+	"github.com/okedeji/mcpvessel/internal/egress"
 	"github.com/okedeji/mcpvessel/internal/reference"
 )
 
@@ -34,7 +35,7 @@ only. 'egress deny' rejects a host and forgets a remembered approval.`,
   mcpvessel egress deny @me/github:0.1 evil.example.com
   mcpvessel egress ls`,
 	}
-	cmd.AddCommand(newEgressAllowCmd(), newEgressDenyCmd(), newEgressLsCmd())
+	cmd.AddCommand(newEgressAllowCmd(), newEgressDenyCmd(), newEgressLsCmd(), newEgressPreviewCmd())
 	return cmd
 }
 
@@ -206,17 +207,60 @@ func newEgressLsCmd() *cobra.Command {
 					refByID[r.ID] = r.Ref
 				}
 			}
+			previewable := map[string]bool{}
+			if previews, err := client.PreviewableEgress(cmd.Context()); err == nil {
+				for id, hosts := range previews {
+					for _, h := range hosts {
+						previewable[id+"\x00"+h] = true
+					}
+				}
+			}
 			for id, hosts := range pending {
 				held := id
 				if ref := refByID[id]; ref != "" {
 					held = ref
 				}
 				for _, h := range hosts {
-					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s\theld by %s\tapprove: mcpvessel egress allow %s %s\n", h, held, id, h)
+					line := fmt.Sprintf("%s\theld by %s\tapprove: mcpvessel egress allow %s %s", h, held, id, h)
+					if previewable[id+"\x00"+h] {
+						line += fmt.Sprintf("\tpreview: mcpvessel egress preview %s %s", id, h)
+					}
+					_, _ = fmt.Fprintln(cmd.OutOrStdout(), line)
 				}
 			}
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nApproving grants the host to that agent only; add --all to grant every agent in the run.")
 			return nil
+		},
+	}
+}
+
+// newEgressPreviewCmd shows the full request a cage wants to send a held host,
+// captured under --egress-inspect, so the operator can read exactly what is
+// about to leave before approving. Unlike the live log line, this includes the
+// body, on the operator's own terminal, on demand.
+func newEgressPreviewCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "preview TARGET HOST",
+		Short: "Show the request a cage wants to send a held host, before approving",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			socket, err := daemon.SocketPath()
+			if err != nil {
+				return err
+			}
+			client := daemon.Dial(socket)
+			runIDs, _ := resolveEgressTarget(cmd.Context(), client, args[0])
+			if len(runIDs) == 0 {
+				runIDs = []string{args[0]} // try TARGET as a run id directly
+			}
+			for _, id := range runIDs {
+				prev, err := client.FetchEgressPreview(cmd.Context(), id, args[1])
+				if err == nil && prev != nil && prev.Method != "" {
+					_, _ = fmt.Fprint(cmd.OutOrStdout(), egress.FormatPreview(args[1], prev))
+					return nil
+				}
+			}
+			return fmt.Errorf("no pending preview for %s on %s; 'mcpvessel egress ls' lists what is held", args[1], args[0])
 		},
 	}
 }

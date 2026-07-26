@@ -72,6 +72,31 @@ func RunEgressCaptures(ctx context.Context, runID string) ([]egress.CaptureRecor
 	return recs, true
 }
 
+// RunEgressPreview reads the full not-yet-approved request a cage wants to send
+// host, by execing the control client inside the proxy container. Returns
+// (nil, false) when there is no pending preview (no such host held, or the proxy
+// is not inspecting). The daemon shows this to the operator at approval time.
+func RunEgressPreview(ctx context.Context, runID, host string) (*egress.PreviewRequest, bool) {
+	p, err := DefaultProvisioner()
+	if err != nil {
+		return nil, false
+	}
+	defer func() { _ = p.Close() }()
+
+	cmd := p.Nerdctl(ctx, "exec", egressProxyName(runID), gatewayBinaryPath, "egress-control", "preview", host)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = io.Discard
+	if err := cmd.Run(); err != nil {
+		return nil, false
+	}
+	var prev egress.PreviewRequest
+	if err := json.Unmarshal(out.Bytes(), &prev); err != nil || prev.Method == "" {
+		return nil, false
+	}
+	return &prev, true
+}
+
 // egressProxyName is the proxy's container name, also its hostname on the run
 // network.
 func egressProxyName(runID string) string { return runID + "-egress-proxy" }
@@ -177,7 +202,8 @@ func startEgressProxy(ctx context.Context, sess *bootSession, runID, egressNetwo
 	cfgJSON, err := json.Marshal(egress.Config{
 		Sources:          sources,
 		Names:            names,
-		NoHold:           in.Managed,
+		NoHold:           in.Served,
+		HoldSeconds:      in.EgressHoldSeconds,
 		Inspect:          in.InspectCACertPEM != "",
 		InspectCACertPEM: in.InspectCACertPEM,
 		InspectCAKeyPEM:  in.InspectCAKeyPEM,

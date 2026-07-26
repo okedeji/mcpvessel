@@ -96,6 +96,17 @@ egress inspect: gist.github.com (agent notes) POST /gists +query  512B out, 201 
 
 The live summary is metadata only, and deliberately so: it names the method, the path (with the query stripped), the byte counts, and the status, but never a body or a query value. That keeps a granted secret out of the log the container runtime persists and out of `mcpvessel logs`, which people paste into bug reports. You do not see the exfiltrated value in the live line, but you see the shape of the theft: a 48KB body leaving a `save_note` call that should send a few hundred bytes is a glaring signal on its own. To read the actual bytes, record the run (below).
 
+### See the request before you approve the host
+
+The most useful moment to know what a server is sending is *before* you approve a new host, because what it is about to send is the actual thing you are deciding on. Under `--egress-inspect`, a request to a not-yet-approved host is captured, not just held: the proxy has the cage's trust, so it terminates the TLS and reads the whole request, then fails that attempt without forwarding a byte. Nothing reaches the host; the captured request waits for you to read and decide.
+
+- On a `run`/`call`, the request is shown inline at the approval prompt: the method, the URL, the headers, and the body, so you read exactly what would have left before answering `[y]/[N]`.
+- On `serve` (no operator in the request path), the host is surfaced in `mcpvessel egress ls` with a `preview:` command. `mcpvessel egress preview <run> <host>` prints the full captured request.
+
+Approve the host and the client's next attempt (the MCP client re-drives the tool) reaches it, now inspected and logged. Deny it, or never approve, and nothing ever leaves. Either way you saw the request before a byte went out. This is Little Snitch's prompt with the letter it was about to mail, not just the address on the envelope. It is per-host: you preview the first request to a new host and decide; once the host is approved, later requests to it are inspected and logged, not re-previewed, so a server that sends a benign first request to win approval and exfiltrates later is caught by the ongoing inspection log rather than the preview.
+
+Unlike the live `logs`/`events` summary, the preview shows the body, but only to you, on your own terminal, on demand, and it is not persisted, so the secret you are inspecting does not land in a shareable log.
+
 Two honest limits:
 
 - **Cert-pinning servers break under inspection.** A server that pins certificates rejects the proxy's leaf, and pinning cannot be detected without first presenting one, so that call fails. The summary names it (`not inspected: cage rejected the inspect certificate`) rather than failing silently. A non-TLS target, or one whose real certificate does not verify, fails the same way (refusing an unverifiable upstream is the point). An HTTP/2-only upstream, which cannot be read as HTTP/1.1, is instead tunneled through uninspected so the call still works, and noted.
@@ -122,7 +133,7 @@ Two honest limits:
 
 - `egress ls` reads live holds from the daemon; a host drops off it the moment it is approved, denied, or the run ends.
 - Approving a tag with several live runs releases the host on all of them.
-- A foreground hold is bounded: an unanswered hold fails closed after a few minutes rather than pinning the cage forever. A served call does not hold at all; it fails fast and waits for the client to retry.
+- A foreground hold is bounded: an unanswered hold fails closed after the hold timeout (three minutes by default, set `cages.egress_hold_seconds` in config to change it) rather than pinning the cage forever. A served call does not hold at all; it fails fast and waits for the client to retry.
 - A malicious server phoning home shows up as a blocked host you did not expect. Denying it (or just not approving) keeps the connection, and any secret the server holds, from ever leaving.
 - Nothing here relaxes the rest of the cage. Egress is one wall; the filesystem, the secrets, and the sibling isolation are unaffected by an approval.
 

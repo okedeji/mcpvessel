@@ -9,12 +9,14 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/okedeji/mcpvessel/internal/egress"
 	"github.com/okedeji/mcpvessel/internal/identity"
 	"github.com/okedeji/mcpvessel/internal/llmgateway"
 	"github.com/okedeji/mcpvessel/internal/progress"
@@ -186,7 +188,7 @@ func (c *Client) runStream(ctx context.Context, req RunRequest, logs io.Writer) 
 			// A held egress host. Prompt inline in a goroutine so the decode loop
 			// keeps draining log frames; blocking here could deadlock a daemon
 			// whose stream write is waiting on the full pipe.
-			go c.promptEgressApproval(ctx, usage.RunID, f.Data)
+			go c.promptEgressApproval(ctx, usage.RunID, f.Data, f.Preview, f.HoldSeconds)
 		case "error":
 			usage.CostMicroUSD = f.CostMicroUSD
 			usage.CallDuration = time.Duration(f.CallMS) * time.Millisecond
@@ -203,17 +205,28 @@ var egressPromptMu sync.Mutex
 // allow a held host, and relays the answer to the daemon. When stdin is not a
 // terminal it does nothing: the host stays held for 'mcpvessel egress allow'
 // from another shell, or fails closed at the deadline.
-func (c *Client) promptEgressApproval(ctx context.Context, runID, host string) {
+func (c *Client) promptEgressApproval(ctx context.Context, runID, host string, prev *egress.PreviewRequest, holdSeconds int) {
 	if runID == "" || !progress.IsTerminal(os.Stdin) {
 		return
 	}
 	egressPromptMu.Lock()
 	defer egressPromptMu.Unlock()
+	if prev != nil {
+		// Under inspection the request was captured before it left. Show what the
+		// cage is about to send this host, so the decision weighs the payload, not
+		// just the destination.
+		_, _ = fmt.Fprintf(os.Stderr, "\n%s", egress.FormatPreview(host, prev))
+	}
+	timeout := "the request is held while you decide"
+	if holdSeconds > 0 {
+		timeout = fmt.Sprintf("the request is held for up to %ds, then it times out", holdSeconds)
+	}
 	_, _ = fmt.Fprintf(os.Stderr,
 		"\negress pending: a caged agent wants to reach %s (not on its allow-list).\n"+
+			"  %s.\n"+
 			"  [y] allow it for this agent    [a] allow it for every agent in this run    [N] deny\n"+
 			"  (or from another shell: mcpvessel egress allow %s %s   [add --all for every agent])\n> ",
-		host, runID, host)
+		host, timeout, runID, host)
 	line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
 	answer := strings.ToLower(strings.TrimSpace(line))
 	all := answer == "a" || answer == "all"
@@ -358,6 +371,24 @@ func (c *Client) PendingEgress(ctx context.Context) (map[string][]string, error)
 	var out map[string][]string
 	err := c.get(ctx, "/egress/pending", &out)
 	return out, err
+}
+
+// PreviewableEgress returns every live run's held hosts that have a captured
+// request the operator can read (mcpvessel egress preview), keyed by run id.
+func (c *Client) PreviewableEgress(ctx context.Context) (map[string][]string, error) {
+	var out map[string][]string
+	err := c.get(ctx, "/egress/previews", &out)
+	return out, err
+}
+
+// FetchEgressPreview returns the full not-yet-approved request a cage wants to
+// send host, so the operator can read it before deciding.
+func (c *Client) FetchEgressPreview(ctx context.Context, id, host string) (*egress.PreviewRequest, error) {
+	var out egress.PreviewRequest
+	if err := c.get(ctx, "/runs/"+id+"/egress/preview?host="+url.QueryEscape(host), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
 
 // AllowEgress approves (allow=true) or rejects a host the run's egress proxy is

@@ -117,6 +117,11 @@ type Cages struct {
 	Prewarm        int      `json:"prewarm,omitempty"`          // root's direct children booted up front
 	IdleTTLSeconds int      `json:"idle_ttl_seconds,omitempty"` // reap a cage idle past this
 	KeepWarm       []string `json:"keep_warm,omitempty"`        // agent refs kept booted even when idle
+	// EgressHoldSeconds bounds how long a run/call's connection to a not-yet-
+	// approved host waits for the operator's decision before failing closed.
+	// Serve never holds (a remote client cannot answer inline), so this applies
+	// to run/call only.
+	EgressHoldSeconds int `json:"egress_hold_seconds,omitempty"`
 }
 
 // Cage policy defaults, sized to fit the default machine rather than a
@@ -130,6 +135,11 @@ const (
 	DefaultHostMaxLiveCages = 128
 	DefaultPrewarm          = 2
 	DefaultIdleTTLSeconds   = 300
+	// DefaultEgressHoldSeconds is how long a run/call holds a connection to an
+	// unapproved host for the operator's decision, three minutes: long enough to
+	// read a preview and answer, short enough that an unanswered hold frees the
+	// cage rather than hanging.
+	DefaultEgressHoldSeconds = 180
 )
 
 // EffectiveMaxLive, EffectiveHostMaxLive, EffectivePrewarm, and
@@ -147,6 +157,15 @@ func (cg Cages) EffectiveHostMaxLive() int {
 		return cg.HostMaxLive
 	}
 	return DefaultHostMaxLiveCages
+}
+
+// EffectiveEgressHoldSeconds resolves the run/call egress hold timeout to the
+// operator's value when set, else the default.
+func (cg Cages) EffectiveEgressHoldSeconds() int {
+	if cg.EgressHoldSeconds > 0 {
+		return cg.EgressHoldSeconds
+	}
+	return DefaultEgressHoldSeconds
 }
 
 func (cg Cages) EffectivePrewarm() int {

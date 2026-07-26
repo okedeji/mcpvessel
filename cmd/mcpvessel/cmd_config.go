@@ -137,15 +137,15 @@ run and host-wide), how many of the root's direct children to prewarm, and how
 long an idle cage lives before it is reaped. A change takes effect on the next
 run; a zero in any field means "use the built-in default".`,
 	}
-	var maxLive, hostMax, prewarm, idleTTL int
+	var maxLive, hostMax, prewarm, idleTTL, egressHold int
 	var keepWarm []string
 	set := &cobra.Command{
 		Use:   "set",
 		Short: "Set cage policy fields",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if !anyChanged(cmd, "max-live", "host-max-live", "prewarm", "idle-ttl", "keep-warm") {
-				return fmt.Errorf("set at least one of --max-live, --host-max-live, --prewarm, --idle-ttl, --keep-warm")
+			if !anyChanged(cmd, "max-live", "host-max-live", "prewarm", "idle-ttl", "egress-hold", "keep-warm") {
+				return fmt.Errorf("set at least one of --max-live, --host-max-live, --prewarm, --idle-ttl, --egress-hold, --keep-warm")
 			}
 			c, err := config.Load()
 			if err != nil {
@@ -163,6 +163,9 @@ run; a zero in any field means "use the built-in default".`,
 			if cmd.Flags().Changed("idle-ttl") {
 				c.Cages.IdleTTLSeconds = idleTTL
 			}
+			if cmd.Flags().Changed("egress-hold") {
+				c.Cages.EgressHoldSeconds = egressHold
+			}
 			if cmd.Flags().Changed("keep-warm") {
 				c.Cages.KeepWarm = keepWarm
 			}
@@ -177,6 +180,7 @@ run; a zero in any field means "use the built-in default".`,
 	set.Flags().IntVar(&hostMax, "host-max-live", 0, "max cages across every run on the host (0 = default)")
 	set.Flags().IntVar(&prewarm, "prewarm", 0, "root's direct children booted up front (0 = default)")
 	set.Flags().IntVar(&idleTTL, "idle-ttl", 0, "reap a cage idle past this many seconds (0 = default)")
+	set.Flags().IntVar(&egressHold, "egress-hold", 0, "hold a run/call reaching a new host this many seconds for approval before it times out (0 = default)")
 	set.Flags().StringArrayVar(&keepWarm, "keep-warm", nil, "agent ref to keep booted even when idle (repeatable; replaces the list)")
 	cmd.AddCommand(set)
 	return cmd

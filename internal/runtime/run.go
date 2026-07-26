@@ -65,6 +65,13 @@ type RunInput struct {
 	// loud; off by default, where the proxy never decrypts.
 	Inspect bool
 
+	// Served marks a run driven by a remote MCP client with no operator in the
+	// request path, so its egress proxy fails a new host fast (the client relays
+	// the denial and retries) rather than holding for an inline decision. A
+	// run/call leaves it false and holds. Distinct from Managed, which is the
+	// crash-sweep label and true for every daemon run.
+	Served bool
+
 	Stdout io.Writer
 	Stderr io.Writer
 
@@ -205,6 +212,7 @@ func Acquire(ctx context.Context, in RunInput) (*Session, error) {
 		Verbose:      in.Verbose,
 		NoCache:      in.NoCache,
 		Managed:      in.Managed,
+		Served:       in.Served,
 		Interaction:  in.Interaction,
 		OnEvent:      in.OnEvent,
 		Record:       in.Record,
@@ -263,6 +271,10 @@ type bootInput struct {
 
 	NoCache bool
 	Managed bool
+	// Served fails a new egress host fast instead of holding (see RunInput.Served).
+	Served bool
+	// EgressHoldSeconds bounds a run/call's egress hold; 0 uses the default.
+	EgressHoldSeconds int
 
 	// InjectBridge stages this host's linux companion over the bundle's
 	// mcp-bridge at image build. Set on bundle-extraction boots; never for a

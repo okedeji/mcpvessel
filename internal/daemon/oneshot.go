@@ -58,6 +58,13 @@ type runFrame struct {
 	Data         string `json:"data"`
 	CostMicroUSD int64  `json:"cost_micro_usd,omitempty"`
 	CallMS       int64  `json:"call_ms,omitempty"`
+	// Preview, on an approval frame, is the not-yet-approved request the cage
+	// wants to send Data (the host), so the operator sees what is about to leave
+	// before deciding. Set only under --egress-inspect.
+	Preview *egress.PreviewRequest `json:"preview,omitempty"`
+	// HoldSeconds, on an approval frame, is how long the held connection waits
+	// for the decision before failing closed, so the prompt can say so.
+	HoldSeconds int `json:"hold_seconds,omitempty"`
 }
 
 // handleRun boots a one-shot run, streams its logs, and ends with the tool
@@ -174,6 +181,13 @@ func newRunStream(w http.ResponseWriter) *runStream {
 
 func (s *runStream) frame(typ, data string) {
 	s.write(runFrame{Type: typ, Data: data})
+}
+
+// approvalFrame carries a held host, its hold timeout, and, when present, the
+// request it captured, so the client can show what is about to leave and how
+// long there is to decide.
+func (s *runStream) approvalFrame(host string, prev *egress.PreviewRequest, holdSeconds int) {
+	s.write(runFrame{Type: "approval", Data: host, Preview: prev, HoldSeconds: holdSeconds})
 }
 
 func (s *runStream) endFrame(typ, data string, costMicroUSD, callMS int64) {

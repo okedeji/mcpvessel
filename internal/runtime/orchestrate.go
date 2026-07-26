@@ -58,6 +58,7 @@ func bootRun(ctx context.Context, in RunInput, boot bootInput, runID string) (*m
 	// The machine memory cap applies to both boot paths; the live-cage caps
 	// and idle TTL only bound a USES tree's elastic set.
 	boot.MachineMemCap = cfg.Machine.MemoryBytes()
+	boot.EgressHoldSeconds = cfg.Cages.EffectiveEgressHoldSeconds()
 
 	if len(boot.Manifest.Vesselfile.Uses) == 0 {
 		// No registry ref, so per-agent overrides do not key a directly-run
