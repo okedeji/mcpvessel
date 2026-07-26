@@ -1,10 +1,14 @@
 // Package egress is the in-run HTTP CONNECT proxy: a cage reaches only the
 // hosts its EGRESS allow: policy names, and the internal run network makes
-// this the only way out. It filters on the CONNECT host without terminating
-// TLS, so it holds no secret and never sees a payload.
+// this the only way out. By default it filters on the CONNECT host without
+// terminating TLS, so it holds no secret and never sees a payload. Under the
+// operator's opt-in inspect mode (Config.Inspect) it instead terminates the
+// cage's TLS to capture what was sent, re-encrypting to the real host whose
+// certificate it verifies; see intercept.go.
 package egress
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -26,6 +30,14 @@ type Config struct {
 	// denial, the operator approves, and the client retries. A run/call has an
 	// operator at the terminal, so it holds. See the hold deadline in await.
 	NoHold bool `json:"no_hold,omitempty"`
+	// Inspect turns on TLS interception: the proxy terminates the cage's TLS to
+	// read the plaintext, re-encrypting to the real host whose certificate it
+	// verifies. Off by default; the non-inspect path never decrypts. When on,
+	// InspectCACertPEM/InspectCAKeyPEM carry the per-run CA the runtime minted,
+	// whose cert the cages were booted trusting.
+	Inspect          bool   `json:"inspect,omitempty"`
+	InspectCACertPEM string `json:"inspect_ca_cert_pem,omitempty"`
+	InspectCAKeyPEM  string `json:"inspect_ca_key_pem,omitempty"`
 }
 
 // holdDeadline bounds how long a CONNECT to an unapproved host waits for the
@@ -77,6 +89,10 @@ type Proxy struct {
 	deadline   time.Duration
 	maxPer     int  // per-source cap on holds and distinct pending hosts
 	noHold     bool // served: fail fast instead of parking the call
+	// insp, when set, terminates each approved connection's TLS to capture it,
+	// re-encrypting to the verified upstream. Nil leaves the proxy a pure
+	// pass-through tunnel, the default that never decrypts.
+	insp *inspector
 }
 
 // New builds a Proxy from cfg, writing decision lines to events.
@@ -93,7 +109,7 @@ func New(cfg Config, events io.Writer) *Proxy {
 		}
 		static[src] = set
 	}
-	return &Proxy{
+	p := &Proxy{
 		static:     static,
 		runtime:    map[string]map[string]bool{},
 		runtimeAll: map[string]bool{},
@@ -107,6 +123,16 @@ func New(cfg Config, events io.Writer) *Proxy {
 		maxPer:     maxPerSource,
 		noHold:     cfg.NoHold,
 	}
+	if cfg.Inspect && cfg.InspectCACertPEM != "" && cfg.InspectCAKeyPEM != "" {
+		// A malformed CA is a boot misconfiguration; run without inspection
+		// rather than fail the whole proxy, since the tunnel itself is unaffected.
+		if insp, err := newInspectorFromPEM([]byte(cfg.InspectCACertPEM), []byte(cfg.InspectCAKeyPEM), p.writeCapture); err == nil {
+			p.insp = insp
+		} else if events != nil {
+			_, _ = fmt.Fprintf(events, "egress inspect: disabled (bad CA: %v)\n", err)
+		}
+	}
+	return p
 }
 
 // Handler is the CONNECT proxy for a boot-time config, the shape tests use.
@@ -137,8 +163,113 @@ func (p *Proxy) Handler() http.Handler {
 			http.Error(w, "egress to "+host+" not allowed", http.StatusForbidden)
 			return
 		}
+		if p.insp != nil {
+			p.interceptConn(w, r.Host, host, p.label(src))
+			return
+		}
 		tunnel(w, r.Host)
 	})
+}
+
+// interceptConn hijacks the approved CONNECT, sends the 200, and hands the raw
+// cage connection to the inspector, which MITMs it. Mirrors tunnel's preamble;
+// the inspector owns the connection and the upstream dial from here.
+func (p *Proxy) interceptConn(w http.ResponseWriter, target, host, agent string) {
+	hj, ok := w.(http.Hijacker)
+	if !ok {
+		http.Error(w, "egress proxy needs a hijackable connection", http.StatusInternalServerError)
+		return
+	}
+	client, _, err := hj.Hijack()
+	if err != nil {
+		return
+	}
+	_, _ = client.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n"))
+	p.insp.intercept(client, target, host, agent)
+}
+
+// writeCapture renders one capture as a secret-safe summary line on the event
+// stream: method, path with the query stripped, byte counts, and status, never
+// a body or a query value, so nothing a request carried can leak into the log
+// that containerd persists. The full bodies live only in the pulled artifact.
+func (p *Proxy) writeCapture(rec CaptureRecord) {
+	if p.events == nil {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if rec.Note != "" {
+		_, _ = fmt.Fprintf(p.events, "egress inspect: %s (agent %s) [%s]\n", rec.Host, rec.Agent, sanitizeNote(rec.Note))
+		return
+	}
+	q := ""
+	if i := strings.IndexByte(rec.URL, '?'); i >= 0 {
+		q = " +query"
+	}
+	_, _ = fmt.Fprintf(p.events, "egress inspect: %s (agent %s) %s %s%s  %dB out, %d %dB in\n",
+		rec.Host, rec.Agent, sanitizeMethod(rec.Method), sanitizePath(rec.URL), q, rec.ReqBytes, rec.Status, rec.RespBytes)
+}
+
+// sanitizeNote reduces a not-inspected note to printable ASCII on one line. A
+// note may embed a dial or TLS error string that names the caged server's own
+// chosen host, so this keeps an attacker-influenced byte from injecting a
+// newline or control sequence into the event line the operator's terminal
+// renders and the daemon parses.
+func sanitizeNote(s string) string {
+	if len(s) > 200 {
+		s = s[:200]
+	}
+	out := make([]byte, 0, len(s))
+	for i := 0; i < len(s); i++ {
+		if c := s[i]; c >= ' ' && c < 0x7f {
+			out = append(out, c)
+		} else {
+			out = append(out, ' ')
+		}
+	}
+	return string(out)
+}
+
+// sanitizeMethod keeps only a short uppercase token, so a caged server's own
+// request line cannot smuggle bytes into the log through the method.
+func sanitizeMethod(m string) string {
+	if len(m) > 16 {
+		m = m[:16]
+	}
+	out := make([]byte, 0, len(m))
+	for i := 0; i < len(m); i++ {
+		if c := m[i]; c >= 'A' && c <= 'Z' {
+			out = append(out, c)
+		}
+	}
+	if len(out) == 0 {
+		return "?"
+	}
+	return string(out)
+}
+
+// sanitizePath strips the query and reduces the path to printable ASCII without
+// spaces, capped, so an attacker-chosen request target cannot inject a newline
+// or control sequence into the event line the operator's terminal renders.
+func sanitizePath(raw string) string {
+	if i := strings.IndexByte(raw, '?'); i >= 0 {
+		raw = raw[:i]
+	}
+	if len(raw) > 128 {
+		raw = raw[:128]
+	}
+	out := make([]byte, 0, len(raw))
+	for i := 0; i < len(raw); i++ {
+		if c := raw[i]; c > ' ' && c < 0x7f {
+			out = append(out, c)
+		} else {
+			out = append(out, '?')
+		}
+	}
+	if len(out) == 0 {
+		return "/"
+	}
+	return string(out)
 }
 
 // await returns true if src may reach host: immediately when the allow-set
@@ -394,6 +525,17 @@ func (p *Proxy) Control() http.Handler {
 	}
 	mux.HandleFunc("POST /allow", decide(true))
 	mux.HandleFunc("POST /deny", decide(false))
+	// GET /captures returns the full inspected request/response records (headers
+	// and bodies) for the daemon to fold into the .replay artifact. Loopback
+	// only, like the rest of this surface; a cage has no route to it.
+	mux.HandleFunc("GET /captures", func(w http.ResponseWriter, r *http.Request) {
+		var recs []CaptureRecord
+		if p.insp != nil {
+			recs = p.insp.snapshot()
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(recs)
+	})
 	return mux
 }
 

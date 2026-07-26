@@ -18,7 +18,7 @@ import (
 )
 
 func newRunCmd() *cobra.Command {
-	var noCache, save bool
+	var noCache, save, inspectEgress bool
 	var budget, envFile, secretFile, memory, cpus string
 	var pids int
 	var envFlags, secretFlags, egressFlags []string
@@ -119,6 +119,7 @@ A bundle with no MAIN is a tool collection. Call one of its tools by name with
 				Secrets:   secretPool,
 				Resources: runCap,
 				NoCache:   noCache,
+				Inspect:   inspectEgress,
 				Egress:    runtimeEgress,
 			}, cmd.ErrOrStderr())
 			if err != nil {
@@ -136,6 +137,7 @@ A bundle with no MAIN is a tool collection. Call one of its tools by name with
 		},
 	}
 	cmd.Flags().BoolVar(&noCache, "no-cache", false, "rebuild every image from scratch, ignoring cached and already-built images")
+	cmd.Flags().BoolVar(&inspectEgress, "egress-inspect", false, "decrypt each cage's outbound HTTPS to an approved host to record what it sent (opt-in; the proxy otherwise never sees payloads)")
 	cmd.Flags().StringVar(&budget, "budget", "", "cap the run's LLM spend in USD, e.g. 5.00 (overrides the agent's advisory BUDGET)")
 	cmd.Flags().StringArrayVar(&envFlags, "env", nil, "supply an env value: KEY=VALUE, or KEY to pass it through from your environment (repeatable)")
 	cmd.Flags().StringVar(&envFile, "env-file", "", "read env values (KEY=VALUE per line) from a file")

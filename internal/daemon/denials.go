@@ -190,7 +190,24 @@ func (s *denialScanSink) scan(line string) {
 			s.pend.remove(s.runID, host)
 		}
 		s.publish(Event{Type: EventEgressApproved, RunID: s.runID, Target: host})
+		return
 	}
+	if host, ok := parseEgressHost(line, "egress inspect: "); ok {
+		// The proxy already reduced this to a secret-safe summary (no body, no
+		// query value), so the detail is the line's tail after the host, forwarded
+		// verbatim to the feed and the log.
+		s.publish(Event{Type: EventEgressInspect, RunID: s.runID, Target: host, Detail: egressInspectDetail(line)})
+	}
+}
+
+// egressInspectDetail returns the summary that follows the host in an
+// "egress inspect: <host> (agent <name>) ..." line, for the event feed.
+func egressInspectDetail(line string) string {
+	i := strings.Index(line, "egress inspect: ")
+	if i < 0 {
+		return ""
+	}
+	return strings.TrimSpace(line[i+len("egress inspect: "):])
 }
 
 func (s *denialScanSink) publish(e Event) {

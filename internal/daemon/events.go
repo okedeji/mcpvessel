@@ -33,6 +33,10 @@ const (
 	// EventEgressDenied fires when a held host is rejected or its hold lapses and
 	// the connection is refused; Target is the host.
 	EventEgressDenied = "egress.denied"
+	// EventEgressInspect fires, only under --egress-inspect, once per inspected
+	// request to an approved host; Target is the host and Detail is the
+	// secret-safe summary (method, path, byte counts, status).
+	EventEgressInspect = "egress.inspect"
 )
 
 // eventBufferSize bounds each subscriber's queue. A watcher this far behind

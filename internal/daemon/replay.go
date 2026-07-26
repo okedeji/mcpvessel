@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/okedeji/mcpvessel/internal/bundle"
+	"github.com/okedeji/mcpvessel/internal/egress"
 	"github.com/okedeji/mcpvessel/internal/llmgateway"
 	"github.com/okedeji/mcpvessel/internal/locate"
 	"github.com/okedeji/mcpvessel/internal/mcpgateway"
@@ -34,12 +35,42 @@ func (d *Daemon) writeReplay(runID string, b locate.Result, req RunRequest, resu
 		EndedAt:   nowFunc(),
 		Result:    replayResult(result, callErr),
 	}
+	// Under --egress-inspect, fold the proxy's captured outbound requests into
+	// the artifact. Best-effort, and only present when the run inspected.
+	if req.Inspect {
+		if caps, ok := runtime.RunEgressCaptures(context.Background(), runID); ok {
+			rec.Egress = egressRecords(caps)
+		}
+	}
 	if m, err := bundle.ReadManifest(b.Path); err == nil {
 		rec.ManifestHash = m.FilesHash
 	}
 	if err := replay.Write(rec); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: writing replay for %s: %v\n", runID, err)
 	}
+}
+
+// egressRecords maps the proxy's capture records to the artifact shape,
+// verbatim: headers and bodies are stored as sent, so the operator can read
+// exactly what a server shipped an approved host.
+func egressRecords(caps []egress.CaptureRecord) []replay.EgressRecord {
+	out := make([]replay.EgressRecord, 0, len(caps))
+	for _, c := range caps {
+		out = append(out, replay.EgressRecord{
+			Host:       c.Host,
+			Agent:      c.Agent,
+			Method:     c.Method,
+			URL:        c.URL,
+			ReqHeader:  c.ReqHeader,
+			ReqBody:    string(c.ReqBody),
+			Status:     c.Status,
+			RespHeader: c.RespHeader,
+			RespBody:   string(c.RespBody),
+			Truncated:  c.Truncated,
+			Note:       c.Note,
+		})
+	}
+	return out
 }
 
 // replayEvents merges LLM call records and sub-agent records into one list,

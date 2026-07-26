@@ -21,16 +21,38 @@ const replaysDirName = "replays"
 // Recording is one run's input, ordered events, and result. StartedAt and
 // EndedAt bound the run; events carry their own times.
 type Recording struct {
-	Version      string    `json:"version"`
-	AgentRef     string    `json:"agent_ref"`
-	AgentVersion string    `json:"agent_version,omitempty"`
-	ManifestHash string    `json:"agent_manifest_hash,omitempty"`
-	RunID        string    `json:"run_id"`
-	Input        Input     `json:"input"`
-	Events       []Event   `json:"events"`
-	StartedAt    time.Time `json:"started_at"`
-	EndedAt      time.Time `json:"ended_at"`
-	Result       Result    `json:"result"`
+	Version      string  `json:"version"`
+	AgentRef     string  `json:"agent_ref"`
+	AgentVersion string  `json:"agent_version,omitempty"`
+	ManifestHash string  `json:"agent_manifest_hash,omitempty"`
+	RunID        string  `json:"run_id"`
+	Input        Input   `json:"input"`
+	Events       []Event `json:"events"`
+	// Egress holds the full inspected outbound requests when the run used
+	// --egress-inspect: headers and bodies both ways, verbatim. Absent
+	// otherwise. Like the rest of the artifact it is unredacted and owner-only;
+	// a granted secret a server shipped is in here as sent.
+	Egress    []EgressRecord `json:"egress,omitempty"`
+	StartedAt time.Time      `json:"started_at"`
+	EndedAt   time.Time      `json:"ended_at"`
+	Result    Result         `json:"result"`
+}
+
+// EgressRecord is one inspected outbound request and its response, captured by
+// the egress proxy under inspection. Note names why a connection was not
+// inspected (cert pinning, HTTP/2, an unverified upstream) with the rest empty.
+type EgressRecord struct {
+	Host       string              `json:"host"`
+	Agent      string              `json:"agent,omitempty"`
+	Method     string              `json:"method,omitempty"`
+	URL        string              `json:"url,omitempty"`
+	ReqHeader  map[string][]string `json:"req_header,omitempty"`
+	ReqBody    string              `json:"req_body,omitempty"`
+	Status     int                 `json:"status,omitempty"`
+	RespHeader map[string][]string `json:"resp_header,omitempty"`
+	RespBody   string              `json:"resp_body,omitempty"`
+	Truncated  bool                `json:"truncated,omitempty"`
+	Note       string              `json:"note,omitempty"`
 }
 
 // Input is the tools/call that started the run.

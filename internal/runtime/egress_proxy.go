@@ -46,6 +46,32 @@ func AllowRunEgress(ctx context.Context, runID, host, agent string, allow, all b
 	return nil
 }
 
+// RunEgressCaptures reads the run's egress proxy's buffered inspection records
+// (full request/response headers and bodies) by execing the control client
+// inside the proxy container, the same daemon-to-container path as egress
+// approval. Best-effort: a run with no proxy, or no inspection, returns nil.
+// The daemon folds these into the .replay artifact.
+func RunEgressCaptures(ctx context.Context, runID string) ([]egress.CaptureRecord, bool) {
+	p, err := DefaultProvisioner()
+	if err != nil {
+		return nil, false
+	}
+	defer func() { _ = p.Close() }()
+
+	cmd := p.Nerdctl(ctx, "exec", egressProxyName(runID), gatewayBinaryPath, "egress-control", "captures")
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = io.Discard
+	if err := cmd.Run(); err != nil {
+		return nil, false
+	}
+	var recs []egress.CaptureRecord
+	if err := json.Unmarshal(out.Bytes(), &recs); err != nil {
+		return nil, false
+	}
+	return recs, true
+}
+
 // egressProxyName is the proxy's container name, also its hostname on the run
 // network.
 func egressProxyName(runID string) string { return runID + "-egress-proxy" }
@@ -100,11 +126,13 @@ func wantsEgress(rawEgress string, hosts []string) bool {
 // egressProxyEnv routes an allow: agent's external traffic through the run's
 // egress proxy via the HTTP_PROXY family. NO_PROXY keeps intra-run calls (the
 // gateways) direct: the proxy only tunnels external hosts and would reject
-// their plain HTTP. Both cases are set; clients differ on which they read.
-func egressProxyEnv(runID string) map[string]string {
+// their plain HTTP. Both cases are set; clients differ on which they read. When
+// caCertPEM is set (inspect mode), the cage also receives the CA cert so the
+// bridge can add it to the cage's trust store before the server starts.
+func egressProxyEnv(runID, caCertPEM string) map[string]string {
 	proxy := "http://" + egressProxyName(runID) + ":" + env.DefaultEgressPort
 	noProxy := runID + "-gw," + llmGatewayName(runID) + ",localhost,127.0.0.1"
-	return map[string]string{
+	m := map[string]string{
 		"HTTP_PROXY":  proxy,
 		"http_proxy":  proxy,
 		"HTTPS_PROXY": proxy,
@@ -112,6 +140,10 @@ func egressProxyEnv(runID string) map[string]string {
 		"NO_PROXY":    noProxy,
 		"no_proxy":    noProxy,
 	}
+	if caCertPEM != "" {
+		m[env.InspectCAPEM] = caCertPEM
+	}
+	return m
 }
 
 // startEgressProxy multi-homes the proxy onto each allow: agent's network plus
@@ -142,7 +174,14 @@ func startEgressProxy(ctx context.Context, sess *bootSession, runID, egressNetwo
 	// answer an inline approval, so a held host only stalls it; fail fast and let
 	// the client relay the denial for the operator to approve out of band. A
 	// run/call has an operator at the terminal, so it holds for the decision.
-	cfgJSON, err := json.Marshal(egress.Config{Sources: sources, Names: names, NoHold: in.Managed})
+	cfgJSON, err := json.Marshal(egress.Config{
+		Sources:          sources,
+		Names:            names,
+		NoHold:           in.Managed,
+		Inspect:          in.InspectCACertPEM != "",
+		InspectCACertPEM: in.InspectCACertPEM,
+		InspectCAKeyPEM:  in.InspectCAKeyPEM,
+	})
 	if err != nil {
 		return fmt.Errorf("encoding egress config: %w", err)
 	}

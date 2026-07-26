@@ -33,6 +33,10 @@ func newMCPBridgeCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// Under --egress-inspect the cage must trust the proxy's per-run CA
+			// before the server makes its first outbound call, so wire the trust
+			// store here, before the inner server is spawned or exec'd.
+			applyInspectTrust(cmd.ErrOrStderr())
 			bind := os.Getenv(env.ServeHTTP)
 			if bind == "" {
 				return execInner(inner)

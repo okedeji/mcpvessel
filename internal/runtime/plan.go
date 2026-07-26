@@ -291,7 +291,7 @@ func buildRunPlan(tree *runTree, runID string, ops operatorInputs) (*runPlan, er
 		nodeHosts := grantedHosts(node)
 		if len(nodeHosts) > 0 {
 			plan.EgressAgents[containerName(key)] = egressAgent{Network: nodeNet(key), Hosts: nodeHosts}
-			for k, v := range egressProxyEnv(runID) {
+			for k, v := range egressProxyEnv(runID, ops.inspectCACertPEM) {
 				agentEnv[k] = v
 			}
 		}
@@ -339,7 +339,7 @@ func buildRunPlan(tree *runTree, runID string, ops operatorInputs) (*runPlan, er
 	rootHosts := unionHosts(egressHosts(nodeEgress(tree.Nodes[tree.Root])), ops.egressAllow, configEgressFor(tree.Nodes[tree.Root], ops.configEgress))
 	if wantsEgress(nodeEgress(tree.Nodes[tree.Root]), rootHosts) {
 		plan.EgressAgents[containerName(tree.Root)] = egressAgent{Network: nodeNet(tree.Root), Hosts: rootHosts}
-		for k, v := range egressProxyEnv(runID) {
+		for k, v := range egressProxyEnv(runID, ops.inspectCACertPEM) {
 			plan.RootEnv[k] = v
 		}
 	}

@@ -34,7 +34,8 @@ type RunRequest struct {
 	Resources config.Cap            `json:"resources,omitempty"`
 	NoCache   bool                  `json:"no_cache,omitempty"`
 	Record    bool                  `json:"record,omitempty"`
-	Egress    map[string][]string   `json:"egress,omitempty"` // scoped per-agent operator override
+	Inspect   bool                  `json:"inspect,omitempty"` // egress TLS interception (--egress-inspect)
+	Egress    map[string][]string   `json:"egress,omitempty"`  // scoped per-agent operator override
 	// TimeoutSeconds bounds the tool call, not the boot: a first-use image
 	// build can take minutes and must not count against the deadline. Zero
 	// means no deadline.
@@ -101,6 +102,7 @@ func (d *Daemon) handleRun(w http.ResponseWriter, r *http.Request) {
 		Resources:   req.Resources,
 		NoCache:     req.NoCache,
 		Record:      req.Record,
+		Inspect:     req.Inspect,
 		EgressAllow: egress.HostsFor(req.Egress, b.Name),
 		Interaction: env.InteractionOneShot,
 		Stdout:      io.Discard,

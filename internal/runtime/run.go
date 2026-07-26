@@ -60,6 +60,11 @@ type RunInput struct {
 	// Record enables full-payload LLM capture for replay; heavy, off by default.
 	Record bool
 
+	// Inspect turns on egress TLS interception: the proxy decrypts each cage's
+	// outbound HTTPS to an approved host to capture what it sent. Opt-in and
+	// loud; off by default, where the proxy never decrypts.
+	Inspect bool
+
 	Stdout io.Writer
 	Stderr io.Writer
 
@@ -277,6 +282,12 @@ type bootInput struct {
 	// EgressAllow is the operator's per-run egress override for the root agent.
 	EgressAllow []string
 
+	// InspectCACertPEM and InspectCAKeyPEM carry the per-run egress-inspection CA
+	// when the run opted in. The cert is injected into egress cages (trust); the
+	// proxy holds the key to mint leaves. Both empty leaves inspection off.
+	InspectCACertPEM string
+	InspectCAKeyPEM  string
+
 	// ElicitHandler routes the root's mid-call questions; interactive boots only.
 	ElicitHandler mcp.ElicitHandler
 
@@ -413,7 +424,7 @@ func bootAgent(ctx context.Context, in bootInput) (*mcp.Client, *workingSet, err
 		}
 
 		if runEgress {
-			for k, v := range egressProxyEnv(in.RunID) {
+			for k, v := range egressProxyEnv(in.RunID, in.InspectCACertPEM) {
 				in.Env[k] = v
 			}
 		}

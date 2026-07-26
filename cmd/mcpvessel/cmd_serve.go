@@ -25,7 +25,7 @@ func newServeCmd() *cobra.Command {
 	var listen, budget string
 	var expose, noExpose, egressFlags, secretFlags, envFlags []string
 	var secretFile, envFile string
-	var save bool
+	var save, inspectEgress bool
 	cmd := &cobra.Command{
 		Use:   "serve BUNDLE...",
 		Short: "Serve agents to external MCP clients over HTTP",
@@ -97,7 +97,7 @@ shuts down.`,
 				}
 				budgetMicros = m
 			}
-			res, err := daemon.Dial(socket).Serve(cmd.Context(), targets, listen, expose, noExpose, runtimeEgress, envPool, secretPool, budgetMicros)
+			res, err := daemon.Dial(socket).Serve(cmd.Context(), targets, listen, expose, noExpose, runtimeEgress, envPool, secretPool, budgetMicros, inspectEgress)
 			if err != nil {
 				var unreachable *daemon.Unreachable
 				if errors.As(err, &unreachable) {
@@ -109,7 +109,7 @@ shuts down.`,
 			for _, warning := range res.Warnings {
 				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "note: %s\n", warning)
 			}
-			printServeReport(cmd.OutOrStdout(), res, policies, scoped, secretPool)
+			printServeReport(cmd.OutOrStdout(), res, policies, scoped, secretPool, inspectEgress)
 			return nil
 		},
 	}
@@ -119,6 +119,7 @@ shuts down.`,
 	cmd.Flags().StringArrayVar(&noExpose, "no-expose", nil, "hide this agent even if USES PUBLIC, matched by repository (repeatable)")
 	cmd.Flags().StringArrayVar(&egressFlags, "egress", nil, "allow a served agent hosts for this run: host,host, or agent:host,host to scope one of several (repeatable)")
 	cmd.Flags().BoolVar(&save, "save", false, "with --egress, write the hosts into the agent's Vesselfile and rebuild instead of allowing them for this run only (source directories only)")
+	cmd.Flags().BoolVar(&inspectEgress, "egress-inspect", false, "decrypt each served cage's outbound HTTPS to an approved host to record what it sent (opt-in; the proxy otherwise never sees payloads)")
 	cmd.Flags().StringArrayVar(&secretFlags, "secret", nil, "supply a secret NAME a served agent needs, or agent:NAME to grant one agent of several; the value resolves from your environment or the mcpvessel secret store (repeatable)")
 	cmd.Flags().StringVar(&secretFile, "secret-file", "", "read secret values ([agent:]NAME=VALUE per line) from a perms-restricted file")
 	cmd.Flags().StringArrayVar(&envFlags, "env", nil, "supply an env value a served agent needs: KEY=VALUE, or KEY to pass it through from your environment (repeatable)")
@@ -236,7 +237,7 @@ func resolveServeTarget(ctx context.Context, stderr io.Writer, arg string) (daem
 // then the REST surface. One served agent collapses to a single endpoint;
 // several keep the merged /mcp plus one endpoint each. Endpoints print as
 // full URLs because the reader's next act is pasting one into a client.
-func printServeReport(out io.Writer, res daemon.ServeResult, policies map[string]exposedPolicy, scoped map[string][]string, secretPool runtime.ScopedSecrets) {
+func printServeReport(out io.Writer, res daemon.ServeResult, policies map[string]exposedPolicy, scoped map[string][]string, secretPool runtime.ScopedSecrets, inspect bool) {
 	base := "http://" + res.Listen
 	single := len(res.Agents) == 1
 	if single {
@@ -287,6 +288,16 @@ func printServeReport(out io.Writer, res daemon.ServeResult, policies map[string
 		pol := policies[a.Address]
 		_, _ = fmt.Fprintf(out, "  %s: %s\n", a.Address,
 			formatSecretGrants(pol.Secrets, pol.Optional, secretPool.For(a.Address)))
+	}
+
+	if inspect {
+		// Loud on purpose: inspection decrypts the cage's HTTPS, a deliberate
+		// break from the default where the proxy never sees a payload.
+		_, _ = fmt.Fprintln(out)
+		_, _ = fmt.Fprintln(out, "Egress inspection: ON")
+		_, _ = fmt.Fprintln(out, "  Each cage's HTTPS to an approved host is decrypted to see what it sent.")
+		_, _ = fmt.Fprintln(out, "  Requests show live in 'mcpvessel events' and 'mcpvessel logs' as metadata")
+		_, _ = fmt.Fprintln(out, "  (method, host, sizes). For full bodies, 'mcpvessel replay record --egress-inspect'.")
 	}
 
 	// The prompt endpoint exists only for a MAIN-bearing agent, so it is

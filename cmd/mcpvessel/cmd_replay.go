@@ -34,6 +34,7 @@ run, share it when reporting a bug, or analyze it yourself.`,
 func newReplayRecordCmd() *cobra.Command {
 	var envFlags, secretFlags, egressFlags []string
 	var envFile, secretFile, budget string
+	var inspectEgress bool
 	cmd := &cobra.Command{
 		Use:   "record BUNDLE [PROMPT]",
 		Short: "Run an agent and record its full payloads to a .replay artifact",
@@ -92,6 +93,7 @@ it attaches the provider key, so a recording never contains a key.`,
 				Budget:  budgetMicros,
 				Env:     envPool,
 				Secrets: secretPool,
+				Inspect: inspectEgress,
 				Egress:  egress.ParseScoped(egressFlags),
 			}, cmd.ErrOrStderr())
 			if err != nil {
@@ -115,6 +117,7 @@ it attaches the provider key, so a recording never contains a key.`,
 	cmd.Flags().StringArrayVar(&secretFlags, "secret", nil, "supply a secret NAME, or agent:NAME to grant one agent of several (repeatable)")
 	cmd.Flags().StringVar(&secretFile, "secret-file", "", "read secret values ([agent:]NAME=VALUE per line) from a perms-restricted file")
 	cmd.Flags().StringArrayVar(&egressFlags, "egress", nil, "allow the agent hosts for this run: host,host, or agent:host,host to scope one (repeatable)")
+	cmd.Flags().BoolVar(&inspectEgress, "egress-inspect", false, "also decrypt each cage's outbound HTTPS to an approved host to record what it sent (opt-in)")
 	return cmd
 }
 

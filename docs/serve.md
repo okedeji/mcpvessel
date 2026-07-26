@@ -119,6 +119,7 @@ Over the MCP endpoints, an agent that asks a mid-call question routes it to the 
 | `--env KEY=VALUE` | Supply an env value a served agent needs, or `KEY` to pass it through from your environment. Repeatable. |
 | `--env-file PATH` | Read env values (`KEY=VALUE` per line) from a file. |
 | `--budget USD` | Cap each client instance's LLM spend, e.g. `5.00`. Every connected client gets its own instance with its own meter, so the ceiling is per instance, not shared across clients. Unset leaves served spend unbounded. |
+| `--egress-inspect` | Decrypt each served cage's outbound HTTPS to an approved host and record what it sent. Opt-in; prints an `Egress inspection: ON` banner at boot, and each request surfaces live in `mcpvessel events` and `mcpvessel logs` as a metadata summary (method, host, sizes). See [egress](egress.md#seeing-what-a-server-sends---egress-inspect). |
 
 ## Examples
 

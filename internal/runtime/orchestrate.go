@@ -14,6 +14,7 @@ import (
 
 	"github.com/okedeji/mcpvessel/internal/bundle"
 	"github.com/okedeji/mcpvessel/internal/config"
+	"github.com/okedeji/mcpvessel/internal/egress"
 	"github.com/okedeji/mcpvessel/internal/mcp"
 	"github.com/okedeji/mcpvessel/internal/mcpgateway"
 	"github.com/okedeji/mcpvessel/internal/reference"
@@ -37,7 +38,22 @@ func bootRun(ctx context.Context, in RunInput, boot bootInput, runID string) (*m
 	// the more specific choice.
 	res := cfg.Resources
 	res.Defaults = overlayCap(in.Resources, res.Defaults)
-	ops := operatorInputs{env: in.Env, secrets: in.Secrets, rootName: in.Name, models: cfg.Models, resources: res, managed: in.Managed, prewarm: cfg.Cages.EffectivePrewarm(), keepWarm: cfg.Cages.KeepWarm, maxLive: cfg.Cages.EffectiveMaxLive(), record: in.Record, egressAllow: in.EgressAllow, configEgress: cfg.Egress}
+	// A run that opted into egress inspection mints one ephemeral CA: its cert is
+	// injected into every egress cage so the cage trusts the leaves the proxy
+	// presents, while the key travels only to the proxy. The pair dies with the
+	// run and is never persisted.
+	var inspectCACertPEM string
+	if in.Inspect {
+		certPEM, keyPEM, err := egress.GenerateInspectCA()
+		if err != nil {
+			return nil, nil, err
+		}
+		inspectCACertPEM = string(certPEM)
+		boot.InspectCACertPEM = string(certPEM)
+		boot.InspectCAKeyPEM = string(keyPEM)
+	}
+
+	ops := operatorInputs{env: in.Env, secrets: in.Secrets, rootName: in.Name, models: cfg.Models, resources: res, managed: in.Managed, prewarm: cfg.Cages.EffectivePrewarm(), keepWarm: cfg.Cages.KeepWarm, maxLive: cfg.Cages.EffectiveMaxLive(), record: in.Record, egressAllow: in.EgressAllow, configEgress: cfg.Egress, inspectCACertPEM: inspectCACertPEM}
 
 	// The machine memory cap applies to both boot paths; the live-cage caps
 	// and idle TTL only bound a USES tree's elastic set.

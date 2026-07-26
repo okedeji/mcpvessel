@@ -22,6 +22,30 @@ real daemon or VM, so `make test` passes offline with no containers running.
 Keep it that way: a test that needs a live runtime does not belong in the unit
 suite.
 
+## Live testing against a real runtime
+
+The unit suite covers logic, but some changes (the container topology, the
+egress proxy, image builds) can only be exercised for real, in a full caged run.
+Never do this against your own `~/.mcpvessel`: a fresh daemon's startup sweep
+tears down daemon-labeled containers, so pointing a dev build at your real VM
+would kill any agents you are serving. Use the isolated harness instead, which
+gives the dev runtime its own `VESSEL_HOME`, its own Lima VM, and its own daemon
+socket, all separate from the real install (`VESSEL_HOME` isolates the VM too, so
+nothing is shared):
+
+```sh
+scripts/devvm.sh rebuild        # build host + in-VM binaries from local code
+scripts/devvm.sh up             # provision the dev VM once, then reuse it
+scripts/devvm.sh build ./dir -t @dev/x:0.1   # any mcpvessel command passes through
+scripts/devvm.sh run @dev/x:0.1 "hello"
+scripts/devvm.sh down           # stop the VM, keep the disk (next 'up' is fast)
+scripts/devvm.sh clean          # delete the dev VM and its state entirely
+```
+
+The first `up` provisions a VM (a couple of minutes); later ones reuse it in
+seconds. `scripts/devvm.sh help` lists everything. Override the location with
+`MCPVESSEL_DEV_HOME`; it defaults to `~/.mcpvessel-dev`, outside the repo.
+
 ## Pull requests
 
 - Run `make ci` before opening a PR; a red pipeline will not merge.

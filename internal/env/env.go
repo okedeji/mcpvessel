@@ -105,6 +105,11 @@ const (
 	EgressConfig = Prefix + "EGRESS_CONFIG"
 	// EgressAddr is the egress proxy's listen address.
 	EgressAddr = Prefix + "EGRESS_ADDR"
+	// InspectCAPEM carries the per-run egress-inspection CA certificate (PEM)
+	// into a cage under --egress-inspect. The bridge writes it to the cage's
+	// trust store so the cage accepts the leaf the proxy presents; the matching
+	// key lives only in the proxy. Unset means no inspection.
+	InspectCAPEM = Prefix + "INSPECT_CA_PEM"
 )
 
 const DefaultEgressPort = "9002"

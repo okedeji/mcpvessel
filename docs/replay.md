@@ -38,6 +38,7 @@ Top level:
 - **`run_id`**: the daemon's id for the run, the same string as the `.replay` filename. It is the agent's name, a short digest of its files, and a unique suffix, so every recording is its own file and repeated runs never collide.
 - **`input`**: the `tools/call` that started the run, as `{tool, args}`. `tool` is the resolved `MAIN`; `args` is the `messages` array built from your prompt (absent when you gave none).
 - **`events`**: the ordered interactions (below).
+- **`egress`**: present only with `--egress-inspect`. Each entry is one inspected outbound request to an approved host: `{host, agent, method, url, req_header, req_body, status, resp_header, resp_body}`, headers and bodies verbatim. A connection that could not be inspected (cert pinning, HTTP/2) carries a `note` instead. A body past 64KB is captured to the cap and marked `truncated`.
 - **`started_at`** / **`ended_at`**: the run's wall-clock bounds.
 - **`result`**: the run's outcome, as `{output, status, error}`. `status` is `succeeded` with the tool's `output`, or `failed` with the `error` string.
 
@@ -73,8 +74,9 @@ If the run finishes but the CLI cannot fetch the artifact back, it says so (`the
 | `--env KEY=VALUE` | Supply an env value, or `KEY` to pass it through from your environment. Repeatable. |
 | `--env-file PATH` | Read env values (`KEY=VALUE` per line) from a file. |
 | `--egress HOSTS` | Allow the agent hosts for this run: `host,host`, or `agent:host,host` to scope one. Repeatable. |
+| `--egress-inspect` | Decrypt the run's outbound HTTPS to an approved host and fold the full captures (headers and bodies, both ways) into the recording under a top-level `egress` array. Opt-in. |
 
-The recording itself never contains a secret or the provider key: request bodies are captured before the gateway attaches the key, and secret values ride env injection, not the recorded payloads.
+The LLM and sub-agent captures never contain a secret or the provider key: request bodies are captured before the gateway attaches the key, and secret values ride env injection, not the recorded payloads. The `--egress-inspect` capture is the exception: it records what a server actually sent an approved host, verbatim, so a secret the server shipped is in the `egress` array as sent. Treat a recording made with `--egress-inspect` as sensitive.
 
 ## Examples
 
@@ -101,6 +103,7 @@ cat ~/.mcpvessel/replays/researcher-1f3c-*.replay | jq '.events[].type'
 - A source directory is not a valid `BUNDLE` here. `record` runs an already-built bundle. Build the directory first.
 - No provider key ever reaches the file: requests are captured before the gateway attaches the key. The artifact can still contain whatever your prompt, the model's responses, and your tools' arguments and results held, so treat it as sensitive before sharing.
 - A failed run still records. `result.status` is `failed` with the error, and every event up to the failure is in the file.
+- `record` accepts `--egress-inspect`, which decrypts the run's outbound HTTPS (see [egress](egress.md#seeing-what-a-server-sends---egress-inspect)). Each request surfaces live in `mcpvessel events` and `mcpvessel logs` as a metadata summary, and the full captures, request and response headers and bodies both ways, are written into the recording under a top-level `egress` array. They are verbatim and unredacted, the same posture as the LLM payloads above: a secret a server shipped to an approved host is in the file as sent, so treat the artifact as sensitive.
 
 ## See also
 

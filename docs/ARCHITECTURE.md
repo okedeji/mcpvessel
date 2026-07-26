@@ -86,7 +86,9 @@ The subsections below describe each broker in a fixed frame: what it *mediates*,
 
 ### 6.2 Egress proxy
 
-*Mediates* every outbound network connection a cage attempts. *Holds* the per-source allow-set and the set of connections currently held awaiting a decision; it filters on the CONNECT target without terminating TLS, so it holds no plaintext and no credential. *Cannot be bypassed* because the cage's network has no route to the internet except through the proxy, and the proxy is deny-default.
+*Mediates* every outbound network connection a cage attempts. *Holds* the per-source allow-set and the set of connections currently held awaiting a decision; by default it filters on the CONNECT target without terminating TLS, so it holds no plaintext and no credential. *Cannot be bypassed* because the cage's network has no route to the internet except through the proxy, and the proxy is deny-default.
+
+An operator may opt one run into *inspection* (`--egress-inspect`), which trades that no-plaintext property for visibility into what a server sends an approved host. Under inspection the proxy terminates the cage's TLS to read the plaintext and re-encrypts to the real host, whose certificate it now verifies against the system roots on the cage's behalf, so inspection reads the traffic without weakening the check that the real host is who it claims. The runtime mints an ephemeral per-run CA host-side, injects its certificate into the inspected cages (so they accept the leaves the proxy presents) and hands the key only to the proxy; the pair dies with the run. The live surface is metadata only (method, path with the query stripped, byte counts, status), kept secret-safe by construction so nothing a request carried reaches the durable log. Inspection is off by default, per-run, and announced in the boot report; a cert-pinning server rejects the leaf and its call fails with a note (pinning cannot be detected before a leaf is presented), and an unverifiable upstream is refused, while an HTTP/2-only upstream is tunneled uninspected so it still works. This is the §14 limitation ("an allowed host receives whatever the server sends it") made observable on request, not removed.
 
 The proxy authorizes by source network address. This is sound only because a cage's address is unambiguous: per-cage networks (I1) make one address name one cage, the proxy refuses to start if two agents ever resolve to the same address ("refusing to mis-authorize egress", a fail-closed check), and egress-bearing cages are pinned warm (kept booted for the run's whole life; §10) so their address cannot drift mid-run.
 
@@ -233,7 +235,7 @@ A reference monitor that cannot be observed is only half a monitor, so every dec
 
 The boundaries of the guarantee, stated plainly so an operator can reason about them.
 
-- An allowed host receives whatever the server sends it. Egress control decides *which* hosts, not *what* is sent to one that is permitted.
+- An allowed host receives whatever the server sends it. Egress control decides *which* hosts, not *what* is sent to one that is permitted. An operator can make that traffic observable for a run with `--egress-inspect` (§6.2), which surfaces each request's metadata live; it reveals exfiltration but does not prevent it, and a cert-pinning server's call fails under it.
 - A server granted a secret and a matching egress host can use them together. That is the grant working as issued; scope the grant narrowly if the combination is not intended.
 - A signature proves who built a bundle, not that the bundle behaves. Origin is attested; intent is contained by the sandbox, not vouched for by the key.
 - Trust on first use trusts the first key it sees. A first pull over a compromised channel pins the wrong key; verify the printed fingerprint against the publisher's stated one.

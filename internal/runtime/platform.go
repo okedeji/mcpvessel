@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/okedeji/mcpvessel/internal/config"
+	"github.com/okedeji/mcpvessel/internal/env"
 )
 
 // Provisioner is the platform-specific gate to a Linux container environment
@@ -280,12 +281,15 @@ type LimaProvisioner struct {
 	DiskGiB   int
 }
 
-// defaultLimaProvisioner uses the conventional ~/.mcpvessel/lima paths and the
-// bundled limactl binary.
+// defaultLimaProvisioner puts the VM under the state root's lima/ directory and
+// uses the bundled limactl binary. The root honors VESSEL_HOME, so the VM is
+// isolated with the rest of the state: a run under a different VESSEL_HOME gets
+// its own VM rather than sharing the operator's, which a dev or test run relies
+// on to leave the real VM (and any serves in it) untouched.
 func defaultLimaProvisioner() (*LimaProvisioner, error) {
-	home, err := os.UserHomeDir()
+	root, err := env.HomeDir()
 	if err != nil {
-		return nil, fmt.Errorf("resolving home dir: %w", err)
+		return nil, err
 	}
 	limactl, err := FindLimactl()
 	if err != nil {
@@ -295,7 +299,7 @@ func defaultLimaProvisioner() (*LimaProvisioner, error) {
 	if err != nil {
 		return nil, err
 	}
-	base := filepath.Join(home, ".mcpvessel", "lima")
+	base := filepath.Join(root, "lima")
 	return &LimaProvisioner{
 		VM: &LimaVM{
 			LimactlPath:   limactl,

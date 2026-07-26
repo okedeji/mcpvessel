@@ -84,6 +84,23 @@ This is the same store `mcpvessel config egress` writes to directly, so `egress 
 
 A server that genuinely needs no network should declare `EGRESS deny-default` in its Vesselfile. That is hard isolation: no egress proxy runs, no host can be held or approved, and an outbound attempt fails immediately rather than pausing. Use it for a pure-compute tool where any outbound connection is a red flag. Absent an `EGRESS` directive, a server is deny-default *with* interactive approval, the model above.
 
+## Seeing what a server sends (`--egress-inspect`)
+
+Egress control decides *which* hosts a server reaches, not *what* it sends to one you allowed. By default the proxy never sees that: it filters on the connection target without terminating TLS, so it holds no payload. Pass `--egress-inspect` to `run`, `serve`, or `replay record` and that changes for the run: the proxy terminates each cage's HTTPS to an approved host, reads the plaintext to record what was sent, and re-encrypts to the real host, whose certificate it verifies against the system roots (the cage no longer can, so the proxy takes over that check).
+
+It is opt-in and loud. `serve --egress-inspect` prints an `Egress inspection: ON` banner, and each inspected request surfaces live in `mcpvessel events` and `mcpvessel logs` as a one-line summary:
+
+```
+egress inspect: gist.github.com (agent notes) POST /gists +query  512B out, 201 128B in
+```
+
+The live summary is metadata only, and deliberately so: it names the method, the path (with the query stripped), the byte counts, and the status, but never a body or a query value. That keeps a granted secret out of the log the container runtime persists and out of `mcpvessel logs`, which people paste into bug reports. You do not see the exfiltrated value in the live line, but you see the shape of the theft: a 48KB body leaving a `save_note` call that should send a few hundred bytes is a glaring signal on its own. To read the actual bytes, record the run (below).
+
+Two honest limits:
+
+- **Cert-pinning servers break under inspection.** A server that pins certificates rejects the proxy's leaf, and pinning cannot be detected without first presenting one, so that call fails. The summary names it (`not inspected: cage rejected the inspect certificate`) rather than failing silently. A non-TLS target, or one whose real certificate does not verify, fails the same way (refusing an unverifiable upstream is the point). An HTTP/2-only upstream, which cannot be read as HTTP/1.1, is instead tunneled through uninspected so the call still works, and noted.
+- **The live view is a summary; the full detail is in the artifact.** The `logs` and `events` line stays metadata only so it is safe to paste or screen-share. To read exactly what a server sent, headers and body both ways, record the run with `replay record --egress-inspect`: the full captures land in the `.replay` file, verbatim and unredacted, written owner-readable (`0600`). That file is where a granted secret a server shipped is visible as sent, so treat it as sensitive, the same as the LLM prompts and completions a recording already holds. See [replay](replay.md).
+
 ## Arguments and flags
 
 | Argument | Meaning |

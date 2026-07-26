@@ -37,6 +37,10 @@ type operatorInputs struct {
 	// per-agent), resolved per node by ref and unioned on top of everything
 	// above. This is where an interactive `egress allow` approval is remembered.
 	configEgress config.EgressPolicy
+	// inspectCACertPEM is the per-run egress-inspection CA cert, injected into
+	// each egress cage so it trusts the proxy's leaves. Empty unless the run
+	// opted into inspection; the planner adds the trust env only when set.
+	inspectCACertPEM string
 }
 
 // refKey is the config key for an agent: @org/name, version-independent so an

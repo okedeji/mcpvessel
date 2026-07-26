@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -98,6 +99,29 @@ func newEgressControlCmd() *cobra.Command {
 		c.Flags().StringVar(&agent, "agent", "", "scope the decision to one agent by name")
 		return c
 	}
-	cmd.AddCommand(post("/allow"), post("/deny"))
+	cmd.AddCommand(post("/allow"), post("/deny"), egressCapturesCmd())
 	return cmd
+}
+
+// egressCapturesCmd GETs the proxy's buffered inspection records and writes the
+// JSON to stdout, for the daemon to read via nerdctl exec at teardown. Mirrors
+// the allow/deny control clients; loopback only.
+func egressCapturesCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:  "captures",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			endpoint := "http://127.0.0.1:" + env.DefaultEgressControlPort + "/captures"
+			resp, err := http.Get(endpoint)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = resp.Body.Close() }()
+			if resp.StatusCode >= 300 {
+				return fmt.Errorf("egress control /captures: %s", resp.Status)
+			}
+			_, err = io.Copy(cmd.OutOrStdout(), resp.Body)
+			return err
+		},
+	}
 }

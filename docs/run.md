@@ -103,6 +103,7 @@ Three flags cap the cage's resources for this run, each overriding the configure
 | `--env KEY=VALUE` | Supply an env value, or `KEY` to pass it through from your environment. Repeatable. |
 | `--env-file PATH` | Read env values (`KEY=VALUE` per line) from a file. |
 | `--egress HOSTS` | Allow the agent hosts for this run: `host,host`, or `agent:host,host` to scope one. Added on top of the bundle's baked egress. Repeatable. With none, the run is deny-default and holds a new host for approval. |
+| `--egress-inspect` | Decrypt each cage's outbound HTTPS to an approved host and record what it sent. Opt-in; off by default the proxy never sees a payload. A live metadata summary shows in `logs` and `events`; the full bodies are only captured under `replay record`. See [egress](egress.md#seeing-what-a-server-sends---egress-inspect). |
 | `--save` | With `--egress`, write the hosts into the agent's Vesselfile and rebuild instead of allowing them for this run only. Source directories only. |
 | `--memory SIZE` | Per-cage memory cap for this run, e.g. `2g`. Overrides the configured default. |
 | `--cpus N` | Per-cage CPU cap for this run, e.g. `2` or `0.5`. |

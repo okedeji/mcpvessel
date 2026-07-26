@@ -44,10 +44,10 @@ This is the raw event as the daemon sends it (the wire format is `application/x-
 | Field | Meaning |
 | --- | --- |
 | `time` | When the event fired. |
-| `type` | The event type (`run.started`, `run.ended`, `cage.activated`, `cage.evicted`, `elicitation.asked`, `elicitation.answered`). |
+| `type` | The event type (`run.started`, `run.ended`, `egress.pending`, `egress.approved`, `egress.denied`, `egress.inspect`, `cage.activated`, `cage.evicted`, `elicitation.asked`, `elicitation.answered`). |
 | `run_id` | The run the event belongs to. |
 | `ref` | The bundle reference the run is executing. Present on run and runtime events. |
-| `target` | The sub-agent node the event concerns. Present on cage events; empty when the event is run-wide. |
+| `target` | The sub-agent node the event concerns, or the host on an egress event. Empty when the event is run-wide. |
 | `status` | The run's terminal status. Present on `run.ended`. |
 | `detail` | Extra context: an error message on a failed `run.ended`, the operator's action on `elicitation.answered`. |
 
@@ -55,7 +55,7 @@ Every field except `time`, `type`, and `run_id` is omitted when empty, so a give
 
 ## Event types
 
-Two kinds of event reach the feed. The daemon emits run lifecycle events (`run.started`, `run.ended`) directly. The runtime emits in-process events for a run's sub-agent tree (`cage.activated`, `cage.evicted`, `elicitation.*`), which the daemon forwards onto the same feed. Per-LLM-call and per-sub-agent-call telemetry does not appear here; that reaches the daemon over a separate channel and surfaces in a run's trace.
+Two kinds of event reach the feed. The daemon emits run lifecycle events (`run.started`, `run.ended`) and egress decisions (`egress.pending`, `egress.approved`, `egress.denied`, `egress.inspect`) directly. The runtime emits in-process events for a run's sub-agent tree (`cage.activated`, `cage.evicted`, `elicitation.*`), which the daemon forwards onto the same feed. Per-LLM-call and per-sub-agent-call telemetry does not appear here; that reaches the daemon over a separate channel and surfaces in a run's trace.
 
 ### run.started
 
@@ -75,6 +75,14 @@ A run finished. Emitted by the daemon when it closes a run out, after it has rea
 On a failed run, `detail` carries the error message. In a terminal the label is the status itself (not `run.ended`), the subject is the run id, and the `ref` and any `detail` are appended.
 
 (`crashed` is a status history assigns to runs that were still running when a daemon died, reconciled on the next daemon start. It is not published on this live feed.)
+
+### egress.pending, egress.approved, egress.denied
+
+A caged server's outbound connection reached the egress proxy's decision path. `target` is the host in every case. `egress.pending` fires when a server reaches a host not yet in its allow-set and the proxy holds (or, under `serve`, fails-fast) the connection; `detail` carries the exact `mcpvessel egress allow` command. `egress.approved` fires when a held host is allowed and the connection proceeds; `egress.denied` when it is rejected or the hold lapses. In a terminal the label is the type and the subject is `run_id/target`. These are the live view of the deny-default flow that [egress](egress.md) covers.
+
+### egress.inspect
+
+Under `--egress-inspect` only, one per inspected request to an approved host. `target` is the host; `detail` is the secret-safe summary the proxy emits, method, path (query stripped), byte counts, and status, never a body or query value. In a terminal the label is `egress.inspect` and the subject is `run_id/target`. The full request and response (headers and bodies) are not on this feed; they are captured into the `.replay` artifact when the run is recorded. See [egress](egress.md#seeing-what-a-server-sends---egress-inspect).
 
 ### cage.activated
 

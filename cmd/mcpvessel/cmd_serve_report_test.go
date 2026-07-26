@@ -22,7 +22,7 @@ func TestPrintServeReport_SingleToolCollection(t *testing.T) {
 		"docs": {Egress: "allow:api.github.com", Secrets: []string{"GITHUB_PERSONAL_ACCESS_TOKEN"}, Optional: []string{"GITHUB_PERSONAL_ACCESS_TOKEN"}},
 	}
 	var buf bytes.Buffer
-	printServeReport(&buf, res, policies, nil, runtime.ScopedSecrets{})
+	printServeReport(&buf, res, policies, nil, runtime.ScopedSecrets{}, false)
 	got := buf.String()
 
 	want := `Serving docs on http://127.0.0.1:7000
@@ -57,7 +57,7 @@ func TestPrintServeReport_MultiAgentWithMain(t *testing.T) {
 	}
 	policies := map[string]exposedPolicy{"oncall": {}, "time": {}}
 	var buf bytes.Buffer
-	printServeReport(&buf, res, policies, nil, runtime.ScopedSecrets{})
+	printServeReport(&buf, res, policies, nil, runtime.ScopedSecrets{}, false)
 	got := buf.String()
 
 	for _, line := range []string{
