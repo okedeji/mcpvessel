@@ -59,7 +59,7 @@ jobs:
       - name: Install containerd + buildkit + nerdctl
         run: |
           set -euo pipefail
-          NERDCTL_VERSION=2.0.3
+          NERDCTL_VERSION=2.2.2
           curl -fsSL -o /tmp/nerdctl-full.tgz \
             "https://github.com/containerd/nerdctl/releases/download/v${NERDCTL_VERSION}/nerdctl-full-${NERDCTL_VERSION}-linux-amd64.tar.gz"
           sudo tar Cxzf /usr/local /tmp/nerdctl-full.tgz
