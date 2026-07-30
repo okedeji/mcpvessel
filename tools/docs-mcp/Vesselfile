@@ -1,5 +1,6 @@
 FROM python:3.12-slim
-RUN pip install --no-cache-dir mcp
+# Pin to mcp 1.x: server.py imports mcp.server.fastmcp, which mcp 2.0 removed.
+RUN pip install --no-cache-dir "mcp<2"
 EGRESS allow:api.github.com,raw.githubusercontent.com
 SECRETS GITHUB_PERSONAL_ACCESS_TOKEN?
 META imported_from mcpvessel-docs
