@@ -19,6 +19,7 @@ func newCallCmd() *cobra.Command {
 	var argPairs []string
 	var envFlags, secretFlags, egressFlags []string
 	var envFile, secretFile, budget string
+	var inspectEgress bool
 	cmd := &cobra.Command{
 		Use:   "call BUNDLE TOOL",
 		Short: "Call a specific tool on an agent by name",
@@ -87,6 +88,7 @@ Tools the agent serves over MCP but does not EXPOSE stay private.`,
 				Env:     envPool,
 				Secrets: secretPool,
 				Egress:  egress.ParseScoped(egressFlags),
+				Inspect: inspectEgress,
 			}, cmd.ErrOrStderr())
 			if err != nil {
 				var unreachable *daemon.Unreachable
@@ -109,6 +111,7 @@ Tools the agent serves over MCP but does not EXPOSE stay private.`,
 	cmd.Flags().StringArrayVar(&secretFlags, "secret", nil, "supply a secret NAME, or agent:NAME to grant one agent of several; the value resolves from your environment or the mcpvessel secret store (repeatable)")
 	cmd.Flags().StringVar(&secretFile, "secret-file", "", "read secret values ([agent:]NAME=VALUE per line) from a perms-restricted file")
 	cmd.Flags().StringArrayVar(&egressFlags, "egress", nil, "allow the agent hosts for this call: host,host, or agent:host,host to scope one (repeatable)")
+	cmd.Flags().BoolVar(&inspectEgress, "egress-inspect", false, "decrypt the cage's outbound HTTPS to an approved host to record what it sent (opt-in; the proxy otherwise never sees payloads)")
 	return cmd
 }
 

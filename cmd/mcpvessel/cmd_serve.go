@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -125,8 +126,197 @@ shuts down.`,
 	cmd.Flags().StringArrayVar(&envFlags, "env", nil, "supply an env value a served agent needs: KEY=VALUE, or KEY to pass it through from your environment (repeatable)")
 	cmd.Flags().StringVar(&envFile, "env-file", "", "read env values (KEY=VALUE per line) from a file")
 	_ = cmd.MarkFlagRequired("listen")
+	cmd.AddCommand(newServeAddCmd(), newServeRmCmd())
 	return cmd
 }
+
+// newServeAddCmd attaches more bundles to a running front door, merging their
+// tools into the one endpoint a client already points at, instead of opening a
+// second one. The client must reconnect to see the new tools.
+func newServeAddCmd() *cobra.Command {
+	var listen, budget string
+	var expose, noExpose, egressFlags, secretFlags, envFlags []string
+	var secretFile, envFile string
+	var inspectEgress bool
+	cmd := &cobra.Command{
+		Use:   "add BUNDLE...",
+		Short: "Add bundles to a running front door, merged into its one endpoint",
+		Long: `Add bundles to a front door already opened by 'mcpvessel serve', merging their
+tools into the same endpoint the client points at, so the client keeps one MCP
+server entry no matter how many bundles sit behind it.
+
+You are adding a new MCP server; mcpvessel just surfaces it merged into the one.
+So the merged tool list changes, and your MCP client must reconnect (restart the
+session, or re-add the same URL) to pick up the new tools.
+
+--listen selects the front door; it is inferred when only one is running.`,
+		Example: `  mcpvessel serve add @me/github:0.1
+  mcpvessel serve add --listen 127.0.0.1:7000 ./mcp-server-time`,
+		Args: cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			socket, err := daemon.SocketPath()
+			if err != nil {
+				return err
+			}
+			client := daemon.Dial(socket)
+			listen, err = inferServeListen(cmd.Context(), client, listen)
+			if err != nil {
+				return err
+			}
+			envPool, secretPool, err := buildInputPools(envFlags, envFile, secretFlags, secretFile)
+			if err != nil {
+				return err
+			}
+			scoped := egress.ParseScoped(egressFlags)
+			targets := make([]daemon.ServeTarget, len(args))
+			for i, arg := range args {
+				if targets[i], err = resolveServeTarget(cmd.Context(), cmd.ErrOrStderr(), arg); err != nil {
+					return err
+				}
+				if err := applyConfigSecrets(secretPool, targets[i].Ref, cmd.ErrOrStderr()); err != nil {
+					return err
+				}
+			}
+			policies, err := prebuildServeImages(cmd.Context(), cmd.ErrOrStderr(), targets, expose, noExpose)
+			if err != nil {
+				return err
+			}
+			var budgetMicros int64
+			if budget != "" {
+				m, err := parseUSDMicros(budget)
+				if err != nil {
+					return fmt.Errorf("--budget %q is not a USD amount", budget)
+				}
+				budgetMicros = m
+			}
+			res, err := client.ServeAdd(cmd.Context(), targets, listen, expose, noExpose, scoped, envPool, secretPool, budgetMicros, inspectEgress)
+			if err != nil {
+				var unreachable *daemon.Unreachable
+				if errors.As(err, &unreachable) {
+					return fmt.Errorf("cannot reach the mcpvessel daemon, run 'mcpvessel init' to start it: %w", err)
+				}
+				return err
+			}
+			for _, warning := range res.Warnings {
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "note: %s\n", warning)
+			}
+			printServeReport(cmd.OutOrStdout(), res, policies, scoped, secretPool, inspectEgress)
+			if res.RestartClient {
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\nReconnect your MCP client (restart the session, or re-add %s) to load the new tools.\n", "http://"+listen+serveFlatPath())
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&listen, "listen", "", "front door address (inferred when only one is running)")
+	cmd.Flags().StringVar(&budget, "budget", "", "cap each added instance's LLM spend in USD, e.g. 5.00")
+	cmd.Flags().StringArrayVar(&expose, "expose", nil, "also expose this agent, matched by repository (repeatable)")
+	cmd.Flags().StringArrayVar(&noExpose, "no-expose", nil, "hide this agent even if USES PUBLIC, matched by repository (repeatable)")
+	cmd.Flags().StringArrayVar(&egressFlags, "egress", nil, "allow the added agent hosts for this run: host,host, or agent:host,host to scope one (repeatable)")
+	cmd.Flags().BoolVar(&inspectEgress, "egress-inspect", false, "decrypt the added cage's outbound HTTPS to an approved host to record what it sent")
+	cmd.Flags().StringArrayVar(&secretFlags, "secret", nil, "supply a secret NAME the added agent needs, or agent:NAME to scope it (repeatable)")
+	cmd.Flags().StringVar(&secretFile, "secret-file", "", "read secret values ([agent:]NAME=VALUE per line) from a perms-restricted file")
+	cmd.Flags().StringArrayVar(&envFlags, "env", nil, "supply an env value the added agent needs: KEY=VALUE, or KEY to pass through (repeatable)")
+	cmd.Flags().StringVar(&envFile, "env-file", "", "read env values (KEY=VALUE per line) from a file")
+	return cmd
+}
+
+// newServeRmCmd detaches a served bundle from a running front door, rebuilding
+// the merged endpoint without it. REF is an agent address (as `ps` shows it) or
+// the ref the bundle was served under.
+func newServeRmCmd() *cobra.Command {
+	var listen string
+	cmd := &cobra.Command{
+		Use:   "rm REF",
+		Short: "Remove a served bundle from a running front door",
+		Long: `Detach a served bundle from a front door and rebuild its merged endpoint without
+that bundle's tools. When it was the last bundle, the front door closes and frees
+its port. Your MCP client must reconnect to drop the removed tools.
+
+REF is an agent address (as 'mcpvessel ps' lists it) or the ref it was served
+under. --listen is inferred when only one front door is running.`,
+		Example: `  mcpvessel serve rm @me/github:0.1
+  mcpvessel serve rm --listen 127.0.0.1:7000 github`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			socket, err := daemon.SocketPath()
+			if err != nil {
+				return err
+			}
+			client := daemon.Dial(socket)
+			listen, err = inferServeListen(cmd.Context(), client, listen)
+			if err != nil {
+				return err
+			}
+			res, err := client.ServeRemove(cmd.Context(), listen, args[0])
+			if err != nil {
+				var unreachable *daemon.Unreachable
+				if errors.As(err, &unreachable) {
+					return fmt.Errorf("cannot reach the mcpvessel daemon, run 'mcpvessel init' to start it: %w", err)
+				}
+				return err
+			}
+			if res.Closed {
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Removed %s; the front door on %s is now closed.\n", args[0], listen)
+				return nil
+			}
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Removed %s from %s. Reconnect your MCP client to drop its tools.\n", args[0], listen)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&listen, "listen", "", "front door address (inferred when only one is running)")
+	return cmd
+}
+
+// inferServeListen returns explicit when set, otherwise the single running front
+// door's address, erroring when there are none or several to choose from.
+func inferServeListen(ctx context.Context, client *daemon.Client, explicit string) (string, error) {
+	if explicit != "" {
+		return explicit, nil
+	}
+	runs, err := client.ListRuns(ctx)
+	if err != nil {
+		var unreachable *daemon.Unreachable
+		if errors.As(err, &unreachable) {
+			return "", fmt.Errorf("cannot reach the mcpvessel daemon, run 'mcpvessel init' to start it: %w", err)
+		}
+		return "", err
+	}
+	set := map[string]bool{}
+	for _, r := range runs {
+		if r.Status == "serving" && r.Endpoint != "" {
+			if l := listenFromEndpoint(r.Endpoint); l != "" {
+				set[l] = true
+			}
+		}
+	}
+	switch len(set) {
+	case 0:
+		return "", fmt.Errorf("no serve front door is running; start one with 'mcpvessel serve'")
+	case 1:
+		for l := range set {
+			return l, nil
+		}
+	}
+	ls := make([]string, 0, len(set))
+	for l := range set {
+		ls = append(ls, l)
+	}
+	sort.Strings(ls)
+	return "", fmt.Errorf("several front doors are running (%s); pass --listen to pick one", strings.Join(ls, ", "))
+}
+
+// listenFromEndpoint pulls the bind address out of a serving run's endpoint URL
+// (http://<listen>/agents/<addr>/mcp).
+func listenFromEndpoint(ep string) string {
+	ep = strings.TrimPrefix(ep, "http://")
+	if i := strings.Index(ep, "/"); i >= 0 {
+		return ep[:i]
+	}
+	return ep
+}
+
+// serveFlatPath is the merged endpoint path, for the reconnect hint.
+func serveFlatPath() string { return "/mcp" }
 
 // exposedPolicy is what the boot-time reports need from one exposed agent's
 // manifest: its baked egress policy and its declared secrets.

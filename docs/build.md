@@ -71,6 +71,8 @@ While introspecting, BuildKit's own output owns the screen and the packaging ste
 
 **`--progress`** picks the renderer: `auto` (the default) adapts to whether output is a terminal, `plain` prints one line per step for logs and pipes, `tty` forces the live renderer even when piped.
 
+**`--json`** emits one JSON object on stdout with the built `ref`, `hash`, `size_bytes`, and `duration_ms`, and routes all progress to stderr so stdout stays pure JSON. It lets an agent read the built ref straight off stdout rather than scrape the human "Successfully built ..." line.
+
 ## Flags
 
 | Flag | Meaning |
@@ -81,6 +83,7 @@ While introspecting, BuildKit's own output owns the screen and the packaging ste
 | `--no-cache` | Rebuild the introspection image from scratch, ignoring cached and already-built images. Only relevant while introspecting. |
 | `--skip-cycle-check` | Skip the transitive `USES` cycle walk. Digests are still resolved and locked; a cycle surfaces at first run instead. |
 | `--progress auto\|plain\|tty` | Build progress output. Default `auto`. Suppressed while introspecting, where BuildKit owns the screen. |
+| `--json` | Emit one JSON object (`ref`, `hash`, `size_bytes`, `duration_ms`) on stdout, with all progress sent to stderr. For an agent reading the built ref programmatically. |
 
 ## Examples
 
@@ -105,6 +108,7 @@ mcpvessel build . --no-introspect
 - `--no-introspect` ships a catalog built only from what the Vesselfile declares. It does not verify that the agent boots. The first `run` or `serve` is where a broken agent shows itself.
 - `build` has no `--secret` / `--env` flags. A server that needs inputs to boot must be introspected through `import`, or built with `--no-introspect`. The introspection error text mentions `--secret` / `--env` regardless of which command you ran.
 - `--tag` requires a version. A reference with no version is rejected when the store tries to index it.
+- `--json` prints the built bundle as a single JSON object (`ref`, `hash`, `size_bytes`, `duration_ms`) and pushes all progress to stderr, so stdout carries only that object. An agent can read the ref without matching the "Successfully built ..." line.
 - A declared `EVAL` suite is validated before the image build. Its path must stay inside the source directory and the suite file must exist and parse, or the build fails early. A malformed Vesselfile is reported by the packaging step, not here.
 
 ## See also

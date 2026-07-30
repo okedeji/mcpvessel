@@ -64,6 +64,7 @@ Type coercion needs a schema, and only an introspected build carries one. A bund
 | `--env KEY=VALUE` | Supply an env value, or `KEY` to pass it through from your environment. Repeatable. |
 | `--env-file PATH` | Read env values (`KEY=VALUE` per line) from a file. |
 | `--egress HOSTS` | Allow the agent hosts for this call: `host,host`, or `agent:host,host` to scope one of several. Repeatable. |
+| `--egress-inspect` | Decrypt the cage's outbound HTTPS to an approved host to record what it sent, and capture a not-yet-approved request so you can read it before allowing the host. Opt-in; granted secrets are redacted in the preview. See [egress](egress.md#seeing-what-a-server-sends---egress-inspect). |
 | `--budget USD` | Cap the call's LLM spend, e.g. `5.00`. Only matters when the tool belongs to a reasoning agent. |
 
 These are the same input flags `run` takes, resolved the same way: flags overlay your config-bound secrets, and a server still only receives a name its `SECRETS` declares.

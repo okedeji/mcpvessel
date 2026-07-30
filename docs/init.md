@@ -18,7 +18,8 @@ Each step is a no-op when it is already satisfied, so a warm host falls straight
 4. **Bring the runtime up** behind the phase UI, unless it is already up. On macOS that means creating and booting the VM on first run; a VM that is already running skips this entirely. On Linux this step never runs (there is no VM to bring up). See [The setup phases](#the-setup-phases).
 5. **Start the daemon.** `init` starts the background daemon if it is not already listening, taking its startup latency now rather than at your first command. This is the point of running `init` on an otherwise warm host. See [Starting the daemon](#starting-the-daemon).
 6. **Check the in-VM agent binary** and warn if it is missing. See [The in-VM agent binary](#the-in-vm-agent-binary).
-7. **Print `Runtime ready.`** on success.
+7. **Set up your MCP client**, so its agent can drive mcpvessel itself: install the skill, then serve mcpvessel's own caged docs server and register it with the client. At a terminal `init` asks which client; non-interactively it does this only when you pass `--client`, so scripts and CI are untouched. See [Setting up the client](#setting-up-the-client).
+8. **Print `Runtime ready.`** on success.
 
 ## Fetching Lima (macOS)
 
@@ -56,6 +57,21 @@ note: the in-VM agent binary is not built yet; the first run needs it (run 'make
 
 `init` still reports `Runtime ready.` after this note. The missing binary does not block setup; it would only bite at the first `run`. Surfacing it here means you fix it before then. On an installed release you never see this note.
 
+## Setting up the client
+
+After the runtime is up, `init` sets up the MCP client you pick so its agent can drive mcpvessel for you. This is two things done together:
+
+1. **Install the skill:** a small instructions file that teaches the agent how to drive mcpvessel itself, so you can say "install this MCP server" and the agent imports it into a cage, serves it, registers it, and watches its egress for you. See [skill](skill.md) for the whole agent-driven path.
+2. **Serve and register the docs server:** mcpvessel's own documentation and code, shipped as a caged MCP server (`mcpvessel-docs`), served on the fixed loopback address `127.0.0.1:7333` and registered with your client. The agent queries it when it is unsure of mcpvessel's behavior, instead of guessing. Opting in here also persists the choice, so the daemon re-serves the docs server on every later startup and the registered URL keeps working across restarts.
+
+At a terminal `init` prints a short menu of clients and sets up the one you pick. Selecting Claude Code writes the skill to `~/.claude/skills/mcpvessel/SKILL.md`, its personal skills directory picked up across every project, and runs `claude mcp add --scope user mcpvessel-docs --transport http http://127.0.0.1:7333/mcp` to register the docs server. Pressing Enter skips it, and you can set it up later with `mcpvessel init --client claude-code`.
+
+Each client has its own skill, written for that client's tools and register command, kept under `skills/<client>/SKILL.md` in the source. `init` installs the one matching the client you pick, so the instructions are accurate for it, not a generic copy. Only clients with a packaged skill appear in the menu (Claude Code today); if yours is not listed, its skill is not packaged yet, and the flow is documented in the [repository](https://github.com/okedeji/mcpvessel).
+
+Every part of this step is best-effort and never fails an otherwise-ready runtime. If the docs bundle is not published to the registry yet, or the `claude` CLI is not on your `PATH`, `init` prints a note with the URL to register by hand and moves on; the skill install is unaffected.
+
+Non-interactively (a pipe, CI) `init` does this only when you pass `--client`; with no flag it does nothing, so an automated `init` never writes outside `~/.mcpvessel`. Pass `--skip-skill` to suppress the whole step, skill and docs both.
+
 ## --recreate: rebuild the VM
 
 `--recreate` tears the runtime down and rebuilds it, which is how you apply a changed machine setting. The VM is sized at creation from `~/.mcpvessel/config.json` (`machine.memory_gib`, `machine.cpus`, `machine.disk_gib`); an existing VM keeps its original size no matter what you edit, so raising `machine.memory_gib` only takes effect after a recreate. With `--recreate`, `init`:
@@ -77,6 +93,8 @@ On Linux `init` assumes the host's containerd and buildkitd are already running 
 | --- | --- |
 | `-v`, `--verbose` | Stream the raw Lima provisioning output instead of the phase UI, for when setup is going wrong and you need to see what Lima is doing. Only has an effect on macOS during a first-time (or post-recreate) VM provision; when the VM is already up, or on Linux, there is nothing to stream. |
 | `--recreate` | Stop the daemon, delete the VM, and provision a fresh one, applying a changed `machine.memory_gib` (and cpus, disk). Deletes every cached image. On Linux, just a daemon restart. |
+| `--client` | Set up this MCP client without prompting (for example `claude-code`): install the skill and register the caged docs server. Lets a scripted `init` do the client setup non-interactively. |
+| `--skip-skill` | Skip the whole client setup (skill and docs both), and do not prompt for it. |
 
 `init` accepts no positional arguments; passing one is an error.
 
@@ -118,6 +136,6 @@ To reset a broken runtime without uninstalling, `mcpvessel init --recreate` rebu
 ## See also
 
 - [import](import.md): the first command that actually needs the runtime `init` prepares.
-- [How it works, briefly](../README.md#how-it-works-briefly): what the VM, the daemon, and the broker containers are for.
+- [ARCHITECTURE.md](ARCHITECTURE.md): what the VM, the daemon, and the broker containers are for.
 - [Requirements](../README.md#requirements): the one-time setup cost, in the same words.
 - [troubleshooting](troubleshooting.md): the failures `init` and the daemon can produce, with fixes.

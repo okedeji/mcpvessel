@@ -276,7 +276,7 @@ The design assembles established ideas rather than inventing them. The brokers a
 
 ## See also
 
-- [How it works, briefly](../README.md#how-it-works-briefly): the one-paragraph version this document expands.
+- [README](../README.md#why-this-matters): the short version this document expands.
 - [VESSELFILE.md](VESSELFILE.md): the `EGRESS`, `USES`, `BAN`, `SECRETS`, `RESOURCES`, and `BUDGET` directives that configure the mechanisms above.
 - [REASONER.md](REASONER.md): how a reasoning agent reaches the MCP and LLM gateways, and why it holds no key.
 - [egress](egress.md): the operator's view of the deny-default hold and approval flow of §6.2.

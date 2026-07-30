@@ -97,6 +97,20 @@ The boot-time **Secrets:** report lists, per agent, each declared secret and whe
 
 Before the front door opens, `serve` builds every image the serve's instances will need: each exposed agent's full `USES` tree, plus the shared gateway image when a tree needs one. This is synchronous on purpose. A background build would only narrow the race with a client's first call, and a build failure (an npm or pip install that fails, longer than an MCP client's call timeout) belongs in your terminal, not inside an MCP error in Cursor. Everything is content-addressed, so an already-built bundle costs only an existence check.
 
+## Growing the set: `serve add` and `serve rm`
+
+You do not have to name every bundle up front. `mcpvessel serve add BUNDLE...` attaches more bundles to a front door that is already open, merging their tools into the same `/mcp` endpoint the client already points at, so the client keeps one MCP entry no matter how many servers you cage. `mcpvessel serve rm REF` detaches one (by an agent address or the ref it was served under); when the last bundle leaves, the door closes and frees its port.
+
+Both target a front door by its bind address. `--listen` selects it, and is inferred when only one front door is running. The bundles you add carry their own `--secret`, `--egress`, and `--egress-inspect`, the same as a fresh `serve`; the ones already behind the door keep their warm instances untouched.
+
+Adding or removing changes the merged endpoint's tool list, which means **your MCP client must reconnect** (restart the session, or re-add the same URL) to see the change. You are adding a new MCP server; mcpvessel just surfaces it merged into the one the client already trusts. Nothing about the URL changes, only the tools behind it.
+
+```sh
+mcpvessel serve --listen 127.0.0.1:7000 @me/github:0.1   # opens the door
+mcpvessel serve add @me/time:0.1                          # merges in, same URL
+mcpvessel serve rm @me/time:0.1                           # drops it back out
+```
+
 ## The daemon
 
 `serve` needs a running daemon. If it cannot reach one, it tells you to run `mcpvessel init` to start it. Each per-client instance the front door boots is a real run: it shows in `mcpvessel logs` and on the run feed, and it is torn down by the instance manager when idle, not by any one request. Distinct MCP clients (keyed by session id) get their own instances so they run concurrently; all plain-HTTP callers to one agent share a single instance. The front door itself is a pool, not a run, and stays off the feed. `serve` returns once the door is listening; stop the runs with `mcpvessel stop` or shut the daemon down to close it.

@@ -110,6 +110,7 @@ When you compose with `--reasoning`, `import` avoids rebuilding a server you hav
 | `--egress HOSTS` | Hosts a server may reach: `host,host`, or `agent:host,host` to scope one of several. Repeatable. Default is deny-default with approval at run time. |
 | `--force` | Overwrite an existing generated Vesselfile instead of refusing. |
 | `--progress auto\|plain\|tty` | Build progress output. Default `auto`. |
+| `--json` | Emit one JSON object per source (`ref`, `hash`, `size_bytes`, `duration_ms`) on stdout, with all progress on stderr. For an agent reading the built ref programmatically. Not valid with `--reasoning`. |
 
 ## What lands on disk
 
@@ -148,6 +149,7 @@ mcpvessel import io.github.getsentry/sentry-mcp io.github.brave/brave-search-mcp
 - Importing a server does not vet its code. It generates a cage around what the server can reach. What runs inside is still up to the package.
 - A wrapped tool collection has no `MAIN`. Use `mcpvessel call <bundle> <tool>` to invoke a tool, not `run`.
 - The bridge binary staged in the directory is your host's; the runtime injects the correct one for the target architecture at build time, so a bundle built on one machine runs on another.
+- `--json` emits one JSON object per source (`ref`, `hash`, `size_bytes`, `duration_ms`) on stdout and routes progress to stderr, the same shape `build` emits, so an agent can read each built ref without scraping human output. It is rejected with `--reasoning`, which chains several builds into one agent rather than producing one object per source.
 - To change a wrapped server later, edit its Vesselfile and `mcpvessel build <dir>`, or re-import. A published bundle you pulled is sealed; re-import from source to change it.
 
 ## See also

@@ -75,4 +75,4 @@ mcpvessel stats -w
 - [daemon](daemon.md): the background process that serves `/stats` and manages the runtime `stats` reads from.
 - [run](run.md), [serve](serve.md): what starts the cages `stats` shows.
 - [tree](tree.md): the shape of a run (agent, gateways, sub-agents), the same cages `stats` lists as rows.
-- [How it works, briefly](../README.md#how-it-works-briefly): where the daemon and the runtime sit.
+- [ARCHITECTURE.md](ARCHITECTURE.md): where the daemon and the runtime sit.

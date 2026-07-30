@@ -31,7 +31,7 @@ func newImportCmd() *cobra.Command {
 	var envFlags, secretFlags []string
 	var envFile, secretFile string
 	var egressFlags []string
-	var force bool
+	var force, jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "import SOURCE...",
 		Short: "Wrap existing MCP servers as agents",
@@ -66,6 +66,9 @@ tools: a single brain reasoning across every server.`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			mode := progress.ParseMode(progressFlag)
+			if jsonOut && reasoning {
+				return fmt.Errorf("--json is not supported with --reasoning (it chains several builds); drop --json to compose a reasoning agent")
+			}
 			env, secrets, err := buildInputPools(envFlags, envFile, secretFlags, secretFile)
 			if err != nil {
 				return err
@@ -115,7 +118,7 @@ tools: a single brain reasoning across every server.`,
 
 			usedDir := map[string]bool{}
 			for _, arg := range args {
-				if err := importCollection(cmd, arg, dir, tag, entrypoint, mode, usedDir, env, secrets.Flatten(), egressScoped, force); err != nil {
+				if err := importCollection(cmd, arg, dir, tag, entrypoint, mode, usedDir, env, secrets.Flatten(), egressScoped, force, jsonOut); err != nil {
 					return err
 				}
 			}
@@ -143,6 +146,7 @@ tools: a single brain reasoning across every server.`,
 	cmd.Flags().StringVar(&secretFile, "secret-file", "", "read secret values (NAME=VALUE per line) from a perms-restricted file")
 	cmd.Flags().StringArrayVar(&egressFlags, "egress", nil, "hosts a server may reach, written as EGRESS allow: (host,host or agent:host,host to scope one of several; repeatable). Omit to leave it deny-default, approving hosts at run time")
 	cmd.Flags().BoolVar(&force, "force", false, "overwrite an existing generated Vesselfile instead of refusing")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit the built ref/hash as JSON (one object per source); build progress goes to stderr")
 	return cmd
 }
 
@@ -152,7 +156,7 @@ tools: a single brain reasoning across every server.`,
 // server that needs config to start can be wrapped. scoped names the hosts the
 // server may reach, resolved by the generated directory's name; force overwrites
 // an existing generated Vesselfile.
-func importCollection(cmd *cobra.Command, arg, dir, tag, entrypoint string, mode progress.Mode, usedDir map[string]bool, env, secrets map[string]string, scoped map[string][]string, force bool) error {
+func importCollection(cmd *cobra.Command, arg, dir, tag, entrypoint string, mode progress.Mode, usedDir map[string]bool, env, secrets map[string]string, scoped map[string][]string, force, jsonOut bool) error {
 	source, launch := parseToolArg(arg)
 	src, err := resolveImportSource(cmd.Context(), source)
 	if err != nil {
@@ -170,6 +174,10 @@ func importCollection(cmd *cobra.Command, arg, dir, tag, entrypoint string, mode
 			_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "note: --dir, --tag, and --entrypoint do not apply to a published bundle; ignored.")
 		}
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Serve or run it directly:\n  mcpvessel serve --listen 127.0.0.1:7000 %s\n", name)
+		if jsonOut {
+			// The pulled bundle needs no build; give the agent its ref anyway.
+			return writeJSON(cmd.OutOrStdout(), buildResult{Ref: name, Hash: ociRef})
+		}
 		return nil
 	}
 	switch {
@@ -205,6 +213,7 @@ func importCollection(cmd *cobra.Command, arg, dir, tag, entrypoint string, mode
 		tag:     tag,
 		env:     env,
 		secrets: secrets,
+		jsonOut: jsonOut,
 	}); err != nil {
 		removeGenerated(cmd.ErrOrStderr(), outDir, created)
 		return err

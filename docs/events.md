@@ -6,7 +6,7 @@ Stream a live feed of the daemon's lifecycle events as they happen. `events` con
 mcpvessel events
 ```
 
-`events` takes no arguments and no flags. It reads the daemon's Unix socket, opens `GET /events`, and forwards whatever the daemon sends. At a terminal it first prints `Listening for daemon events (Ctrl-C to stop)` to stderr, so a quiet feed reads as connected rather than hung. When it cannot reach the daemon it fails with a hint to start one: `the daemon is not running; start it with 'mcpvessel init'`.
+`events` takes no arguments. Its one flag, `--json`, forces JSON output even at a terminal. It reads the daemon's Unix socket, opens `GET /events`, and forwards whatever the daemon sends. At a terminal it first prints `Listening for daemon events (Ctrl-C to stop)` to stderr, so a quiet feed reads as connected rather than hung. When it cannot reach the daemon it fails with a hint to start one: `the daemon is not running; start it with 'mcpvessel init'`.
 
 ## The feed is live and per-subscriber
 
@@ -39,12 +39,14 @@ The columns are the event time (`HH:MM:SS`, local), a label, and a subject, foll
 {"time":"2026-07-17T15:04:31.02Z","type":"run.ended","run_id":"run-abc123","ref":"@me/oncall:0.1","status":"succeeded"}
 ```
 
+`--json` forces this same JSON at a terminal too, for an agent watching the feed that wants the raw events without redirecting the stream.
+
 This is the raw event as the daemon sends it (the wire format is `application/x-ndjson`). Its fields:
 
 | Field | Meaning |
 | --- | --- |
 | `time` | When the event fired. |
-| `type` | The event type (`run.started`, `run.ended`, `egress.pending`, `egress.approved`, `egress.denied`, `egress.inspect`, `egress.preview`, `cage.activated`, `cage.evicted`, `elicitation.asked`, `elicitation.answered`). |
+| `type` | The event type (`run.started`, `run.ended`, `egress.pending`, `egress.approved`, `egress.denied`, `egress.inspect`, `egress.preview`, `egress.secret`, `cage.activated`, `cage.evicted`, `elicitation.asked`, `elicitation.answered`). |
 | `run_id` | The run the event belongs to. |
 | `ref` | The bundle reference the run is executing. Present on run and runtime events. |
 | `target` | The sub-agent node the event concerns, or the host on an egress event. Empty when the event is run-wide. |
@@ -88,6 +90,10 @@ Under `--egress-inspect` only, one per inspected request to an approved host. `t
 
 Under `--egress-inspect` only, when a cage's request to a *not-yet-approved* host is captured and held for the operator's decision. `target` is the host; `detail` is the same secret-safe summary as `egress.inspect`, never the body. It is the signal that a request is waiting to be read before approval: on a `run`/`call` the daemon shows it inline at the prompt, and on `serve` it is read with `mcpvessel egress preview <run> <host>`. The full request (with body) is pulled on demand, never on this feed. See [egress](egress.md#see-the-request-before-you-approve-the-host).
 
+### egress.secret
+
+Under `--egress-inspect` only, when a granted secret is detected in a cage's outbound request. `target` is the host; `detail` is the secret's **name**, never its value (mcpvessel knows the value because it injected it, so it can flag the exfiltration by name without ever emitting the value). This is the signal folded into the durable [audit](audit.md) feed as the exfiltration marker. In a terminal the label is `egress.secret` and the subject is `run_id/target`.
+
 ### cage.activated
 
 A sub-agent cage booted. In a `USES` tree, a sub-agent is not started until it is first needed; when the runtime activates one, this fires. `target` names the node that came up. In a terminal the label is `cage.activated` and the subject is `run_id/target`.
@@ -102,7 +108,11 @@ A cage asked the operator a question mid-call, and the operator answered. MCP's 
 
 ## Flags
 
-`events` has no flags and takes no arguments. The output format is chosen automatically from whether output is a terminal.
+`events` takes no arguments. The output format is chosen automatically from whether output is a terminal, and `--json` overrides that to force JSON even at a terminal.
+
+| Flag | Meaning |
+| --- | --- |
+| `--json` | Force newline-delimited JSON output even at a terminal. For an agent watching the feed that wants raw events without piping or redirecting. Piped or redirected output is already JSON. |
 
 ## Examples
 
@@ -125,7 +135,7 @@ mcpvessel events > events.ndjson
 - The feed shows only what happens after you connect. Start `events` before the run you want to watch, or you will miss its start.
 - Nothing here is stored. To inspect a run after it ends (its cost, its trace, its final status), use the run's history rather than the event feed.
 - A reader that falls far enough behind loses events to the 256-deep per-subscriber buffer. `events` will not stall a run to keep a slow watcher in sync.
-- The format switch is on the output stream, not a flag. `mcpvessel events | cat` and `mcpvessel events > file` both emit JSON; only a real terminal gets the readable lines. There is no flag to force one or the other.
+- The format follows the output stream by default. `mcpvessel events | cat` and `mcpvessel events > file` both emit JSON; only a real terminal gets the readable lines. Pass `--json` to force JSON at a terminal too.
 - If the daemon is not running, `events` errors immediately with the hint to start one. It does not auto-start a daemon.
 
 ## See also

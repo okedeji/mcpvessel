@@ -49,8 +49,9 @@ func TestFront_ClosesWhenLastRunStops(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	srv := &http.Server{Handler: http.NewServeMux()}
-	d.addFront(srv, []string{"run-1", "run-2"})
+	sh := newSwapHandler(http.NewServeMux())
+	srv := &http.Server{Handler: sh}
+	d.addFront(srv, sh, "127.0.0.1:0", nil, []string{"run-1", "run-2"})
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- srv.Serve(ln) }()
 
@@ -82,6 +83,25 @@ func TestRegistry_HoldTake(t *testing.T) {
 	}
 	if _, ok := d.take("researcher-abc"); ok {
 		t.Error("take of an already-taken run should report false")
+	}
+}
+
+func TestRefForRun_FallsBackToServedInstance(t *testing.T) {
+	d := New()
+	// A held run resolves from d.runs.
+	d.hold(RunInfo{ID: "held-1", Ref: "@you/held:0.1"}, nil)
+	if got := d.refForRun("held-1"); got != "@you/held:0.1" {
+		t.Errorf("held run ref = %q, want @you/held:0.1", got)
+	}
+	// A served instance never enters d.runs; its ref must still resolve so its
+	// egress keys into the ledger.
+	d.setInstanceRef("inst-1", "@you/served:0.1")
+	if got := d.refForRun("inst-1"); got != "@you/served:0.1" {
+		t.Errorf("served instance ref = %q, want @you/served:0.1", got)
+	}
+	d.clearInstanceRef("inst-1")
+	if got := d.refForRun("inst-1"); got != "" {
+		t.Errorf("after clear, ref = %q, want empty", got)
 	}
 }
 

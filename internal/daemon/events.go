@@ -37,6 +37,10 @@ const (
 	// request to an approved host; Target is the host and Detail is the
 	// secret-safe summary (method, path, byte counts, status).
 	EventEgressInspect = "egress.inspect"
+	// EventEgressSecret fires, only under --egress-inspect, when a granted secret
+	// is detected in a cage's outbound request. Detail is the secret name; the
+	// value is never carried.
+	EventEgressSecret = "egress.secret"
 	// EventEgressPreview fires, only under --egress-inspect, when a cage's request
 	// to a not-yet-approved host is captured and held for the operator's decision.
 	// Target is the host, Detail the secret-safe summary. The full request is

@@ -84,4 +84,4 @@ mcpvessel stop $(mcpvessel ps | awk 'NR>1{print $1}')
 - [run](run.md), [call](call.md), [serve](serve.md): the commands that start the runs `stop` ends.
 - [init](init.md): start the daemon `stop` talks to, the fix the unreachable-daemon hint points at.
 - [daemon](daemon.md): the control plane that holds the run registry and performs the teardown.
-- [How it works, briefly](../README.md#how-it-works-briefly): the containers and networks a run holds, which stopping releases.
+- [ARCHITECTURE.md](ARCHITECTURE.md): the containers and networks a run holds, which stopping releases.

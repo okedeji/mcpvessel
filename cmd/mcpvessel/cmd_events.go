@@ -13,6 +13,7 @@ import (
 )
 
 func newEventsCmd() *cobra.Command {
+	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "events",
 		Short: "Stream daemon lifecycle events",
@@ -21,7 +22,8 @@ with each run's final status.
 
 events stays connected and prints each event until you interrupt it. In a
 terminal it prints a readable line per event; piped or redirected it prints one
-JSON object per line.`,
+JSON object per line. --json forces JSON even at a terminal, for an agent
+watching the feed.`,
 		Example: `  mcpvessel events`,
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -30,11 +32,11 @@ JSON object per line.`,
 				return err
 			}
 			// The feed has no backlog, so a quiet start looks hung; tell the
-			// human it is listening. Piped output stays pure JSON lines.
-			if progress.IsTerminal(cmd.OutOrStdout()) {
+			// human it is listening. Piped or --json output stays pure JSON lines.
+			if !jsonOut && progress.IsTerminal(cmd.OutOrStdout()) {
 				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Listening for daemon events (Ctrl-C to stop)")
 			}
-			emit := eventPrinter(cmd.OutOrStdout())
+			emit := eventPrinter(cmd.OutOrStdout(), jsonOut)
 			if err := daemon.Dial(socket).Events(cmd.Context(), emit); err != nil {
 				var unreachable *daemon.Unreachable
 				if errors.As(err, &unreachable) {
@@ -45,13 +47,15 @@ JSON object per line.`,
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit machine-readable JSON, one object per line, even at a terminal")
 	return cmd
 }
 
-// eventPrinter picks readable lines for a terminal, JSON lines for a pipe,
-// the same split the rest of the observability output uses.
-func eventPrinter(w io.Writer) func(daemon.Event) {
-	if !progress.IsTerminal(w) {
+// eventPrinter picks readable lines for a terminal, JSON lines for a pipe or
+// when forceJSON is set, the same split the rest of the observability output
+// uses.
+func eventPrinter(w io.Writer, forceJSON bool) func(daemon.Event) {
+	if forceJSON || !progress.IsTerminal(w) {
 		enc := json.NewEncoder(w)
 		return func(e daemon.Event) { _ = enc.Encode(e) }
 	}

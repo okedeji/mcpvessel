@@ -27,7 +27,15 @@ type Config struct {
 	Machine   Machine           `json:"machine,omitempty"`
 	Serve     Serve             `json:"serve,omitempty"`
 	Telemetry Telemetry         `json:"telemetry,omitempty"`
+	Docs      Docs              `json:"docs,omitempty"`
 	Env       map[string]string `json:"env,omitempty"` // persisted VESSEL_* knobs; a real environment variable of the same name overrides one here
+}
+
+// Docs records whether the operator opted into the caged mcpvessel-docs server
+// during init. When enabled, the daemon serves it on startup so the client's
+// registered URL keeps working across restarts.
+type Docs struct {
+	Enabled bool `json:"enabled,omitempty"`
 }
 
 // DefaultMetricsAddr is the daemon's default Prometheus endpoint. Loopback:

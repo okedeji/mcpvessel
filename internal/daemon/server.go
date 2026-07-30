@@ -92,6 +92,17 @@ func Serve(ctx context.Context, d *Daemon, socketPath string) error {
 				defer stop()
 			}
 		}
+		// Re-serve the caged docs server if the operator opted in during init, so
+		// the client's registered URL keeps working across restarts. In a
+		// goroutine because it pulls a bundle, and best-effort: a failure warns
+		// and the daemon serves everything else regardless.
+		if cfg.Docs.Enabled {
+			go func() {
+				if err := d.ensureDocsServed(ctx); err != nil {
+					fmt.Fprintf(os.Stderr, "warning: serving mcpvessel-docs: %v\n", err)
+				}
+			}()
+		}
 	}
 
 	srv := &http.Server{Handler: d.Handler()}

@@ -22,6 +22,7 @@ import (
 	"github.com/okedeji/mcpvessel/internal/history"
 	"github.com/okedeji/mcpvessel/internal/identity"
 	"github.com/okedeji/mcpvessel/internal/runtime"
+	"github.com/okedeji/mcpvessel/internal/serve"
 )
 
 const socketName = "mcpvessel.sock"
@@ -37,7 +38,10 @@ func SocketPath() (string, error) {
 }
 
 // RunInfo is one tracked run as the control plane reports it. EndedAt and
-// CostMicroUSD are set only for finished runs read back from history.
+// CostMicroUSD are set only for finished runs read back from history. Endpoint
+// is set only for a serving run: the merged /mcp URL a client registers (one per
+// front door, shared by every agent behind it), so an agent can read it from
+// `ps --json` and register the hub with itself.
 type RunInfo struct {
 	ID           string    `json:"id"`
 	Ref          string    `json:"ref"`
@@ -45,6 +49,7 @@ type RunInfo struct {
 	StartedAt    time.Time `json:"started_at"`
 	EndedAt      time.Time `json:"ended_at,omitempty"`
 	CostMicroUSD int64     `json:"cost_micro_usd,omitempty"`
+	Endpoint     string    `json:"endpoint,omitempty"`
 }
 
 // Daemon holds the run registry and serves the control-plane HTTP API.
@@ -56,6 +61,13 @@ type Daemon struct {
 	hist *history.Store
 	// fronts are open serve front doors; each closes when its last run stops.
 	fronts []*front
+	// serveOpMu serializes `serve add`/`serve rm` against each other, so two
+	// concurrent changes to one front door cannot race on its agent set. Normal
+	// serve traffic never takes it.
+	serveOpMu sync.Mutex
+	// docsMu serializes the docs auto-serve, so the startup ensure and an
+	// init-triggered ensure cannot both try to bind the docs port.
+	docsMu sync.Mutex
 	// shutdown is the in-process SIGTERM equivalent, closed at most once.
 	shutdown     chan struct{}
 	shutdownOnce sync.Once
@@ -69,12 +81,52 @@ type Daemon struct {
 	// previews tracks per-run hosts whose not-yet-approved request the proxy
 	// captured under inspection, so the operator can read it before approving.
 	previews *egressPreviews
+	// ledger is the durable per-server egress change feed behind `mcpvessel
+	// audit`, fed from the same log scan as the live stores.
+	ledger *egressLedger
+	// instanceRefs maps a served per-client instance's run id to the ref it
+	// serves. Those instances never enter d.runs (only the serve entry does), so
+	// without this refForRun could not key their egress into the ledger. Guarded
+	// by d.mu; set on instance start, cleared on end.
+	instanceRefs map[string]string
 }
 
-// front is one serve front door: an HTTP server and the runs it exposes.
+// front is one serve front door: an HTTP server, the runs it exposes, and the
+// merged agent set behind them. handler is a swappable indirection so a
+// `serve add`/`serve rm` can rebuild the routing in place on the same listener
+// instead of opening a new port. listen is the bind address, the key an add or
+// remove targets. agents is the current set, kept so a change can rebuild the
+// handler from it.
 type front struct {
-	srv  *http.Server
-	runs map[string]bool
+	srv     *http.Server
+	handler *swapHandler
+	listen  string
+	runs    map[string]bool
+	agents  []serve.Agent
+}
+
+// swapHandler is a front door's HTTP handler whose inner routing can be replaced
+// live. A `serve add` rebuilds the merged endpoint and swaps it in without
+// dropping the listener; in-flight MCP sessions reset (the client reconnects),
+// but the warm cages behind the door are untouched.
+type swapHandler struct {
+	mu sync.RWMutex
+	h  http.Handler
+}
+
+func newSwapHandler(h http.Handler) *swapHandler { return &swapHandler{h: h} }
+
+func (s *swapHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	h := s.h
+	s.mu.RUnlock()
+	h.ServeHTTP(w, r)
+}
+
+func (s *swapHandler) set(h http.Handler) {
+	s.mu.Lock()
+	s.h = h
+	s.mu.Unlock()
 }
 
 // heldRun is one run the daemon holds. Exactly one field is set: session for a
@@ -88,14 +140,64 @@ type heldRun struct {
 
 // New returns a daemon with an empty registry.
 func New() *Daemon {
-	return &Daemon{runs: map[string]*heldRun{}, shutdown: make(chan struct{}), events: newEventBus(), denials: newEgressDenials(), pending: newPendingEgress(), previews: newEgressPreviews()}
+	path, _ := ledgerPath()
+	return &Daemon{runs: map[string]*heldRun{}, instanceRefs: map[string]string{}, shutdown: make(chan struct{}), events: newEventBus(), denials: newEgressDenials(), pending: newPendingEgress(), previews: newEgressPreviews(), ledger: newEgressLedger(path)}
 }
 
 // runLogSink opens the run's durable log and, on the way, records the egress
 // denials the proxy writes into it so tool errors can name blocked hosts, and
 // publishes the pending/approved markers to the event feed.
 func (d *Daemon) runLogSink(runID string) io.WriteCloser {
-	return &denialScanSink{w: openRunLogSink(runID), runID: runID, den: d.denials, pend: d.pending, prev: d.previews, live: func() bool { return d.liveRun(runID) }, events: d.events}
+	return &denialScanSink{
+		w: openRunLogSink(runID), runID: runID,
+		den: d.denials, pend: d.pending, prev: d.previews,
+		live:   func() bool { return d.liveRun(runID) },
+		events: d.events,
+		ledger: d.ledger,
+		ref:    func() string { return d.refForRun(runID) },
+		sample: func(host string) { d.captureLedgerSample(runID, host) },
+	}
+}
+
+// refForRun resolves a run id to the ref it serves, the stable key the ledger is
+// grouped by. Empty when the run is unknown.
+func (d *Daemon) refForRun(runID string) string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if r, ok := d.runs[runID]; ok {
+		return r.info.Ref
+	}
+	// A served instance is not in d.runs; fall back to the ref it registered on
+	// start, so its egress still keys into the ledger.
+	return d.instanceRefs[runID]
+}
+
+// setInstanceRef records a served instance's ref for refForRun; clearInstanceRef
+// drops it when the instance ends.
+func (d *Daemon) setInstanceRef(runID, ref string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.instanceRefs[runID] = ref
+}
+
+func (d *Daemon) clearInstanceRef(runID string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	delete(d.instanceRefs, runID)
+}
+
+// captureLedgerSample pulls the redacted preview for a held host and attaches it
+// to the ledger, off the log-pump path so a nerdctl exec never stalls logging.
+func (d *Daemon) captureLedgerSample(runID, host string) {
+	ref := d.refForRun(runID)
+	if ref == "" {
+		return
+	}
+	go func() {
+		if prev, ok := runtime.RunEgressPreview(context.Background(), runID, host); ok {
+			d.ledger.attachSample(ref, host, prev)
+		}
+	}()
 }
 
 func (d *Daemon) hold(info RunInfo, session *runtime.Session) {
@@ -273,14 +375,27 @@ func runInfoFromRecord(r history.Record) RunInfo {
 }
 
 // addFront records a serve front door and the runs it exposes.
-func (d *Daemon) addFront(srv *http.Server, runIDs []string) {
-	f := &front{srv: srv, runs: make(map[string]bool, len(runIDs))}
+func (d *Daemon) addFront(srv *http.Server, handler *swapHandler, listen string, agents []serve.Agent, runIDs []string) {
+	f := &front{srv: srv, handler: handler, listen: listen, agents: agents, runs: make(map[string]bool, len(runIDs))}
 	for _, id := range runIDs {
 		f.runs[id] = true
 	}
 	d.mu.Lock()
 	d.fronts = append(d.fronts, f)
 	d.mu.Unlock()
+}
+
+// frontByListen returns the front door bound to listen, or nil. Held under the
+// caller's own d.mu is not assumed; it takes the lock itself.
+func (d *Daemon) frontByListen(listen string) *front {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for _, f := range d.fronts {
+		if f.listen == listen {
+			return f
+		}
+	}
+	return nil
 }
 
 // releaseFrontFor drops a stopped run from its front door, closing the door
@@ -335,6 +450,8 @@ func (d *Daemon) Handler() http.Handler {
 	mux.HandleFunc("GET /runs/{id}/egress/preview", d.handleEgressPreview)
 	mux.HandleFunc("POST /runs/{id}/egress/allow", d.handleEgressAllow)
 	mux.HandleFunc("POST /runs/{id}/egress/deny", d.handleEgressDeny)
+	mux.HandleFunc("GET /audit", d.handleAudit)
+	mux.HandleFunc("POST /audit/ack", d.handleAuditAck)
 	mux.HandleFunc("GET /events", d.handleEvents)
 	mux.HandleFunc("GET /stats", d.handleStats)
 	mux.HandleFunc("GET /runs/{id}/logs", d.handleRunLogs)
@@ -343,6 +460,9 @@ func (d *Daemon) Handler() http.Handler {
 	mux.HandleFunc("GET /runs/{id}/replay", d.handleRunReplay)
 	mux.HandleFunc("POST /runs/{id}/stop", d.handleStopRun)
 	mux.HandleFunc("POST /serve", d.handleServe)
+	mux.HandleFunc("POST /serve/add", d.handleServeAdd)
+	mux.HandleFunc("POST /serve/rm", d.handleServeRm)
+	mux.HandleFunc("POST /docs/ensure", d.handleEnsureDocs)
 	mux.HandleFunc("POST /shutdown", d.handleShutdown)
 	return stampIdentity(mux)
 }

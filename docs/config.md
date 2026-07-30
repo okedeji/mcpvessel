@@ -73,6 +73,7 @@ Set how a single run's USES tree is kept warm: how many cages may be live at onc
 - `--host-max-live` caps cages across every run on the host, where every cage counts. It is the harder ceiling underneath the per-run cap. Default `128`.
 - `--prewarm` is how many of the root's direct children boot up front rather than lazily. Default `2`.
 - `--idle-ttl` reaps a cage that has sat idle longer than this many seconds. Default `300` (five minutes).
+- `--egress-hold` is how many seconds a foreground `run`/`call` holds a connection to a not-yet-approved host, waiting for your approval, before it fails closed. Default `180` (three minutes). A served run does not hold; it fails fast and the client retries. See [egress](egress.md).
 - `--keep-warm REF` names an agent ref to keep booted even when idle, distinct from the automatic pinning of a cage mid-call. It is repeatable, and each `cages set` replaces the whole list rather than appending, so pass every ref you want in one invocation.
 
 | Flag | Meaning | Default |
@@ -81,6 +82,7 @@ Set how a single run's USES tree is kept warm: how many cages may be live at onc
 | `--host-max-live N` | Max cages across every run on the host. | 128 |
 | `--prewarm N` | Root's direct children booted up front. | 2 |
 | `--idle-ttl SECONDS` | Reap a cage idle past this. | 300 |
+| `--egress-hold SECONDS` | Hold a run/call on a new host this long for approval. | 180 |
 | `--keep-warm REF` | Ref kept booted even when idle. Repeatable, replaces the list. | (none) |
 
 ## serve

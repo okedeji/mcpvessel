@@ -116,7 +116,8 @@ mcpvessel ps
 
 ## Notes
 
-- `-a/--all` is the only flag. The default view is live runs plus the 10 most recently finished; `-a` shows every run the daemon reports.
+- `-a/--all` toggles the view. The default is live runs plus the 10 most recently finished; `-a` shows every run the daemon reports.
+- `--json` emits every run verbatim as a JSON array instead of the table, for an agent driving the CLI. A `serving` row's JSON carries an `endpoint` field, the merged front-door URL a client registers (`http://127.0.0.1:7000/mcp`), so an agent can read it programmatically. Every agent behind one front door shares that one URL (see [serve](serve.md#the-front-door)); the field is present only on `serving` rows.
 - With nothing to show, `ps` prints a single empty-state line, not a bare header.
 - Live runs never show a cost; cost lands only when a run finishes and its final spend is read off the gateway. A blank `COST` on a live `running` or `serving` row is expected, not a lost figure.
 - A `serving` row is the front door, not a session. It carries no cost and never appears in history. The per-client `running` and `stopped` rows under it are the actual sessions, and those are what history records.
@@ -131,4 +132,4 @@ mcpvessel ps
 - [daemon](daemon.md): start, stop, and inspect the daemon `ps` reads from.
 - [events](events.md): the live run feed, for watching runs start and end instead of polling `ps`.
 - [spend](spend.md), [trace](trace.md): the cost and the per-run detail behind the `COST` column.
-- [How it works, briefly](../README.md#how-it-works-briefly): where the daemon and its run registry sit in the whole.
+- [ARCHITECTURE.md](ARCHITECTURE.md): where the daemon and its run registry sit in the whole.

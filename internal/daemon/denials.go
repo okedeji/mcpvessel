@@ -211,12 +211,27 @@ type denialScanSink struct {
 	// whose proxy is already gone (and so cannot be approved or previewed anyway).
 	live   func() bool
 	events *eventBus
+	// ledger is the durable per-server feed; ref resolves this run to its server
+	// ref (the ledger's key), and sample pulls the redacted request for a held
+	// host off the log-pump path. All optional; nil disables the durable tee.
+	ledger *egressLedger
+	ref    func() string
+	sample func(host string)
 	buf    bytes.Buffer
 }
 
 // tracking reports whether the sink should still record pending/preview hosts.
 func (s *denialScanSink) tracking() bool {
 	return s.live == nil || s.live()
+}
+
+// ledgerRecord folds one egress fact into the durable per-server feed, keyed by
+// the run's ref. A no-op when the ledger or ref resolver is unset (tests).
+func (s *denialScanSink) ledgerRecord(kind, host, detail string) {
+	if s.ledger == nil || s.ref == nil {
+		return
+	}
+	s.ledger.record(s.ref(), kind, host, detail)
 }
 
 func (s *denialScanSink) Write(p []byte) (int, error) {
@@ -238,6 +253,7 @@ func (s *denialScanSink) Write(p []byte) (int, error) {
 // scan turns one proxy log line into denial tracking and approval events.
 func (s *denialScanSink) scan(line string) {
 	if host, ok := parseEgressHost(line, "egress denied: "); ok {
+		s.ledgerRecord(ledgerBlocked, host, "")
 		s.den.record(s.runID, host)
 		// A denial resolves a hold (a rejection or a lapsed deadline), so the host
 		// is no longer pending. Clearing it keeps `egress ls` from listing a host
@@ -267,10 +283,17 @@ func (s *denialScanSink) scan(line string) {
 				s.prev.add(s.runID, host)
 			}
 		}
+		// The durable feed records the held host and pulls its redacted request
+		// so the content survives the cage being reaped.
+		s.ledgerRecord(ledgerHeld, host, "")
+		if s.sample != nil {
+			s.sample(host)
+		}
 		s.publish(Event{Type: EventEgressPreview, RunID: s.runID, Target: host, Detail: egressMarkerDetail(line, "egress preview: ")})
 		return
 	}
 	if host, ok := parseEgressHost(line, "egress pending: "); ok {
+		s.ledgerRecord(ledgerHeld, host, "")
 		if s.pend != nil && s.tracking() && s.pend.add(s.runID, host) {
 			s.publish(Event{
 				Type:   EventEgressPending,
@@ -282,6 +305,7 @@ func (s *denialScanSink) scan(line string) {
 		return
 	}
 	if host, ok := parseEgressHost(line, "egress allowed: "); ok {
+		s.ledgerRecord(ledgerApproved, host, "")
 		// An approval resolves any prior denial for the host, so it no longer
 		// belongs in a later tool error's blocked list, nor as a pending preview.
 		s.den.remove(s.runID, host)
@@ -294,12 +318,30 @@ func (s *denialScanSink) scan(line string) {
 		s.publish(Event{Type: EventEgressApproved, RunID: s.runID, Target: host})
 		return
 	}
+	if host, ok := parseEgressHost(line, "egress secret: "); ok {
+		// The proxy detected a granted secret in a captured request and emitted its
+		// name only (never the value). Record it as the exfiltration signal in the
+		// durable feed, and surface it live.
+		name := markerTailAfterAgent(line)
+		s.ledgerRecord(ledgerSecret, host, name)
+		s.publish(Event{Type: EventEgressSecret, RunID: s.runID, Target: host, Detail: name})
+		return
+	}
 	if host, ok := parseEgressHost(line, "egress inspect: "); ok {
 		// The proxy already reduced this to a secret-safe summary (no body, no
 		// query value), so the detail is the line's tail after the host, forwarded
 		// verbatim to the feed and the log.
 		s.publish(Event{Type: EventEgressInspect, RunID: s.runID, Target: host, Detail: egressMarkerDetail(line, "egress inspect: ")})
 	}
+}
+
+// markerTailAfterAgent returns the text after the "(agent <name>) " part of an
+// egress marker line, used to pull the secret name off an "egress secret:" line.
+func markerTailAfterAgent(line string) string {
+	if i := strings.Index(line, ") "); i >= 0 {
+		return strings.TrimSpace(line[i+2:])
+	}
+	return ""
 }
 
 // egressMarkerDetail returns the summary that follows the host in an

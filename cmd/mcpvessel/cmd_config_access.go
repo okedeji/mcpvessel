@@ -92,6 +92,9 @@ land here too.`,
 }
 
 func saveEgressPolicy(cmd *cobra.Command, key string, hosts []string) error {
+	if err := guardTrustBoundary(cmd, "config egress set"); err != nil {
+		return err
+	}
 	c, err := config.Load()
 	if err != nil {
 		return err
@@ -180,6 +183,9 @@ binding cannot leak into a server that did not ask for it.`,
 }
 
 func saveSecretPolicy(cmd *cobra.Command, key string, names []string) error {
+	if err := guardTrustBoundary(cmd, "config secrets set"); err != nil {
+		return err
+	}
 	c, err := config.Load()
 	if err != nil {
 		return err

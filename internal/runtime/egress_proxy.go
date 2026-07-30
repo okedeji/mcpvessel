@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"syscall"
 
@@ -207,6 +208,7 @@ func startEgressProxy(ctx context.Context, sess *bootSession, runID, egressNetwo
 		Inspect:          in.InspectCACertPEM != "",
 		InspectCACertPEM: in.InspectCACertPEM,
 		InspectCAKeyPEM:  in.InspectCAKeyPEM,
+		RedactSecrets:    redactSecretValues(in.RedactSecrets),
 	})
 	if err != nil {
 		return fmt.Errorf("encoding egress config: %w", err)
@@ -284,4 +286,24 @@ func containerIP(ctx context.Context, p Provisioner, name string) (string, error
 		return "", fmt.Errorf("inspecting %s IP: %w", name, err)
 	}
 	return strings.TrimSpace(out.String()), nil
+}
+
+// redactSecretValues converts the run's granted secrets (name to value) into the
+// list the proxy uses to redact them from a surfaced preview, sorted by name for
+// a stable config. Empty in, nil out, so no secret material rides the config
+// when the run granted none.
+func redactSecretValues(secrets map[string]string) []egress.SecretValue {
+	if len(secrets) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(secrets))
+	for n := range secrets {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	out := make([]egress.SecretValue, 0, len(names))
+	for _, n := range names {
+		out = append(out, egress.SecretValue{Name: n, Value: secrets[n]})
+	}
+	return out
 }

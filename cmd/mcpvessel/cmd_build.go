@@ -31,6 +31,7 @@ func newBuildCmd() *cobra.Command {
 	var skipCycleCheck bool
 	var noIntrospect bool
 	var noCache bool
+	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "build [PATH]",
 		Short: "Build an agent bundle from a Vesselfile",
@@ -72,6 +73,7 @@ caught; --skip-cycle-check skips the walk on a graph you trust.`,
 				skipCycleCheck: skipCycleCheck,
 				noIntrospect:   noIntrospect,
 				noCache:        noCache,
+				jsonOut:        jsonOut,
 			})
 		},
 	}
@@ -81,6 +83,7 @@ caught; --skip-cycle-check skips the walk on a graph you trust.`,
 	cmd.Flags().BoolVar(&skipCycleCheck, "skip-cycle-check", false, "skip the transitive USES cycle walk (digests are still locked)")
 	cmd.Flags().BoolVar(&noIntrospect, "no-introspect", false, "skip booting the agent to enrich the catalog (declared-only, no runtime)")
 	cmd.Flags().BoolVar(&noCache, "no-cache", false, "rebuild the introspection image from scratch, ignoring cached and already-built images")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit machine-readable JSON (the built ref/hash); build progress goes to stderr")
 	return cmd
 }
 
@@ -95,6 +98,10 @@ type buildConfig struct {
 	skipCycleCheck bool
 	noIntrospect   bool
 	noCache        bool
+	// jsonOut emits the build result as one JSON object on stdout and routes all
+	// progress and introspection noise to stderr, so an agent can read the built
+	// ref without scraping the human report.
+	jsonOut bool
 	// env and secrets are the operator pools for the introspection boot, so a
 	// server that needs a key or config to start can be introspected.
 	env     map[string]string
@@ -240,6 +247,14 @@ func validateEvalSuite(cfg buildConfig) error {
 func buildToStore(ctx context.Context, stdout, stderr io.Writer, cfg buildConfig) error {
 	start := time.Now()
 
+	// In JSON mode stdout carries only the final object, so build progress and
+	// introspection lines are redirected to stderr and the real stdout is held
+	// back for the one JSON write.
+	realStdout := stdout
+	if cfg.jsonOut {
+		stdout = stderr
+	}
+
 	// Parse -t up front so a bad ref fails before the expensive image build.
 	var ref reference.Reference
 	if cfg.tag != "" {
@@ -271,8 +286,39 @@ func buildToStore(ctx context.Context, stdout, stderr io.Writer, cfg buildConfig
 		}
 	}
 
+	if cfg.jsonOut {
+		return writeBuildJSON(realStdout, cfg, ref, hash, time.Since(start))
+	}
 	reportBuild(stdout, cfg, ref, hash, time.Since(start))
 	return nil
+}
+
+// buildResult is the JSON `build`/`import` emit under --json: the identifier an
+// agent serves or runs the bundle by, plus the facts behind the human report.
+type buildResult struct {
+	Ref        string `json:"ref"`            // the tag if -t was given, else the content hash
+	Hash       string `json:"hash"`           // the content hash, always
+	SizeBytes  int64  `json:"size_bytes"`     // the stored bundle size
+	DurationMS int64  `json:"duration_ms"`    // wall time of the build
+	File       string `json:"file,omitempty"` // the -o portable copy, when written
+}
+
+func writeBuildJSON(stdout io.Writer, cfg buildConfig, ref reference.Reference, hash string, elapsed time.Duration) error {
+	id := hash
+	if ref.Tag != "" {
+		id = ref.Display()
+	}
+	var size int64
+	if info, err := os.Stat(cfg.outPath); err == nil {
+		size = info.Size()
+	}
+	return writeJSON(stdout, buildResult{
+		Ref:        id,
+		Hash:       hash,
+		SizeBytes:  size,
+		DurationMS: elapsed.Round(time.Millisecond).Milliseconds(),
+		File:       cfg.filePath,
+	})
 }
 
 func reportBuild(stdout io.Writer, cfg buildConfig, ref reference.Reference, hash string, elapsed time.Duration) {

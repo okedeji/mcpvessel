@@ -300,6 +300,11 @@ type bootInput struct {
 	InspectCACertPEM string
 	InspectCAKeyPEM  string
 
+	// RedactSecrets are the run's granted secret values (name to value), sent to
+	// the egress proxy under inspection so it can redact them from a surfaced
+	// preview. Set only when inspecting; empty otherwise.
+	RedactSecrets map[string]string
+
 	// ElicitHandler routes the root's mid-call questions; interactive boots only.
 	ElicitHandler mcp.ElicitHandler
 

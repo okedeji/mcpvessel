@@ -214,5 +214,45 @@ def search_code(query: str) -> str:
     return "\n\n---\n\n".join(out)
 
 
+def _frontmatter_value(text, key):
+    m = re.search(rf'(?m)^\s*{key}:\s*"?([^"\n]+?)"?\s*$', text)
+    return m.group(1) if m else ""
+
+
+@mcp.tool()
+def latest_skill(client_id: str = "claude-code") -> str:
+    """Return the latest mcpvessel skill for an MCP client, fetched live from the
+    repository, so an agent can keep its installed skill current without upgrading
+    the mcpvessel binary. The skill (in this repo at
+    internal/clientskill/skills/<client_id>/SKILL.md) evolves faster than the
+    binary; this serves whatever is on the default branch right now.
+
+    The returned text is the SKILL.md itself, including a metadata block with
+    `version` and `requires` (the minimum mcpvessel binary it needs). Apply an
+    update only when BOTH hold: this version is greater than your installed
+    skill's metadata.version, and `mcpvessel --version` is at least `requires`.
+    Then write it with `mcpvessel skill install --from -` and start a new session.
+    If `requires` exceeds the installed binary, do not apply it; tell the user the
+    newest skill needs a binary upgrade for its new commands."""
+    path = f"internal/clientskill/skills/{client_id}/SKILL.md"
+    try:
+        content = _get(f"https://raw.githubusercontent.com/{REPO}/{BRANCH}/{path}")
+    except Exception as exc:
+        return (
+            f"Could not fetch the latest skill for {client_id!r}: {exc}. Known "
+            "client id: claude-code. The cage must allow raw.githubusercontent.com."
+        )
+    version = _frontmatter_value(content, "version")
+    requires = _frontmatter_value(content, "requires")
+    return (
+        f"latest {client_id} skill: version {version or '?'}, "
+        f"requires mcpvessel >= {requires or '?'}.\n"
+        "Compare to your installed skill's metadata.version and your "
+        "`mcpvessel --version`; apply with `mcpvessel skill install --from -` only "
+        "if newer and compatible. The full SKILL.md follows.\n\n"
+        + content
+    )
+
+
 if __name__ == "__main__":
     mcp.run()

@@ -78,6 +78,13 @@ func newEgressDenyCmd() *cobra.Command {
 }
 
 func decideEgress(cmd *cobra.Command, target, host, agent string, allow, once, all bool) error {
+	// Approving a host widens the cage, so it stays a human decision; denying
+	// only tightens and needs no gate.
+	if allow {
+		if err := guardTrustBoundary(cmd, "egress allow"); err != nil {
+			return err
+		}
+	}
 	socket, err := daemon.SocketPath()
 	if err != nil {
 		return err
@@ -182,8 +189,18 @@ func persistableRef(s string) string {
 	return s
 }
 
+// heldHost is one held egress decision, as emitted by `egress ls --json` so an
+// agent can read what is pending without scraping the human lines.
+type heldHost struct {
+	Run         string `json:"run"`           // the run id holding the host
+	Ref         string `json:"ref,omitempty"` // the agent ref, when known
+	Host        string `json:"host"`          // the host awaiting a decision
+	Previewable bool   `json:"previewable"`   // a captured request is available via `egress preview`
+}
+
 func newEgressLsCmd() *cobra.Command {
-	return &cobra.Command{
+	var jsonOut bool
+	cmd := &cobra.Command{
 		Use:   "ls",
 		Short: "List hosts running agents are held on, awaiting approval",
 		Args:  cobra.NoArgs,
@@ -196,10 +213,6 @@ func newEgressLsCmd() *cobra.Command {
 			pending, err := client.PendingEgress(cmd.Context())
 			if err != nil {
 				return err
-			}
-			if len(pending) == 0 {
-				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "No hosts are being held.")
-				return nil
 			}
 			refByID := map[string]string{}
 			if runs, err := client.ListRuns(cmd.Context()); err == nil {
@@ -214,6 +227,24 @@ func newEgressLsCmd() *cobra.Command {
 						previewable[id+"\x00"+h] = true
 					}
 				}
+			}
+			if jsonOut {
+				held := []heldHost{}
+				for id, hosts := range pending {
+					for _, h := range hosts {
+						held = append(held, heldHost{
+							Run:         id,
+							Ref:         refByID[id],
+							Host:        h,
+							Previewable: previewable[id+"\x00"+h],
+						})
+					}
+				}
+				return writeJSON(cmd.OutOrStdout(), held)
+			}
+			if len(pending) == 0 {
+				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "No hosts are being held.")
+				return nil
 			}
 			for id, hosts := range pending {
 				held := id
@@ -232,6 +263,8 @@ func newEgressLsCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit machine-readable JSON")
+	return cmd
 }
 
 // newEgressPreviewCmd shows the full request a cage wants to send a held host,
@@ -239,7 +272,8 @@ func newEgressLsCmd() *cobra.Command {
 // about to leave before approving. Unlike the live log line, this includes the
 // body, on the operator's own terminal, on demand.
 func newEgressPreviewCmd() *cobra.Command {
-	return &cobra.Command{
+	var jsonOut bool
+	cmd := &cobra.Command{
 		Use:   "preview TARGET HOST",
 		Short: "Show the request a cage wants to send a held host, before approving",
 		Args:  cobra.ExactArgs(2),
@@ -256,6 +290,9 @@ func newEgressPreviewCmd() *cobra.Command {
 			for _, id := range runIDs {
 				prev, err := client.FetchEgressPreview(cmd.Context(), id, args[1])
 				if err == nil && prev != nil && prev.Method != "" {
+					if jsonOut {
+						return writeJSON(cmd.OutOrStdout(), prev)
+					}
 					_, _ = fmt.Fprint(cmd.OutOrStdout(), egress.FormatPreview(args[1], prev))
 					return nil
 				}
@@ -263,4 +300,6 @@ func newEgressPreviewCmd() *cobra.Command {
 			return fmt.Errorf("no pending preview for %s on %s; 'mcpvessel egress ls' lists what is held", args[1], args[0])
 		},
 	}
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit machine-readable JSON")
+	return cmd
 }

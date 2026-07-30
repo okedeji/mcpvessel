@@ -366,6 +366,32 @@ func (c *Client) SetBudget(ctx context.Context, id string, microUSD int64) error
 	return c.post(ctx, "/runs/"+id+"/budget", map[string]int64{"micro_usd": microUSD}, nil)
 }
 
+// AuditServers returns the durable per-server egress feed for `mcpvessel audit`:
+// each server's rolling summary and its unsurfaced events.
+func (c *Client) AuditServers(ctx context.Context) ([]AuditServer, error) {
+	var body struct {
+		Servers []AuditServer `json:"servers"`
+	}
+	if err := c.get(ctx, "/audit", &body); err != nil {
+		return nil, err
+	}
+	return body.Servers, nil
+}
+
+// AuditAck is one server's acknowledgement: the cursor the agent read and the
+// new rolling summary it wrote.
+type AuditAck struct {
+	Ref     string `json:"ref"`
+	Cursor  int64  `json:"cursor"`
+	Summary string `json:"summary"`
+}
+
+// AckAudit commits the agent's consumption of the feed: it stores each server's
+// new summary and prunes events at or below the acked cursor.
+func (c *Client) AckAudit(ctx context.Context, acks []AuditAck) error {
+	return c.post(ctx, "/audit/ack", map[string]any{"acks": acks}, nil)
+}
+
 // PendingEgress returns every live run's currently-held hosts, keyed by run id.
 func (c *Client) PendingEgress(ctx context.Context) (map[string][]string, error) {
 	var out map[string][]string
@@ -425,6 +451,11 @@ type ServeResult struct {
 	Flat     ServedFlat    `json:"flat"`
 	Agents   []ServedAgent `json:"agents"`
 	Warnings []string      `json:"warnings,omitempty"`
+	// RestartClient is set by serve add/rm: the merged endpoint's tool list
+	// changed, so a connected MCP client must reconnect to see it.
+	RestartClient bool `json:"restart_client,omitempty"`
+	// Closed is set by serve rm when the last bundle left and the door shut.
+	Closed bool `json:"closed,omitempty"`
 }
 
 // ServeTarget is one bundle to serve: a daemon-resolvable ref and an
@@ -450,6 +481,41 @@ func (c *Client) Serve(ctx context.Context, targets []ServeTarget, listen string
 		"budget":    budgetMicroUSD,
 		"inspect":   inspect,
 	}, &out)
+	return out, err
+}
+
+// ServeAdd attaches more bundles to the front door on listen, merging their
+// tools into the endpoint a client already points at.
+func (c *Client) ServeAdd(ctx context.Context, targets []ServeTarget, listen string, expose, noExpose []string, egress map[string][]string, env map[string]string, secrets runtime.ScopedSecrets, budgetMicroUSD int64, inspect bool) (ServeResult, error) {
+	var out ServeResult
+	err := c.post(ctx, "/serve/add", map[string]any{
+		"bundles":   targets,
+		"listen":    listen,
+		"expose":    expose,
+		"no_expose": noExpose,
+		"egress":    egress,
+		"env":       env,
+		"secrets":   secrets,
+		"budget":    budgetMicroUSD,
+		"inspect":   inspect,
+	}, &out)
+	return out, err
+}
+
+// ServeRemove detaches a served bundle (by agent address or the ref it was
+// served under) from the front door on listen.
+func (c *Client) ServeRemove(ctx context.Context, listen, ref string) (ServeResult, error) {
+	var out ServeResult
+	err := c.post(ctx, "/serve/rm", map[string]string{"listen": listen, "ref": ref}, &out)
+	return out, err
+}
+
+// EnsureDocs persists the docs opt-in and brings the caged docs server up,
+// returning the URL to register with the MCP client. Idempotent: a second call
+// reports the already-serving door rather than failing.
+func (c *Client) EnsureDocs(ctx context.Context) (ensureDocsResult, error) {
+	var out ensureDocsResult
+	err := c.post(ctx, "/docs/ensure", nil, &out)
 	return out, err
 }
 

@@ -51,6 +51,8 @@ func bootRun(ctx context.Context, in RunInput, boot bootInput, runID string) (*m
 		inspectCACertPEM = string(certPEM)
 		boot.InspectCACertPEM = string(certPEM)
 		boot.InspectCAKeyPEM = string(keyPEM)
+		// Only under inspection, the one path where a preview can exist to redact.
+		boot.RedactSecrets = in.Secrets.Flatten()
 	}
 
 	ops := operatorInputs{env: in.Env, secrets: in.Secrets, rootName: in.Name, models: cfg.Models, resources: res, managed: in.Managed, prewarm: cfg.Cages.EffectivePrewarm(), keepWarm: cfg.Cages.KeepWarm, maxLive: cfg.Cages.EffectiveMaxLive(), record: in.Record, egressAllow: in.EgressAllow, configEgress: cfg.Egress, inspectCACertPEM: inspectCACertPEM}

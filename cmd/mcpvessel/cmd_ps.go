@@ -18,7 +18,7 @@ import (
 const psRecentFinished = 10
 
 func newPsCmd() *cobra.Command {
-	var all bool
+	var all, jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "ps",
 		Short: "List running agents",
@@ -27,9 +27,11 @@ func newPsCmd() *cobra.Command {
 ps talks to the daemon, so it needs one running. Each row is a run: its id,
 the agent reference, its status, when it started, and what it cost. Live runs
 sort first, newest first, over the ` + fmt.Sprint(psRecentFinished) + ` most recently finished; -a/--all shows
-the full history.`,
+the full history. --json emits every run verbatim, including a serving run's
+endpoint URL.`,
 		Example: `  mcpvessel ps
-  mcpvessel ps -a`,
+  mcpvessel ps -a
+  mcpvessel ps --json`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			socket, err := daemon.SocketPath()
@@ -44,11 +46,15 @@ the full history.`,
 				}
 				return err
 			}
+			if jsonOut {
+				return writeJSON(cmd.OutOrStdout(), runs)
+			}
 			printRuns(cmd.OutOrStdout(), runs, all)
 			return nil
 		},
 	}
 	cmd.Flags().BoolVarP(&all, "all", "a", false, "show the full run history, not just live and recent runs")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit machine-readable JSON")
 	return cmd
 }
 

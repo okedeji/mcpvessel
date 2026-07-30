@@ -138,5 +138,5 @@ VESSEL_HOME=/tmp/mv mcpvessel daemon
 - [init](init.md): prepares the runtime and takes the daemon's start latency up front.
 - [serve](serve.md): opens a front door on the daemon that external MCP clients connect to.
 - [ps](ps.md), [logs](logs.md), [stop](stop.md): the run-facing commands that all talk to the daemon over its socket.
-- [How it works, briefly](../README.md#how-it-works-briefly): the broker containers and per-run networks the daemon supervises.
+- [ARCHITECTURE.md](ARCHITECTURE.md): the broker containers and per-run networks the daemon supervises.
 - [Uninstall](../README.md#uninstall): `daemon stop` as the first step in tearing mcpvessel down.

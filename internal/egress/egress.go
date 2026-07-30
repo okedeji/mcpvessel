@@ -42,6 +42,20 @@ type Config struct {
 	// decision before failing closed. Zero uses the built-in default. Applies to
 	// the hold path only (NoHold fails fast and never waits).
 	HoldSeconds int `json:"hold_seconds,omitempty"`
+	// RedactSecrets are the run's granted secret values. When a not-yet-approved
+	// request is previewed under inspection, any occurrence of one is replaced by
+	// a «NAME» marker before the preview is surfaced, so a reader (an operator, or
+	// an agent driving mcpvessel) sees which secret is present without its value.
+	// Sent only under inspection, alongside the CA key the proxy already holds;
+	// the proxy sees these in plaintext during interception regardless.
+	RedactSecrets []SecretValue `json:"redact_secrets,omitempty"`
+}
+
+// SecretValue is one granted secret, name and value, used only to redact the
+// value from a previewed request.
+type SecretValue struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
 }
 
 // holdDeadline bounds how long a CONNECT to an unapproved host waits for the
@@ -102,6 +116,10 @@ type Proxy struct {
 	// Populated only under inspection; pulled over the loopback control surface,
 	// never written to stdout, so a body never reaches the durable log.
 	previews map[string]*PreviewRequest
+	// secretForms are the granted secret values, and their common encodings,
+	// paired with the «NAME» marker they are replaced by when a preview is
+	// surfaced. Precomputed once so serving a preview is a plain string sweep.
+	secretForms []secretForm
 }
 
 // New builds a Proxy from cfg, writing decision lines to events.
@@ -123,19 +141,20 @@ func New(cfg Config, events io.Writer) *Proxy {
 		deadline = time.Duration(cfg.HoldSeconds) * time.Second
 	}
 	p := &Proxy{
-		static:     static,
-		runtime:    map[string]map[string]bool{},
-		runtimeAll: map[string]bool{},
-		requests:   map[string]map[string]bool{},
-		holds:      map[string][]*waiter{},
-		held:       map[string]int{},
-		names:      cfg.Names,
-		logged:     map[string]bool{},
-		events:     events,
-		deadline:   deadline,
-		maxPer:     maxPerSource,
-		noHold:     cfg.NoHold,
-		previews:   map[string]*PreviewRequest{},
+		static:      static,
+		runtime:     map[string]map[string]bool{},
+		runtimeAll:  map[string]bool{},
+		requests:    map[string]map[string]bool{},
+		holds:       map[string][]*waiter{},
+		held:        map[string]int{},
+		names:       cfg.Names,
+		logged:      map[string]bool{},
+		events:      events,
+		deadline:    deadline,
+		maxPer:      maxPerSource,
+		noHold:      cfg.NoHold,
+		previews:    map[string]*PreviewRequest{},
+		secretForms: buildSecretForms(cfg.RedactSecrets),
 	}
 	if cfg.Inspect && cfg.InspectCACertPEM != "" && cfg.InspectCAKeyPEM != "" {
 		// A malformed CA is a boot misconfiguration; run without inspection
@@ -332,6 +351,11 @@ func (p *Proxy) writePreview(src, host string, prev *PreviewRequest, note string
 	}
 	_, _ = fmt.Fprintf(p.events, "egress preview: %s (agent %s) %s %s%s  %dB\n",
 		host, p.label(src), sanitizeMethod(prev.Method), sanitizePath(prev.URL), q, len(prev.Body))
+	// If a granted secret is in the captured request, name it (never the value):
+	// this is the exfiltration signal the daemon folds into the durable audit feed.
+	for _, name := range p.previewSecretNames(prev) {
+		_, _ = fmt.Fprintf(p.events, "egress secret: %s (agent %s) %s\n", host, p.label(src), name)
+	}
 }
 
 // interceptConn hijacks the approved CONNECT, sends the 200, and hands the raw
@@ -703,14 +727,16 @@ func (p *Proxy) Control() http.Handler {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(recs)
 	})
-	// GET /preview returns the full not-yet-approved request (headers and body)
-	// a cage wants to send a host, so the operator can read it before deciding.
-	// Loopback only; the body reaches the operator only through this pull, never
-	// the stdout event stream a shared log would capture.
+	// GET /preview returns the not-yet-approved request (headers and body) a cage
+	// wants to send a host, so it can be read before deciding. Loopback only; the
+	// body reaches a reader only through this pull, never the stdout event stream
+	// a shared log would capture. Granted secret values are redacted to «NAME»
+	// here, so a reader (including an agent driving mcpvessel) sees which secret
+	// is present without its value; the raw bytes live only in a replay artifact.
 	mux.HandleFunc("GET /preview", func(w http.ResponseWriter, r *http.Request) {
 		host := normalizeHost(hostOnly(r.URL.Query().Get("host")))
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(p.getPreview(host))
+		_ = json.NewEncoder(w).Encode(p.redactPreview(p.getPreview(host)))
 	})
 	return mux
 }

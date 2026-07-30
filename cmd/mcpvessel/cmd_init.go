@@ -1,11 +1,16 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"io"
+	"os/exec"
+	"strconv"
+	"strings"
 
 	"github.com/spf13/cobra"
 
+	"github.com/okedeji/mcpvessel/internal/clientskill"
 	"github.com/okedeji/mcpvessel/internal/daemon"
 	"github.com/okedeji/mcpvessel/internal/runtime"
 )
@@ -13,6 +18,8 @@ import (
 func newInitCmd() *cobra.Command {
 	var verbose bool
 	var recreate bool
+	var client string
+	var skipSkill bool
 	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Prepare the mcpvessel runtime (one-time setup)",
@@ -83,7 +90,8 @@ restarts the daemon.`,
 			}
 
 			// Taking the daemon start latency here is the point of init.
-			if _, err := daemon.Ensure(ctx); err != nil {
+			dae, err := daemon.Ensure(ctx)
+			if err != nil {
 				return err
 			}
 
@@ -93,11 +101,123 @@ restarts the daemon.`,
 				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "note: the in-VM agent binary is not built yet; the first run needs it (run 'make build-linux' from source)")
 			}
 
+			// Set up the chosen MCP client so its agent can drive mcpvessel:
+			// install the skill, then serve and register the caged docs server as
+			// its reference. Every step degrades to a note; nothing here fails an
+			// otherwise-ready runtime.
+			if !skipSkill {
+				clientID, err := installClientSkill(cmd, client)
+				if err != nil {
+					_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "note: could not install the client skill: %v\n", err)
+				} else if clientID != "" {
+					bootstrapDocs(cmd, dae, clientID)
+				}
+			}
+
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Runtime ready.")
 			return nil
 		},
 	}
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "stream the underlying provisioner output instead of the phase UI")
 	cmd.Flags().BoolVar(&recreate, "recreate", false, "stop the daemon and rebuild the VM, applying a changed machine.memory_gib (macOS); deletes cached images")
+	cmd.Flags().StringVar(&client, "client", "", "set up this MCP client without prompting: install the skill and register the caged docs server (e.g. claude-code)")
+	cmd.Flags().BoolVar(&skipSkill, "skip-skill", false, "skip the client setup entirely (skill and docs server)")
 	return cmd
+}
+
+// installClientSkill installs the skill for the chosen MCP client and returns
+// the resolved client id (so the caller can finish the client's bootstrap).
+// With an explicit --client it installs directly; at a terminal it prompts; and
+// non-interactively with no client it does nothing, so CI is untouched. An empty
+// id means nothing was installed (skipped or declined).
+func installClientSkill(cmd *cobra.Command, client string) (string, error) {
+	if client == "" {
+		if !isInteractive(cmd) {
+			return "", nil
+		}
+		var err error
+		client, err = promptClient(cmd)
+		if err != nil || client == "" {
+			return "", err
+		}
+	}
+	res, err := clientskill.Install(client)
+	if err != nil {
+		return "", err
+	}
+	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Installed the mcpvessel skill for %s at %s\n", res.ClientID, res.Path)
+	return res.ClientID, nil
+}
+
+// bootstrapDocs serves the caged docs server (which also persists the opt-in for
+// later startups) and registers its URL with the client, so the agent has a
+// reference without the user setting anything up. Best-effort: if the bundle is
+// unpublished or the client CLI is missing, it prints a note and returns.
+func bootstrapDocs(cmd *cobra.Command, dae *daemon.Client, clientID string) {
+	stderr := cmd.ErrOrStderr()
+	res, err := dae.EnsureDocs(cmd.Context())
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "note: could not set up the mcpvessel-docs server (it may not be published yet); the agent can still use the open-source repo. %v\n", err)
+		return
+	}
+	registerDocsWithClient(cmd, clientID, res.URL)
+}
+
+// registerDocsWithClient adds the caged docs server to the MCP client. Only
+// Claude Code has an install path today (the claude CLI); any other client gets
+// the URL to add by hand. Idempotent for Claude Code: an existing entry is left
+// alone.
+func registerDocsWithClient(cmd *cobra.Command, clientID, url string) {
+	stderr := cmd.ErrOrStderr()
+	if clientID != "claude-code" {
+		_, _ = fmt.Fprintf(stderr, "The mcpvessel docs server is caged and serving at %s. Register it with your client to let the agent query it.\n", url)
+		return
+	}
+
+	claude, err := exec.LookPath("claude")
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "The mcpvessel docs server is caged and serving at %s. The `claude` CLI is not on your PATH, so register it yourself: claude mcp add --scope user mcpvessel-docs --transport http %s\n", url, url)
+		return
+	}
+
+	// Skip if it is already registered, so re-running init does not error on a
+	// duplicate. `claude mcp get` exits non-zero when the entry is absent.
+	if exec.Command(claude, "mcp", "get", docsMCPName).Run() == nil {
+		_, _ = fmt.Fprintln(stderr, "The mcpvessel docs server is already registered with Claude Code.")
+		return
+	}
+
+	add := exec.CommandContext(cmd.Context(), claude, "mcp", "add", "--scope", "user", docsMCPName, "--transport", "http", url)
+	if out, err := add.CombinedOutput(); err != nil {
+		_, _ = fmt.Fprintf(stderr, "note: could not register the docs server with Claude Code (%v); register it yourself: claude mcp add --scope user %s --transport http %s\n%s", err, docsMCPName, url, out)
+		return
+	}
+	_, _ = fmt.Fprintf(stderr, "Registered the mcpvessel docs server with Claude Code (%s) at %s\n", docsMCPName, url)
+}
+
+// docsMCPName is the client-facing entry name for the caged docs server.
+const docsMCPName = "mcpvessel-docs"
+
+// promptClient shows the client menu and returns the selected id, or "" if the
+// user declined or their client is not one mcpvessel packages a skill for.
+func promptClient(cmd *cobra.Command) (string, error) {
+	w := cmd.ErrOrStderr()
+	list := clientskill.Clients()
+	_, _ = fmt.Fprintln(w, "\nSet up your MCP client so its agent can drive mcpvessel (installs the skill and the caged docs server):")
+	for i, c := range list {
+		_, _ = fmt.Fprintf(w, "  [%d] %s\n", i+1, c.Name)
+	}
+	_, _ = fmt.Fprintln(w, "  (more clients coming)")
+	_, _ = fmt.Fprint(w, "Which client, or Enter to skip? ")
+	line, _ := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
+	choice := strings.TrimSpace(line)
+	if choice == "" {
+		return "", nil
+	}
+	n, err := strconv.Atoi(choice)
+	if err != nil || n < 1 || n > len(list) {
+		_, _ = fmt.Fprintln(w, "Skipped. If your client is not listed, its skill is not packaged yet; the flow is documented at github.com/okedeji/mcpvessel.")
+		return "", nil
+	}
+	return list[n-1].ID, nil
 }

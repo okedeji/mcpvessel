@@ -45,6 +45,7 @@ Two commands set up the machine. `init` prepares the runtime (on macOS it downlo
 
 ## Watch and control
 
+- [audit](audit.md): the durable per-server feed of what each caged server has done, the hosts it was blocked from or held on, any secret it tried to ship, and the request behind each, held across sessions.
 - [logs](logs.md): stream a run's logs, including the egress a server attempted.
 - [events](events.md): follow the run lifecycle event stream.
 - [stats](stats.md): watch live resource use per cage.
@@ -59,6 +60,10 @@ Two commands set up the machine. `init` prepares the runtime (on macOS it downlo
 - [store](store.md): inspect, load, and remove bundles in the local store.
 - [secrets](secrets.md): store the secret keys servers need, kept out of logs and bundles.
 - [eval](eval.md): run an agent's eval suite.
+
+## Let an agent drive it
+
+- [skill](skill.md): install a skill so your MCP client's agent operates mcpvessel for you, importing, serving, and inspecting a server, while approvals stay with you.
 
 ## Reference
 
