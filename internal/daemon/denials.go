@@ -226,12 +226,46 @@ func (s *denialScanSink) tracking() bool {
 }
 
 // ledgerRecord folds one egress fact into the durable per-server feed, keyed by
-// the run's ref. A no-op when the ledger or ref resolver is unset (tests).
+// the run's ref. A no-op when the ledger or ref resolver is unset (tests). It
+// uses recordOnce because the same line is also seen by the daemon's prompt
+// on-demand read of the proxy log, and one attempt must stay one event.
 func (s *denialScanSink) ledgerRecord(kind, host, detail string) {
 	if s.ledger == nil || s.ref == nil {
 		return
 	}
-	s.ledger.record(s.ref(), kind, host, detail)
+	s.ledger.recordOnce(s.ref(), kind, host, detail)
+}
+
+// recordEgressLineToLedger folds one proxy log line into the durable feed,
+// keyed by ref. It is the on-demand counterpart to the scan sink above: the
+// daemon reads the proxy's current log directly (bypassing the buffered stream
+// pump) and runs each new line through here, so an attempt reaches the feed
+// promptly. It touches only the ledger (recordOnce, and a sample pull for a
+// held request), never the live stores or the event bus the sink also drives.
+func recordEgressLineToLedger(led *egressLedger, ref, line string, sample func(host string)) {
+	if host, ok := parseEgressHost(line, "egress denied: "); ok {
+		led.recordOnce(ref, ledgerBlocked, host, "")
+		return
+	}
+	if host, ok := parseEgressHost(line, "egress preview: "); ok {
+		led.recordOnce(ref, ledgerHeld, host, "")
+		if sample != nil {
+			sample(host)
+		}
+		return
+	}
+	if host, ok := parseEgressHost(line, "egress pending: "); ok {
+		led.recordOnce(ref, ledgerHeld, host, "")
+		return
+	}
+	if host, ok := parseEgressHost(line, "egress allowed: "); ok {
+		led.recordOnce(ref, ledgerApproved, host, "")
+		return
+	}
+	if host, ok := parseEgressHost(line, "egress secret: "); ok {
+		led.recordOnce(ref, ledgerSecret, host, markerTailAfterAgent(line))
+		return
+	}
 }
 
 func (s *denialScanSink) Write(p []byte) (int, error) {

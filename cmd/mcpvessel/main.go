@@ -43,6 +43,9 @@ func main() {
 	// Hidden internal commands the runtime execs inside gateway and cage containers.
 	root.AddCommand(newMCPGatewayCmd(), newMCPControlCmd(), newLLMGatewayCmd(), newLLMControlCmd(), newEgressProxyCmd(), newEgressControlCmd(), newMCPBridgeCmd())
 
+	// Hidden hook entrypoints Claude Code execs from ~/.claude/settings.json.
+	root.AddCommand(newHookCmd())
+
 	rejectUnknownSubcommands(root)
 
 	if err := root.Execute(); err != nil {

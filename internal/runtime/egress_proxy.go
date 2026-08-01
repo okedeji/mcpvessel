@@ -98,6 +98,29 @@ func RunEgressPreview(ctx context.Context, runID, host string) (*egress.PreviewR
 	return &prev, true
 }
 
+// ReadEgressLog reads the egress proxy's current stdout in one shot, not the
+// follow stream the durable pump tails. On macOS the pump's stream trails the
+// proxy by seconds (it crosses the Lima VM boundary), so a caller that needs the
+// markers promptly reads them here instead. These stdout markers are already
+// secret-safe (name only, never a value); the full captured requests live behind
+// the control channel and never appear here. Empty/false when the proxy is gone.
+func ReadEgressLog(ctx context.Context, runID string) (string, bool) {
+	p, err := DefaultProvisioner()
+	if err != nil {
+		return "", false
+	}
+	defer func() { _ = p.Close() }()
+
+	cmd := p.Nerdctl(ctx, "logs", egressProxyName(runID))
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = io.Discard
+	if err := cmd.Run(); err != nil {
+		return "", false
+	}
+	return out.String(), true
+}
+
 // egressProxyName is the proxy's container name, also its hostname on the run
 // network.
 func egressProxyName(runID string) string { return runID + "-egress-proxy" }

@@ -110,6 +110,7 @@ restarts the daemon.`,
 				if err != nil {
 					_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "note: could not install the client skill: %v\n", err)
 				} else if clientID != "" {
+					installClientHooks(cmd, clientID)
 					bootstrapDocs(cmd, dae, clientID)
 				}
 			}
@@ -147,6 +148,24 @@ func installClientSkill(cmd *cobra.Command, client string) (string, error) {
 	}
 	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Installed the mcpvessel skill for %s at %s\n", res.ClientID, res.Path)
 	return res.ClientID, nil
+}
+
+// installClientHooks wires the mcpvessel watch into the client as hooks, so it
+// fires deterministically on session start and after every caged-tool call, not
+// only when the skill happens to be loaded. Claude Code only today; best-effort,
+// a failure never fails init.
+func installClientHooks(cmd *cobra.Command, clientID string) {
+	if clientID != "claude-code" {
+		return
+	}
+	path, wrote, err := installClaudeHooks()
+	if err != nil {
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "note: could not install the mcpvessel watch hooks: %v\n", err)
+		return
+	}
+	if wrote {
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Installed the mcpvessel watch hooks for Claude Code in %s\n", path)
+	}
 }
 
 // bootstrapDocs serves the caged docs server (which also persists the opt-in for

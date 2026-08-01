@@ -65,6 +65,11 @@ type serverLedger struct {
 	Summary string       `json:"summary,omitempty"`
 	Cursor  int64        `json:"cursor"`
 	Events  []AuditEvent `json:"events,omitempty"`
+	// HookCursor tracks what the PostToolUse hook has already surfaced, so an
+	// egress attempt is pushed to Claude once, not re-pushed on every later caged
+	// call. It is separate from Cursor (the operator-facing ack watermark): a hook
+	// surfacing an event does not fold it into the summary.
+	HookCursor int64 `json:"hook_cursor,omitempty"`
 }
 
 // AuditServer is one server's feed as `mcpvessel audit` reports it: the rolling
@@ -119,6 +124,19 @@ func newEgressLedger(path string) *egressLedger {
 // record folds one egress fact into ref's feed. Repeats of the same unsurfaced
 // (kind, host) bump the count instead of appending, keeping the feed compact.
 func (l *egressLedger) record(ref, kind, host, detail string) {
+	l.recordEvent(ref, kind, host, detail, false)
+}
+
+// recordOnce is record for feeders that may see the same physical event more
+// than once. Two feed the ledger for a live cage: the buffered log stream and
+// the prompt on-demand read the hook triggers. Bumping the count on a match
+// would double-count one attempt, so recordOnce leaves a matching unsurfaced
+// event as is; the two feeders converge on a single event instead.
+func (l *egressLedger) recordOnce(ref, kind, host, detail string) {
+	l.recordEvent(ref, kind, host, detail, true)
+}
+
+func (l *egressLedger) recordEvent(ref, kind, host, detail string, once bool) {
 	if ref == "" {
 		return
 	}
@@ -133,6 +151,9 @@ func (l *egressLedger) record(ref, kind, host, detail string) {
 	for i := range s.Events {
 		e := &s.Events[i]
 		if e.Seq > s.Cursor && e.Kind == kind && e.Host == host && e.Detail == detail {
+			if once {
+				return
+			}
 			e.Count++
 			e.LastSeen = now
 			l.save()
@@ -187,6 +208,41 @@ func (l *egressLedger) feed() []AuditServer {
 			}
 		}
 		out = append(out, AuditServer{Ref: s.Ref, Summary: s.Summary, Cursor: l.maxSeqLocked(s), Events: unsurfaced})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Ref < out[j].Ref })
+	return out
+}
+
+// feedForHook returns each server's events the PostToolUse hook has not surfaced
+// yet, past both the ack Cursor and the HookCursor, then advances HookCursor so
+// the same attempt is not pushed to Claude on the next caged call. Servers with
+// nothing fresh are omitted. Unlike feed, it carries no summary and does not
+// touch the ack Cursor; folding events into the summary stays the operator flow.
+func (l *egressLedger) feedForHook() []AuditServer {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	var out []AuditServer
+	changed := false
+	for _, s := range l.servers {
+		floor := s.Cursor
+		if s.HookCursor > floor {
+			floor = s.HookCursor
+		}
+		var fresh []AuditEvent
+		for _, e := range s.Events {
+			if e.Seq > floor {
+				fresh = append(fresh, e)
+			}
+		}
+		if len(fresh) == 0 {
+			continue
+		}
+		s.HookCursor = l.maxSeqLocked(s)
+		changed = true
+		out = append(out, AuditServer{Ref: s.Ref, Events: fresh})
+	}
+	if changed {
+		l.save()
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Ref < out[j].Ref })
 	return out

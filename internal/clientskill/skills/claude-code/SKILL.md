@@ -2,7 +2,7 @@
 name: mcpvessel
 description: Cage, run, and audit MCP servers with mcpvessel. Use whenever the user wants to add, install, try, or run an MCP server in Claude Code, or to check what a caged server is doing with the network and their secrets. Drive the mcpvessel CLI to cage a server, serve it to Claude Code, and inspect what it sends before anything is approved.
 metadata:
-  version: "2"
+  version: "3"
   requires: "0.1.4"
 ---
 
@@ -109,46 +109,39 @@ your own.
 
 ## Watch and report while it is used
 
-mcpvessel keeps a **durable per-server feed** of what every caged server has done,
-captured continuously even while nothing is watching. So you can report real
-history, not just what a live cage is doing this instant. This is your main
-instrument; you are its analyst.
+mcpvessel watches every caged server and surfaces what it finds straight into
+this conversation, so you never have to remember to check. Two hooks (`init`
+installed them) feed you automatically:
 
-**At session start, before anything else, run `mcpvessel audit --json` and report
-what you find.** Per server it returns a rolling `summary` of what was already
-surfaced, plus `events` that are new since last time, and a `cursor`. For each
-server, merge the summary with the new events and tell the user plainly: what it
-was blocked from, what it held, any `secret` event (a granted secret it tried to
-ship, shown by name), and, crucially, **your own read of each captured request
-`sample`**. The sample is the redacted request (method, URL, headers, body, with
-granted secrets already `«NAME»`); judge it yourself and call out anything that
-should not be leaving, a server's own hardcoded key, the user's files, a token to
-an unfamiliar host. That judgment is your job; mcpvessel captures, you analyze.
+- **At the start of a session**, a note reports what your caged servers did,
+  including while you were away: a rolling summary plus anything new.
+- **Right after a caged-tool call**, if the server tried to send something the
+  cage handled, a **SECURITY** note appears with the details and the redacted
+  request. This is the moment a malicious server shows itself: it does its real
+  work under cover of a normal-looking tool call.
 
-Keep the report lean. It spends the user's context, so every line earns its
-place: flag what matters (a secret shipped, an unexpected host, a payload that
-looks wrong) and nothing else. A quiet server is one line ("notes: nothing new"),
-not a paragraph. No preamble, no restating what they already know, no filler. If
-nothing is worth flagging across all servers, say that in a sentence and move on.
+When such a note appears, judging and reporting it is your job. Read the captured
+request yourself, the redacted method, URL, headers, and body (granted secrets
+already `«NAME»`), and weigh the whole thing, not just the automatic flags. A
+blocked host or a `secret` event is the obvious tell, but a request can be
+malicious with neither: a hardcoded key or token in the body, the user's files
+being uploaded, a suspicious header, a payload aimed at an unfamiliar host. If
+anything looks wrong, **lead your reply with it**; a caged tool that "worked" but
+tried to ship a secret or phone home is not a success. If it is genuinely
+harmless, say so in a line and move on. Keep it lean: no preamble, no filler.
 
-**Then ack, so the same facts are not reported twice.** After you surface a
-server's new events, compact them into an updated summary (old summary plus what
-is new, the way you compact context) and commit it, using the `cursor` from the
-read:
+**Then ack, so the same facts are not surfaced again.** Read the `cursor` the feed
+carries with `mcpvessel audit --json`, compact the reported events into an updated
+summary (old summary plus what is new), and commit it:
 
 ```
 echo '{"acks":[{"ref":"@you/notes:0.1","cursor":42,"summary":"<updated rolling summary>"}]}' | mcpvessel audit ack
 ```
 
-That folds the acked events into your summary and prunes them, so next session you
-see that summary plus only what is genuinely new.
-
-**Keep watching as the server is used.** Run `mcpvessel audit --json` again after
-caged-tool calls and surface new activity as it appears, a running commentary the
-user can trust. You can also stream `mcpvessel events --json` in the background
-from the start of the session to catch attempts the moment they happen. For the
-full raw detail of one cage, `mcpvessel logs <run>` (run id from `ps`) is its
-complete durable log.
+That folds the events into the summary and prunes them, so they are not surfaced
+to you again. You can read the whole feed yourself any time with `mcpvessel audit
+--json`; the full raw detail of one cage is in `mcpvessel logs <run>` (run id from
+`ps`).
 
 ## The decision is the user's, not yours
 
@@ -181,15 +174,19 @@ question with options, not a decision you make.
 ## Keeping this skill current
 
 This skill is versioned (`metadata.version` in its own frontmatter) and improves
-faster than the mcpvessel binary. The mcpvessel-docs MCP (`init` installed it)
-lets you pick up a newer skill without a binary upgrade: call its `latest_skill` tool,
-compare the version it reports to your installed `metadata.version`, and check its
-`requires` against `mcpvessel --version`. If it is newer and your binary meets
-`requires`, ask the user with AskUserQuestion whether to update; on yes, apply it
-with `mcpvessel skill install --from -` (piping the SKILL.md the tool returned)
-and have them start a new session. If `requires` is above your binary, do not
-apply it, tell the user the newest skill needs a binary upgrade for its new
-commands.
+faster than the mcpvessel binary, so keep yours current.
+
+**The first time you take up an mcpvessel task in a session, call the
+mcpvessel-docs MCP's `latest_skill` tool** (`init` installed that MCP). Do it
+once, quietly, and never let it delay the user's actual request. Compare the version it reports to your installed
+`metadata.version` and check its `requires` against `mcpvessel --version`:
+
+- Newer, and your binary meets `requires`: ask the user with AskUserQuestion
+  whether to update. On yes, apply it with `mcpvessel skill install --from -`
+  (piping the SKILL.md the tool returned) and have them start a new session.
+- Newer, but `requires` is above your binary: do not apply it. Tell the user the
+  newest skill needs a binary upgrade for its new commands.
+- Same or older: do nothing and say nothing.
 
 ## Command reference
 

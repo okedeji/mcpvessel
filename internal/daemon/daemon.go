@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -89,6 +90,11 @@ type Daemon struct {
 	// without this refForRun could not key their egress into the ledger. Guarded
 	// by d.mu; set on instance start, cleared on end.
 	instanceRefs map[string]string
+	// egressReadPos tracks how many lines of each serving proxy's log the
+	// on-demand refresh has already folded into the ledger, so a fresh read only
+	// processes new lines. Guarded by egressReadMu.
+	egressReadMu  sync.Mutex
+	egressReadPos map[string]int
 }
 
 // front is one serve front door: an HTTP server, the runs it exposes, and the
@@ -141,7 +147,7 @@ type heldRun struct {
 // New returns a daemon with an empty registry.
 func New() *Daemon {
 	path, _ := ledgerPath()
-	return &Daemon{runs: map[string]*heldRun{}, instanceRefs: map[string]string{}, shutdown: make(chan struct{}), events: newEventBus(), denials: newEgressDenials(), pending: newPendingEgress(), previews: newEgressPreviews(), ledger: newEgressLedger(path)}
+	return &Daemon{runs: map[string]*heldRun{}, instanceRefs: map[string]string{}, egressReadPos: map[string]int{}, shutdown: make(chan struct{}), events: newEventBus(), denials: newEgressDenials(), pending: newPendingEgress(), previews: newEgressPreviews(), ledger: newEgressLedger(path)}
 }
 
 // runLogSink opens the run's durable log and, on the way, records the egress
@@ -182,8 +188,13 @@ func (d *Daemon) setInstanceRef(runID, ref string) {
 
 func (d *Daemon) clearInstanceRef(runID string) {
 	d.mu.Lock()
-	defer d.mu.Unlock()
 	delete(d.instanceRefs, runID)
+	d.mu.Unlock()
+	// Drop the proxy-log read cursor too, so the map does not grow one entry per
+	// run for the daemon's lifetime.
+	d.egressReadMu.Lock()
+	delete(d.egressReadPos, runID)
+	d.egressReadMu.Unlock()
 }
 
 // captureLedgerSample pulls the redacted preview for a held host and attaches it
@@ -198,6 +209,53 @@ func (d *Daemon) captureLedgerSample(runID, host string) {
 			d.ledger.attachSample(ref, host, prev)
 		}
 	}()
+}
+
+// refreshServingLedgers reads each serving instance's proxy log directly and
+// folds any new egress markers into the ledger, so a reader (audit, or the hook)
+// sees an attempt promptly instead of waiting seconds for the buffered log
+// stream to deliver it across the Lima boundary. Best-effort and idempotent:
+// recordOnce means overlap with the stream pump never double-counts, and a proxy
+// that is gone is skipped.
+func (d *Daemon) refreshServingLedgers(ctx context.Context) {
+	d.mu.Lock()
+	insts := make(map[string]string, len(d.instanceRefs))
+	for id, ref := range d.instanceRefs {
+		insts[id] = ref
+	}
+	d.mu.Unlock()
+
+	for runID, ref := range insts {
+		log, ok := runtime.ReadEgressLog(ctx, runID)
+		if !ok {
+			continue
+		}
+		d.feedProxyLog(runID, ref, log)
+	}
+}
+
+// feedProxyLog folds the not-yet-seen lines of one proxy's log into the ledger,
+// tracking a per-run line cursor so each line is processed once. A log that
+// shrank (an unexpected reset) is reprocessed from the top; recordOnce keeps
+// that safe.
+func (d *Daemon) feedProxyLog(runID, ref, log string) {
+	lines := strings.Split(log, "\n")
+	d.egressReadMu.Lock()
+	start := d.egressReadPos[runID]
+	// A shorter log than last read (a partial read, or a reset) is not new
+	// content: reprocessing from the top would re-alert events already surfaced
+	// and pruned, since recordOnce only dedups against unsurfaced ones. Resync
+	// the cursor and process nothing this round.
+	var fresh []string
+	if start <= len(lines) {
+		fresh = lines[start:]
+	}
+	d.egressReadPos[runID] = len(lines)
+	d.egressReadMu.Unlock()
+
+	for _, line := range fresh {
+		recordEgressLineToLedger(d.ledger, ref, line, func(host string) { d.captureLedgerSample(runID, host) })
+	}
 }
 
 func (d *Daemon) hold(info RunInfo, session *runtime.Session) {
@@ -451,6 +509,7 @@ func (d *Daemon) Handler() http.Handler {
 	mux.HandleFunc("POST /runs/{id}/egress/allow", d.handleEgressAllow)
 	mux.HandleFunc("POST /runs/{id}/egress/deny", d.handleEgressDeny)
 	mux.HandleFunc("GET /audit", d.handleAudit)
+	mux.HandleFunc("GET /audit/hook", d.handleAuditHook)
 	mux.HandleFunc("POST /audit/ack", d.handleAuditAck)
 	mux.HandleFunc("GET /events", d.handleEvents)
 	mux.HandleFunc("GET /stats", d.handleStats)

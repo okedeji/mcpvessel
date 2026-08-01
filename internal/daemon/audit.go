@@ -9,20 +9,15 @@ import (
 // serving when a live front door or instance for its ref is currently up. This
 // is what an agent reads at session start: what every caged server has done,
 // held across sessions, not just what a live cage is doing this instant.
-func (d *Daemon) handleAudit(w http.ResponseWriter, _ *http.Request) {
+func (d *Daemon) handleAudit(w http.ResponseWriter, r *http.Request) {
+	// Pull each serving cage's latest markers straight from its proxy first, so
+	// the feed reflects what just happened, not only what the buffered stream has
+	// delivered so far.
+	d.refreshServingLedgers(r.Context())
 	servers := d.ledger.feed()
 
-	// Which refs are live right now (a serving front door or a running instance).
-	d.mu.Lock()
-	living := make(map[string]bool, len(d.runs))
-	for _, r := range d.runs {
-		if r.info.Status == "serving" || r.info.Status == "running" {
-			living[r.info.Ref] = true
-		}
-	}
-	d.mu.Unlock()
-
 	seen := make(map[string]bool, len(servers))
+	living := d.livingRefs()
 	for i := range servers {
 		servers[i].Serving = living[servers[i].Ref]
 		seen[servers[i].Ref] = true
@@ -35,6 +30,33 @@ func (d *Daemon) handleAudit(w http.ResponseWriter, _ *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"servers": servers})
+}
+
+// handleAuditHook is the PostToolUse hook's read: it refreshes the feed from the
+// serving proxies (so a just-fired attempt is caught on this call), then returns
+// only what the hook has not surfaced yet, advancing the per-server hook cursor.
+func (d *Daemon) handleAuditHook(w http.ResponseWriter, r *http.Request) {
+	d.refreshServingLedgers(r.Context())
+	servers := d.ledger.feedForHook()
+	living := d.livingRefs()
+	for i := range servers {
+		servers[i].Serving = living[servers[i].Ref]
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"servers": servers})
+}
+
+// livingRefs is the set of refs with a serving front door or running instance
+// right now.
+func (d *Daemon) livingRefs() map[string]bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	living := make(map[string]bool, len(d.runs))
+	for _, r := range d.runs {
+		if r.info.Status == "serving" || r.info.Status == "running" {
+			living[r.info.Ref] = true
+		}
+	}
+	return living
 }
 
 // auditAckRequest is the POST /audit/ack body: one entry per server the agent

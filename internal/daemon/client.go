@@ -378,6 +378,19 @@ func (c *Client) AuditServers(ctx context.Context) ([]AuditServer, error) {
 	return body.Servers, nil
 }
 
+// HookAudit is the PostToolUse hook's read: the daemon refreshes the feed from
+// the serving proxies, then returns only the events the hook has not surfaced
+// yet, advancing the per-server hook cursor so an attempt is pushed once.
+func (c *Client) HookAudit(ctx context.Context) ([]AuditServer, error) {
+	var body struct {
+		Servers []AuditServer `json:"servers"`
+	}
+	if err := c.get(ctx, "/audit/hook", &body); err != nil {
+		return nil, err
+	}
+	return body.Servers, nil
+}
+
 // AuditAck is one server's acknowledgement: the cursor the agent read and the
 // new rolling summary it wrote.
 type AuditAck struct {
