@@ -67,8 +67,13 @@ func newEgressDenyCmd() *cobra.Command {
 	var agent string
 	cmd := &cobra.Command{
 		Use:   "deny TARGET HOST",
-		Short: "Reject a held host and forget any remembered approval",
-		Args:  cobra.ExactArgs(2),
+		Short: "Reject a host and stop it being held again this run",
+		Long: "Reject a host a caged server is reaching. The host is dropped for the " +
+			"rest of the run: every later attempt on it is refused fast instead of " +
+			"held, so a rejected host never prompts you again. Denying also forgets " +
+			"any remembered approval for the host. The refusals stay in `mcpvessel " +
+			"audit`, but do not re-alert through the agent's watch.",
+		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return decideEgress(cmd, args[0], args[1], agent, false, false, false)
 		},

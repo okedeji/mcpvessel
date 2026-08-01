@@ -63,6 +63,8 @@ They are mutually exclusive. `deny` takes `--agent NAME` the same way, to reject
 
 `deny` releases the hold as a rejection (the call sees the host refused) and removes the host from your config if it was remembered, so a mistaken approval is easy to undo.
 
+Denying also **remembers the rejection for the rest of the run**, the mirror of how approving remembers a grant. Once you deny a host, every later attempt on it is dropped fast, refused without being held again, so a server that keeps reaching for a host you rejected stops re-prompting you on every call. The refusals stay visible in `mcpvessel audit` (as `dropped` events, with a count), so you can still see a server hammering a denied host, but they do not re-alert an agent's watch. A later `egress allow` on the same host lifts the denial and reopens it, so a deny is never permanent. The rejection is per-run, held in the live proxy; it is not written to config, so a fresh run of the same server starts from deny-default again rather than a stored blocklist.
+
 ## Where an approval is remembered
 
 A remembered approval lands in your config, keyed by the tag:

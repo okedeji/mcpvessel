@@ -544,6 +544,86 @@ func TestHandler_RejectsNonConnect(t *testing.T) {
 	}
 }
 
+func TestProxy_DenyDropsWithoutReholding(t *testing.T) {
+	// After the operator denies a host, a later attempt on it is dropped fast:
+	// refused without holding, logged as "dropped" (not held again), and no longer
+	// pending. This is what keeps a denied server from re-prompting on every call.
+	probe := httptest.NewServer(testHandler(Config{}))
+	_, srcIP, pc := connect(t, probe.Listener.Addr().String(), "x:1")
+	_ = pc.Close()
+	probe.Close()
+
+	var events bytes.Buffer
+	p := New(Config{Sources: map[string][]string{srcIP: {}}, Names: map[string]string{srcIP: "fetch"}, NoHold: true}, &events)
+	srv := httptest.NewServer(p.Handler())
+	defer srv.Close()
+
+	// First attempt: served fail-fast holds it pending; the operator denies it.
+	status, _, c := connect(t, srv.Listener.Addr().String(), "evil.test:443")
+	_ = c.Close()
+	if !contains(status, "403") {
+		t.Fatalf("first attempt = %q, want 403", status)
+	}
+	p.decide("", "evil.test", false, false) // operator denies (source-less, served path)
+
+	// Only assert on what the second attempt logs.
+	events.Reset()
+
+	// Second attempt: dropped fast, one "dropped" line, and never held again.
+	status2, _, c2 := connect(t, srv.Listener.Addr().String(), "evil.test:443")
+	_ = c2.Close()
+	if !contains(status2, "403") {
+		t.Fatalf("second attempt = %q, want 403", status2)
+	}
+	log := events.String()
+	if !strings.Contains(log, "egress dropped: evil.test") {
+		t.Errorf("after deny, log = %q, want an 'egress dropped' line", log)
+	}
+	if strings.Contains(log, "egress pending: evil.test") {
+		t.Errorf("after deny, the host was held again: %q", log)
+	}
+	p.mu.Lock()
+	stillPending := p.requests[srcIP]["evil.test"]
+	denied := p.isDeniedLocked(srcIP, "evil.test")
+	p.mu.Unlock()
+	if stillPending {
+		t.Error("a denied host must not stay pending")
+	}
+	if !denied {
+		t.Error("deny was not recorded in the deny-set")
+	}
+}
+
+func TestProxy_AllowLiftsDeny(t *testing.T) {
+	// Deny and allow are mutually exclusive: a later allow overrides an earlier
+	// deny, so a host denied by mistake can be reopened.
+	const src = "10.0.0.5"
+	p := New(Config{Sources: map[string][]string{src: {}}, NoHold: true}, nil)
+
+	p.decide(src, "api.test", false, false) // deny
+	p.mu.Lock()
+	denied := p.isDeniedLocked(src, "api.test")
+	p.mu.Unlock()
+	if !denied {
+		t.Fatal("host was not denied")
+	}
+
+	p.decide(src, "api.test", true, false) // allow lifts the deny
+	p.mu.Lock()
+	stillDenied := p.isDeniedLocked(src, "api.test")
+	allowed := p.runtime[src]["api.test"]
+	p.mu.Unlock()
+	if stillDenied {
+		t.Error("allow did not lift the denial")
+	}
+	if !allowed {
+		t.Error("allow did not open the host")
+	}
+	if !p.await(src, "api.test") {
+		t.Error("host was not admitted after allow")
+	}
+}
+
 func contains(s, sub string) bool {
 	for i := 0; i+len(sub) <= len(s); i++ {
 		if s[i:i+len(sub)] == sub {

@@ -86,9 +86,12 @@ func (d *Daemon) egressDecision(w http.ResponseWriter, r *http.Request, allow bo
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
-	if allow {
-		d.pending.remove(id, req.Host)
-	}
+	// Either decision resolves the hold, so the host is no longer pending or
+	// previewable. A denied served host had no waiter to clear it via a log line
+	// (the proxy emits none on a source-less deny), so clear it here too; without
+	// this it lingered in `egress ls` though it was already rejected.
+	d.pending.remove(id, req.Host)
+	d.previews.remove(id, req.Host)
 	w.WriteHeader(http.StatusNoContent)
 }
 

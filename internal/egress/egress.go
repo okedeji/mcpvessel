@@ -98,15 +98,24 @@ type Proxy struct {
 	// approved for every cage with `egress allow --all`. Written only on that
 	// explicit choice, never automatically, so the default stays per-source.
 	runtimeAll map[string]bool
-	requests   map[string]map[string]bool // src -> host: currently pending a decision
-	holds      map[string][]*waiter       // host -> CONNECTs parked on a decision
-	held       map[string]int             // src -> concurrent held CONNECTs (cap gate)
-	names      map[string]string          // src -> agent label
-	logged     map[string]bool            // dedup for allowed/denied lines
-	events     io.Writer
-	deadline   time.Duration
-	maxPer     int  // per-source cap on holds and distinct pending hosts
-	noHold     bool // served: fail fast instead of parking the call
+	// denied is the per-source deny-set: hosts the operator explicitly rejected.
+	// A denied host is dropped fast on every later attempt instead of being held
+	// again, so a rejected host stops re-prompting the operator for the life of
+	// the run. Symmetric with runtime (allow): deny persists just as allow does,
+	// and the two are mutually exclusive (denying forgets a live approval, and a
+	// later allow lifts the denial). deniedAll is its run-wide counterpart, the
+	// mirror of runtimeAll, set only by `egress deny --all`.
+	denied    map[string]map[string]bool
+	deniedAll map[string]bool
+	requests  map[string]map[string]bool // src -> host: currently pending a decision
+	holds     map[string][]*waiter       // host -> CONNECTs parked on a decision
+	held      map[string]int             // src -> concurrent held CONNECTs (cap gate)
+	names     map[string]string          // src -> agent label
+	logged    map[string]bool            // dedup for allowed/denied lines
+	events    io.Writer
+	deadline  time.Duration
+	maxPer    int  // per-source cap on holds and distinct pending hosts
+	noHold    bool // served: fail fast instead of parking the call
 	// insp, when set, terminates each approved connection's TLS to capture it,
 	// re-encrypting to the verified upstream. Nil leaves the proxy a pure
 	// pass-through tunnel, the default that never decrypts.
@@ -144,6 +153,8 @@ func New(cfg Config, events io.Writer) *Proxy {
 		static:      static,
 		runtime:     map[string]map[string]bool{},
 		runtimeAll:  map[string]bool{},
+		denied:      map[string]map[string]bool{},
+		deniedAll:   map[string]bool{},
 		requests:    map[string]map[string]bool{},
 		holds:       map[string][]*waiter{},
 		held:        map[string]int{},
@@ -192,6 +203,15 @@ func (p *Proxy) Handler() http.Handler {
 			http.Error(w, "malformed egress host", http.StatusBadRequest)
 			return
 		}
+		// A host the operator already denied is refused outright, before any hold or
+		// preview: it does not re-enter the approval flow, so it never prompts the
+		// operator again. Checked ahead of the allow-set so an explicit deny wins
+		// over a baked or approved allow. One secret-safe "dropped" line records the
+		// refusal for the audit feed; the PostToolUse hook ignores that kind, so a
+		// denied host that keeps trying no longer nags on every call.
+		if p.dropIfDenied(w, src, host) {
+			return
+		}
 		// Under inspection, a not-yet-approved host is not held at the bare CONNECT.
 		// Instead the request is captured and shown to the operator before the
 		// decision (previewConn), so what a cage is about to send is what is
@@ -225,6 +245,42 @@ func (p *Proxy) isAllowed(src, host string) (allowed, known bool) {
 		return false, false
 	}
 	return srcSet[host] || p.runtime[src][host] || p.runtimeAll[host], true
+}
+
+// isDeniedLocked reports whether the operator has denied host for src (per source
+// or run-wide). Caller holds p.mu.
+func (p *Proxy) isDeniedLocked(src, host string) bool {
+	return p.deniedAll[host] || p.denied[src][host]
+}
+
+// dropIfDenied refuses a CONNECT to a host the operator has denied, without
+// holding or previewing it, and reports whether it handled the request. It
+// records one secret-safe "dropped" line so the refusal reaches the durable
+// audit feed (the hook ignores that kind), then fails the CONNECT closed.
+func (p *Proxy) dropIfDenied(w http.ResponseWriter, src, host string) bool {
+	p.mu.Lock()
+	denied := p.isDeniedLocked(src, host)
+	p.mu.Unlock()
+	if !denied {
+		return false
+	}
+	p.mark("dropped", src, host)
+	http.Error(w, "egress to "+host+" denied", http.StatusForbidden)
+	return true
+}
+
+// denyLocked records host as denied for src and lifts any live approval, so the
+// allow and deny sets stay mutually exclusive. Caller holds p.mu.
+func (p *Proxy) denyLocked(src, host string) {
+	set := p.denied[src]
+	if set == nil {
+		set = map[string]bool{}
+		p.denied[src] = set
+	}
+	set[host] = true
+	if p.runtime[src] != nil {
+		delete(p.runtime[src], host)
+	}
 }
 
 // previewConn terminates a not-yet-approved connection's TLS, captures the
@@ -558,6 +614,9 @@ func (p *Proxy) decide(src, host string, allow, all bool) {
 		// source. Only ever reached via `egress allow --all`.
 		if allow {
 			p.runtimeAll[host] = true
+			delete(p.deniedAll, host)
+		} else {
+			p.deniedAll[host] = true
 		}
 		released = p.holds[host]
 		delete(p.holds, host)
@@ -568,10 +627,16 @@ func (p *Proxy) decide(src, host string, allow, all bool) {
 			}
 		}
 	} else if src == "" {
-		if allow {
-			for s := range p.requests {
-				if p.requests[s][host] {
+		// No source on the control call (the run-control exec carries only the
+		// host): resolve for exactly the sources that requested this host. Approve
+		// or deny each, so a served run's deny (which arrives source-less) persists
+		// as a real per-source denial and stops re-holding.
+		for s := range p.requests {
+			if p.requests[s][host] {
+				if allow {
 					p.approveLocked(s, host)
+				} else {
+					p.denyLocked(s, host)
 				}
 			}
 		}
@@ -586,6 +651,8 @@ func (p *Proxy) decide(src, host string, allow, all bool) {
 	} else {
 		if allow {
 			p.approveLocked(src, host)
+		} else {
+			p.denyLocked(src, host)
 		}
 		kept := p.holds[host][:0]
 		for _, w := range p.holds[host] {
@@ -619,7 +686,8 @@ func (p *Proxy) decide(src, host string, allow, all bool) {
 	}
 }
 
-// approveLocked joins host to src's runtime allow-set. Caller holds p.mu.
+// approveLocked joins host to src's runtime allow-set and lifts any prior denial
+// for it, so a later allow overrides an earlier deny. Caller holds p.mu.
 func (p *Proxy) approveLocked(src, host string) {
 	set := p.runtime[src]
 	if set == nil {
@@ -627,6 +695,9 @@ func (p *Proxy) approveLocked(src, host string) {
 		p.runtime[src] = set
 	}
 	set[host] = true
+	if p.denied[src] != nil {
+		delete(p.denied[src], host)
+	}
 }
 
 // noteRequestLocked records host as pending for src, so a later approval can be
@@ -774,6 +845,11 @@ func (p *Proxy) mark(kind, src, host string) {
 	switch kind {
 	case "allowed":
 		_, _ = fmt.Fprintf(p.events, "egress allowed: %s (agent %s)\n", host, name)
+	case "dropped":
+		// A host the operator already denied, refused again without re-holding. The
+		// durable feed counts it and the operator sees it; the PostToolUse hook
+		// skips this kind, so a denied host that keeps trying does not re-nag.
+		_, _ = fmt.Fprintf(p.events, "egress dropped: %s (agent %s)\n", host, name)
 	default:
 		_, _ = fmt.Fprintf(p.events, "egress denied: %s (agent %s). Approve it for this agent with 'mcpvessel egress allow' (add --all to grant every agent in the run), or bake it into the Vesselfile with EGRESS allow:%s\n", host, name, host)
 	}

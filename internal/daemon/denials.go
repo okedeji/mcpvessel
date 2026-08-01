@@ -262,6 +262,10 @@ func recordEgressLineToLedger(led *egressLedger, ref, line string, sample func(h
 		led.recordOnce(ref, ledgerApproved, host, "")
 		return
 	}
+	if host, ok := parseEgressHost(line, "egress dropped: "); ok {
+		led.recordOnce(ref, ledgerDropped, host, "")
+		return
+	}
 	if host, ok := parseEgressHost(line, "egress secret: "); ok {
 		led.recordOnce(ref, ledgerSecret, host, markerTailAfterAgent(line))
 		return
@@ -324,6 +328,16 @@ func (s *denialScanSink) scan(line string) {
 			s.sample(host)
 		}
 		s.publish(Event{Type: EventEgressPreview, RunID: s.runID, Target: host, Detail: egressMarkerDetail(line, "egress preview: ")})
+		return
+	}
+	if host, ok := parseEgressHost(line, "egress dropped: "); ok {
+		// A host the operator already denied, refused again without re-holding. It
+		// stays a blocked host (so a served tool error still names it), and the
+		// durable feed records it as its own kind that the hook skips. It is never
+		// pending or previewable, so the live stores are deliberately untouched.
+		s.ledgerRecord(ledgerDropped, host, "")
+		s.den.record(s.runID, host)
+		s.publish(Event{Type: EventEgressDenied, RunID: s.runID, Target: host})
 		return
 	}
 	if host, ok := parseEgressHost(line, "egress pending: "); ok {

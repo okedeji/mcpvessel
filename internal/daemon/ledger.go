@@ -55,6 +55,7 @@ const (
 	ledgerHeld     = "held"     // a host held for approval (a new-host decision)
 	ledgerApproved = "approved" // a host that was approved, resolving a hold
 	ledgerSecret   = "secret"   // a granted secret was detected leaving toward a host
+	ledgerDropped  = "dropped"  // an already-denied host, refused again without re-holding
 )
 
 // serverLedger is one server's stored feed: the rolling agent-written summary of
@@ -229,17 +230,29 @@ func (l *egressLedger) feedForHook() []AuditServer {
 			floor = s.HookCursor
 		}
 		var fresh []AuditEvent
+		anyPast := false
 		for _, e := range s.Events {
 			if e.Seq > floor {
-				fresh = append(fresh, e)
+				anyPast = true
+				// A dropped event is a host the operator already denied, refused
+				// again. It belongs in the operator feed (feed) but must never
+				// interrupt via the hook, or a denied host that keeps trying would
+				// re-nag on every caged call, the exact noise deny exists to end.
+				if e.Kind != ledgerDropped {
+					fresh = append(fresh, e)
+				}
 			}
 		}
-		if len(fresh) == 0 {
+		if !anyPast {
 			continue
 		}
+		// Advance past everything considered (dropped included), so skipped drops
+		// are not re-examined and never later surface.
 		s.HookCursor = l.maxSeqLocked(s)
 		changed = true
-		out = append(out, AuditServer{Ref: s.Ref, Events: fresh})
+		if len(fresh) > 0 {
+			out = append(out, AuditServer{Ref: s.Ref, Events: fresh})
+		}
 	}
 	if changed {
 		l.save()

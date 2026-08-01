@@ -61,3 +61,44 @@ func TestLedger_RecordDedupeFeedAckPrune(t *testing.T) {
 		t.Fatalf("reloaded feed = %+v, want summary + 1 event", feed)
 	}
 }
+
+func TestFeedForHook_SkipsDropped(t *testing.T) {
+	l := newEgressLedger(filepath.Join(t.TempDir(), "egress-ledger.json"))
+	l.record("@me/notes:0.1", ledgerHeld, "api.github.com", "")
+	l.record("@me/notes:0.1", ledgerDropped, "exfil.attacker.net", "")
+
+	// The hook surfaces the held host but never a dropped one, so a denied host
+	// that keeps trying does not re-alert on every caged call.
+	hook := l.feedForHook()
+	if len(hook) != 1 {
+		t.Fatalf("hook servers = %d, want 1", len(hook))
+	}
+	kinds := map[string]bool{}
+	for _, e := range hook[0].Events {
+		kinds[e.Kind] = true
+	}
+	if !kinds[ledgerHeld] {
+		t.Error("held event should surface to the hook")
+	}
+	if kinds[ledgerDropped] {
+		t.Error("dropped event must not surface to the hook")
+	}
+
+	// The operator feed still shows the dropped host, so the refusal stays
+	// visible in `mcpvessel audit`; it simply does not interrupt.
+	feed := l.feed()
+	opKinds := map[string]bool{}
+	for _, e := range feed[0].Events {
+		opKinds[e.Kind] = true
+	}
+	if !opKinds[ledgerDropped] {
+		t.Error("dropped event should appear in the operator feed")
+	}
+
+	// A dropped-only window advances the hook cursor and never surfaces: a second
+	// hook read after another drop returns nothing.
+	l.record("@me/notes:0.1", ledgerDropped, "exfil.attacker.net", "")
+	if got := l.feedForHook(); len(got) != 0 {
+		t.Errorf("second hook read = %+v, want nothing (only a dropped event was added)", got)
+	}
+}

@@ -2,7 +2,7 @@
 name: mcpvessel
 description: Cage, run, and audit MCP servers with mcpvessel. Use whenever the user wants to add, install, try, or run an MCP server in Claude Code, or to check what a caged server is doing with the network and their secrets. Drive the mcpvessel CLI to cage a server, serve it to Claude Code, and inspect what it sends before anything is approved.
 metadata:
-  version: "3"
+  version: "4"
   requires: "0.1.4"
 ---
 
@@ -64,8 +64,12 @@ which serve command you use changes.
      except `7333`, which the caged docs server holds):
      `mcpvessel serve --listen 127.0.0.1:<port> --egress-inspect @you/<name>:0.1`
    - Each **later** server (import it first, in step 1) merges into that same
-     door:
-     `mcpvessel serve add --egress-inspect @you/<later>:0.1`
+     door. Pass the **same** `--listen 127.0.0.1:<port>` you opened above, so
+     `serve add` knows which door to join:
+     `mcpvessel serve add --listen 127.0.0.1:<port> --egress-inspect @you/<later>:0.1`
+     (the caged docs server holds its own door on 7333, so more than one door is
+     always running; without `--listen`, `serve add` cannot tell which you mean
+     and stops.)
    Leave egress deny-default: do not pass `--egress` hosts unless the user named
    them. To drop one: `mcpvessel serve rm <ref>`.
 3. Get the endpoint, once, on the first serve: `mcpvessel ps --json`, then read
@@ -194,8 +198,9 @@ once, quietly, and never let it delay the user's actual request. Compare the ver
 - `mcpvessel import <source> -t <ref> --json` — cage a server.
 - `mcpvessel serve --listen 127.0.0.1:<port> --egress-inspect <ref>` — open the
   front door for the first server (background; inspect to see payloads).
-- `mcpvessel serve add --egress-inspect <ref>` — merge another server into the
-  same endpoint (start a new Claude Code session to pick it up).
+- `mcpvessel serve add --listen 127.0.0.1:<port> --egress-inspect <ref>` — merge
+  another server into the door you opened, named by its port (start a new Claude
+  Code session to pick it up).
 - `mcpvessel serve rm <ref>` — drop a server from the endpoint.
 - `mcpvessel ps --json` — run state; a `serving` run carries its `endpoint`.
 - `mcpvessel audit --json` — the durable per-server feed: summary + new events (with request samples) + cursor.

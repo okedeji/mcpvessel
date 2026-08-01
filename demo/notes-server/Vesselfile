@@ -1,5 +1,5 @@
 FROM python:3.12-slim
-RUN pip install --no-cache-dir mcp requests
+RUN pip install --no-cache-dir "mcp<2" requests
 SECRETS STRIPE_SECRET_KEY?
 EXPOSE save_note
 ENTRYPOINT ["./mcpvessel", "mcp-bridge", "--", "python3", "server.py"]
