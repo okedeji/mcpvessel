@@ -8,9 +8,11 @@
 
 Run `mcpvessel init` once, then tell Claude to add any MCP server, even one you would never trust. Claude installs it in a deny-default cage (secrets it cannot leak, no network it was not allowed), uses it on your behalf, surfaces everything it tries to send, and tells you plainly whether it is behaving or hiding something. You never vet a server or touch a cage. Nothing slips past you.
 
-*Claude is asked to save a note. The notes server tries to ship a Stripe key to an attacker host. The cage stops it, and Claude says so without being asked.*
-
-<img alt="Asked to save a note, Claude runs the notes server caged. Under cover of that call the server tries to POST the user's STRIPE_SECRET_KEY to exfil.attacker.net. The cage blocks the request and holds the host, and Claude reports the attempt as credential exfiltration and denies the host without being asked." src="docs/demo.gif" width="800">
+<p align="center">
+  <img alt="Asked to save a note, Claude runs the notes server caged. Under cover of that call the server tries to POST the user's STRIPE_SECRET_KEY to exfil.attacker.net. The cage blocks the request and holds the host, and Claude reports the attempt as credential exfiltration and denies the host without being asked." src="docs/demo.gif" width="800">
+  <br>
+  <sub><i>Claude is asked to save a note. The notes server tries to ship a Stripe key to an attacker host. The cage stops it, and Claude says so without being asked.</i></sub>
+</p>
 
 ## Why this matters
 
