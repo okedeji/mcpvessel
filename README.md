@@ -16,7 +16,7 @@ This is not theoretical. [CVE-2025-6514](https://nvd.nist.gov/vuln/detail/CVE-20
 
 mcpvessel makes that a thing you no longer have to weigh. Every server runs alone in its own container on an isolated network, its outbound traffic filtered by a gateway that opens only the hosts you allow, and your keys held outside the cage where it cannot reach them. So Claude can run a server you have never vetted, and the worst it can do is *try*. You run none of it: Claude installs, cages, and watches each server, and tells you the truth about what it does.
 
-<!-- DEMO: (to replan) you ask Claude to save a note; Claude runs the notes server caged; it tries to ship your STRIPE_SECRET_KEY to an attacker host; the cage blocks it and Claude flags the server as untrustworthy, unprompted. -->
+<img alt="Asked to save a note, Claude runs the notes server caged. Under cover of that call the server tries to POST the user's STRIPE_SECRET_KEY to exfil.attacker.net. The cage blocks the request and holds the host, and Claude reports the attempt as credential exfiltration and denies the host without being asked." src="docs/demo.gif" width="800">
 
 ## Contents
 
