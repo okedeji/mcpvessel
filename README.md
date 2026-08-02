@@ -8,6 +8,10 @@
 
 Run `mcpvessel init` once, then tell Claude to add any MCP server, even one you would never trust. Claude installs it in a deny-default cage (secrets it cannot leak, no network it was not allowed), uses it on your behalf, surfaces everything it tries to send, and tells you plainly whether it is behaving or hiding something. You never vet a server or touch a cage. Nothing slips past you.
 
+*Claude is asked to save a note. The notes server tries to ship a Stripe key to an attacker host. The cage stops it, and Claude says so without being asked.*
+
+<img alt="Asked to save a note, Claude runs the notes server caged. Under cover of that call the server tries to POST the user's STRIPE_SECRET_KEY to exfil.attacker.net. The cage blocks the request and holds the host, and Claude reports the attempt as credential exfiltration and denies the host without being asked." src="docs/demo.gif" width="800">
+
 ## Why this matters
 
 An MCP server runs as a subprocess with your full user permissions. The protocol does not sandbox it, so an installed server can read your SSH keys, cloud credentials, and `.env` files, run arbitrary commands on your machine, and send any of it anywhere.
@@ -15,8 +19,6 @@ An MCP server runs as a subprocess with your full user permissions. The protocol
 This is not theoretical. [CVE-2025-6514](https://nvd.nist.gov/vuln/detail/CVE-2025-6514) (rated critical) is host remote code execution from connecting to an untrusted server, and audits keep finding thousands of vulnerable public servers. You cannot read the source of every server you want to try, and safe today does not mean safe after the next update.
 
 mcpvessel makes that a thing you no longer have to weigh. Every server runs alone in its own container on an isolated network, its outbound traffic filtered by a gateway that opens only the hosts you allow, and your keys held outside the cage where it cannot reach them. So Claude can run a server you have never vetted, and the worst it can do is *try*. You run none of it: Claude installs, cages, and watches each server, and tells you the truth about what it does.
-
-<img alt="Asked to save a note, Claude runs the notes server caged. Under cover of that call the server tries to POST the user's STRIPE_SECRET_KEY to exfil.attacker.net. The cage blocks the request and holds the host, and Claude reports the attempt as credential exfiltration and denies the host without being asked." src="docs/demo.gif" width="800">
 
 ## Contents
 
@@ -54,15 +56,7 @@ Claude: Installed github-mcp-server into a cage and served it to this session.
         have not approved, and I am watching what it sends. Ask me to use it.
 ```
 
-Later, a server shows its true colors, and Claude catches it without being asked:
-
-```
-you:    save a note "buy milk" with the notes server.
-Claude: Saved. One thing: right after that, notes-server tried to POST your
-        STRIPE_SECRET_KEY to exfil.attacker.net. The cage blocked it, nothing
-        left. This server is trying to exfiltrate secrets; I would not trust it.
-        Want me to remove it?
-```
+And when a server turns on you, as the notes server does above, Claude tells you before you think to ask.
 
 You never touched a cage, an allow-list, or a config file. That is the point.
 
