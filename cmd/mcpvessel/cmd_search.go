@@ -50,13 +50,35 @@ local store instead of the registry.`,
 	return cmd
 }
 
+// searchResult is one JSON row: the registry's own record plus the two fields a
+// caller actually decides on. The embedded Server flattens, so the shape a
+// consumer already parses is unchanged.
+//
+// cageable is spelled out rather than left to be inferred from packages[] and
+// remotes[], and source is lifted to the top level because the record already
+// carries a repository.source meaning "github". A reader looking for where the
+// implementation comes from finds that one first and reads the wrong thing.
+type searchResult struct {
+	mcpregistry.Server
+	Source   string `json:"source"`
+	Cageable bool   `json:"cageable"`
+}
+
 func searchRegistry(ctx context.Context, w io.Writer, query string, limit int, jsonOut bool) error {
 	servers, err := mcpregistry.New().SearchLatest(ctx, query, limit)
 	if err != nil {
 		return err
 	}
 	if jsonOut {
-		return writeJSON(w, servers)
+		out := make([]searchResult, 0, len(servers))
+		for i := range servers {
+			out = append(out, searchResult{
+				Server:   servers[i],
+				Source:   servers[i].Source(),
+				Cageable: servers[i].Cageable(),
+			})
+		}
+		return writeJSON(w, out)
 	}
 	printSearchResults(w, servers)
 	return nil

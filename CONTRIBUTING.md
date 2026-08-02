@@ -54,6 +54,95 @@ seconds. `scripts/devvm.sh help` lists everything. Override the location with
   pattern.
 - Add or update tests for behavior you change.
 
+## Cutting a release
+
+Three things in this repo are versioned independently, because they move at
+different speeds and answer different questions:
+
+| What | Version lives in | Released by |
+| --- | --- | --- |
+| The CLI binary | a `vX.Y.Z` git tag | pushing that tag |
+| The skill | `metadata.version` in `internal/clientskill/skills/<client>/SKILL.md` | merging to the default branch |
+| The docs MCP server | a `docs-mcp-v*` git tag | pushing that tag |
+
+Getting the relationship between them wrong is the easiest mistake here, so the
+rules are spelled out below.
+
+### The CLI binary
+
+```sh
+make ci                      # must be green
+git push                     # main first: the tag builds from what is on main
+git tag vX.Y.Z && git push origin vX.Y.Z
+```
+
+The tag triggers `.github/workflows/release.yml`, which runs goreleaser. It
+builds the archives, creates a **draft** GitHub release for you to review, and
+pushes the updated cask to `okedeji/homebrew-tap`. The cask push happens on the
+tag, not when you publish the draft, and only for a non-prerelease tag (one
+without a `-`, so `v0.2.0-rc.1` builds a draft without touching the cask).
+Review the archives, then publish the draft.
+
+Sub-1.0, treat a minor bump as "new capability" and a patch as "fixes". The
+number is user-facing.
+
+Note the Makefile derives the stamped version with `git describe --match 'v*'`.
+The `--match` is load-bearing: this repo carries `docs-mcp-v*` tags too, and
+without it a local build stamps itself with whichever series was tagged last.
+
+### The skill, and its `requires`
+
+The skill improves faster than the binary and ships to users through the docs
+server's `latest_skill` tool, which serves **whatever is on the default branch
+right now**. So merging a skill change releases it. There is no tag and no docs
+release needed for a skill edit alone.
+
+Two fields in its frontmatter, and both matter:
+
+- **`version`**: bump on every change, or no installed skill will pick it up.
+  An agent compares this against its own copy and only updates when yours is
+  higher.
+- **`requires`**: the minimum CLI version the skill needs. **Bump this the
+  moment the skill starts telling an agent to use behavior that does not exist
+  in the released binary yet**, then set it to the version you are about to cut.
+
+That second rule is the one that bites. A skill instructing an agent to read a
+field, pass a flag, or run a subcommand that its binary does not have produces
+confident nonsense: the agent follows the instruction, gets nothing back, and
+reports something untrue. An agent whose binary is below `requires` declines the
+update and tells the user a binary upgrade is what unlocks it, which is the
+outcome you want. Leaving `requires` stale removes that protection.
+
+So a change that touches both code and skill lands in this order: make the code
+change, set `requires` to the version you are cutting, merge, then tag that
+version. The skill is briefly ahead of every released binary, which is exactly
+what `requires` exists to express.
+
+### The docs MCP server
+
+```sh
+git tag docs-mcp-v0.1.3 && git push origin docs-mcp-v0.1.3
+```
+
+`.github/workflows/docs-mcp.yml` builds it, signs it, pushes it to GHCR, and
+registers it in the MCP Registry. Three things to know:
+
+- **Bump the version, always.** The MCP Registry is immutable per version and
+  refuses to re-register one it already holds. There is no republishing, only
+  superseding.
+- **Check the signing key in the run log.** The `Signed: key <fingerprint>` line
+  must match the project's stable key. mcpvessel pins a publisher's key on first
+  pull, so signing a release with a different key breaks verification for
+  everyone who already pulled, and the fix is not to tell them to run
+  `trust rm`, it is to correct the key and cut another version.
+- **A push to `main` touching `tools/docs-mcp/**` publishes the moving `:edge`
+  tag only.** Path filters are not evaluated for tag pushes, so a `docs-mcp-v*`
+  tag releases from any commit.
+
+The binary does not pin a docs version. It resolves the registry name to
+whatever is current, so publishing a new one reaches existing installs with no
+CLI release.
+
 ## House style
 
 A few conventions the codebase holds to. New code should match:

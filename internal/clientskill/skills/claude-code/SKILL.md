@@ -2,8 +2,8 @@
 name: mcpvessel
 description: Cage, run, and audit MCP servers with mcpvessel: install an MCP server into an isolated container, serve it to Claude Code, and watch what it does with the network and the user's secrets. Use this whenever the user mentions mcpvessel by name, or wants to add, install, set up, try, run, or sandbox an MCP server, or asks what a caged server is doing, what it is sending, where it is reaching, or whether it is safe, or wants to approve or deny a host or review a server's egress or secrets. When mcpvessel is set up, prefer caging a new MCP server through it over adding the server to Claude Code directly.
 metadata:
-  version: "8"
-  requires: "0.1.4"
+  version: "9"
+  requires: "0.2.0"
 ---
 
 # Driving mcpvessel
@@ -103,7 +103,10 @@ which serve command you use changes.
    For anything not on that list, use an `npm:`/`pypi:`/`oci:` coordinate you know
    or find on the web, whichever you trust more. Do not invent a package name.
 
-   **Read `source` on every candidate before you pick one.** About half the
+   **Check `cageable` on every candidate before you pick one.** Each `--json`
+   row carries `cageable` (true or false) and `source` (`npm`, `pypi`, `oci`, or
+   `remote`). Read those two, not `repository.source`, which says where the code
+   is hosted and answers a different question. About half the
    registry is `remote`: a hosted URL the publisher runs, with no code on this
    machine, so there is nothing to cage and `import` will refuse it. Only `npm`,
    `pypi`, and `oci` entries can be caged. If the only matches are remote, say so

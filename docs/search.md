@@ -66,7 +66,7 @@ Because the filter matches on the reference string, an untagged bundle (empty re
 
 `--json` replaces the table with indented JSON on stdout, for scripts and pipelines.
 
-- Registry: an array of server records in the registry's `server.json` v0.1 shape (`name`, `description`, `version`, `packages`, `_meta`, and the rest). The eval stamp rides inside `_meta`, under the publisher-provided slot, not as a top-level `evals` field, so a consumer reads it there rather than from a rendered `EVALS` string.
+- Registry: an array of server records in the registry's `server.json` v0.1 shape (`name`, `description`, `version`, `packages`, `_meta`, and the rest), each with two fields mcpvessel adds: `source` (`npm`, `pypi`, `oci`, `npm+pypi`, or `remote`) and `cageable` (a boolean). Read those to decide whether an entry can be caged. Do **not** read `repository.source`, which is part of the registry's own record and says where the code is hosted (`github`), a different question with a confusingly similar name. The eval stamp rides inside `_meta`, under the publisher-provided slot, not as a top-level `evals` field, so a consumer reads it there rather than from a rendered `EVALS` string.
 - Local: an array of store entries, each with `Ref`, `Hash`, and `Size`.
 
 No results is an empty JSON array in both modes, and an empty table (header only) without `--json`.
