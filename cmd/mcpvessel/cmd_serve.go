@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -176,6 +177,12 @@ session, or re-add the same URL) to pick up the new tools.
 				if err := applyConfigSecrets(secretPool, targets[i].Ref, cmd.ErrOrStderr()); err != nil {
 					return err
 				}
+			}
+			// Before the build, not after: a wrong --listen used to spend a full
+			// image build before failing, and the failure arrived as a wall of
+			// build output with the actual problem nowhere in it.
+			if err := requireOpenDoor(cmd.Context(), client, listen); err != nil {
+				return err
 			}
 			policies, err := prebuildServeImages(cmd.Context(), cmd.ErrOrStderr(), targets, expose, noExpose)
 			if err != nil {
@@ -422,6 +429,40 @@ func resolveServeTarget(ctx context.Context, stderr io.Writer, arg string) (daem
 	return daemon.ServeTarget{Ref: hash, Name: name}, nil
 }
 
+// requireOpenDoor fails 'serve add' when no front door is listening on listen,
+// naming the doors that are open. Without it the command builds first and fails
+// afterwards, so the operator reads a build log for a mistake in a flag.
+func requireOpenDoor(ctx context.Context, client *daemon.Client, listen string) error {
+	runs, err := client.ListRuns(ctx)
+	if err != nil {
+		return nil // the daemon answers for itself on the real call
+	}
+	var open []string
+	for _, r := range runs {
+		if r.Status != "serving" || r.Endpoint == "" {
+			continue
+		}
+		addr := strings.TrimSuffix(strings.TrimPrefix(r.Endpoint, "http://"), serveFlatPath())
+		if addr == listen {
+			return nil
+		}
+		if !slices.Contains(open, addr) {
+			open = append(open, addr)
+		}
+	}
+	if len(open) == 0 {
+		return fmt.Errorf("no front door is open on %s, and none is open anywhere; open one with 'mcpvessel serve --listen %s <bundle>' instead of 'serve add'", listen, listen)
+	}
+	return fmt.Errorf("no front door is open on %s. Open doors: %s. Pass --listen with one of those to join it, or use 'mcpvessel serve' to open a new one", listen, strings.Join(open, ", "))
+}
+
+// unchangedByThisCommand marks an agent already on the door when this command
+// ran. Its egress and secrets are whatever the command that served it set, and
+// this process has no way to read them back, so the report says it does not
+// know rather than reporting an absence it did not verify. Understating a cage's
+// reach is the dangerous direction to be wrong in.
+const unchangedByThisCommand = "already serving; egress and secrets unchanged by this command"
+
 // printServeReport renders the serve boot report: the URL to paste into an
 // MCP client first, then each agent's effective egress and secret grants,
 // then the REST surface. One served agent collapses to a single endpoint;
@@ -464,18 +505,33 @@ func printServeReport(out io.Writer, res daemon.ServeResult, policies map[string
 	// The effective allowlist per agent, baked hosts included: a pulled
 	// bundle's author-declared egress applies with no flag, so this is where
 	// the operator sees it before any traffic flows.
+	//
+	// policies only covers the bundles this command named, while res.Agents is
+	// every agent on the door. On 'serve add' the difference is the ones already
+	// serving, whose policy this process never loaded: they are marked as
+	// untouched rather than rendered from a zero value, which would print
+	// "none preset" and "none declared" over a server that has neither.
 	_, _ = fmt.Fprintln(out)
 	_, _ = fmt.Fprintln(out, "Egress:")
 	for _, a := range res.Agents {
+		pol, known := policies[a.Address]
+		if !known {
+			_, _ = fmt.Fprintf(out, "  %s: %s\n", a.Address, unchangedByThisCommand)
+			continue
+		}
 		_, _ = fmt.Fprintf(out, "  %s: %s\n", a.Address,
-			formatEgress(egress.AllowHosts(policies[a.Address].Egress), egress.HostsFor(scoped, a.Address)))
+			formatEgress(egress.AllowHosts(pol.Egress), egress.HostsFor(scoped, a.Address)))
 	}
 	// And which declared secrets each agent will actually receive: a
 	// broadcast --secret reaches every agent declaring its name, agent:NAME
 	// pins it to one.
 	_, _ = fmt.Fprintln(out, "Secrets:")
 	for _, a := range res.Agents {
-		pol := policies[a.Address]
+		pol, known := policies[a.Address]
+		if !known {
+			_, _ = fmt.Fprintf(out, "  %s: %s\n", a.Address, unchangedByThisCommand)
+			continue
+		}
 		_, _ = fmt.Fprintf(out, "  %s: %s\n", a.Address,
 			formatSecretGrants(pol.Secrets, pol.Optional, secretPool.For(a.Address)))
 	}

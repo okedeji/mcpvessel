@@ -97,6 +97,22 @@ func (e *pendingEgress) add(runID, host string) bool {
 	return true
 }
 
+// hosts returns the hosts this run is currently held on, sorted.
+func (e *pendingEgress) hosts(runID string) []string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	set := e.byRun[runID]
+	if len(set) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(set))
+	for h := range set {
+		out = append(out, h)
+	}
+	sort.Strings(out)
+	return out
+}
+
 func (e *pendingEgress) remove(runID, host string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -429,6 +445,30 @@ func parseEgressHost(line, marker string) (string, bool) {
 
 // enrichEgressError appends the cage's blocked hosts to a tool error, so the
 // caller learns the failure was the cage denying egress and how to allow it.
+// egressHoldNote appends the held-host warning to a *successful* tool result.
+//
+// A caged server hits the proxy's refusal as an ordinary HTTP error, and most
+// servers turn that into their own message: "returned HTTP 403", reported as a
+// successful call. Nothing in that result says a cage was involved, so the
+// client concludes the upstream API rejected it and starts debugging the wrong
+// thing. enrichEgressError cannot help, because there is no error to enrich.
+// The daemon knows what the run is held on, so it says so in-band, for any
+// client, with no cooperation from the server required.
+func egressHoldNote(result, runID string, hosts []string) string {
+	if len(hosts) == 0 {
+		return result
+	}
+	host := hosts[0]
+	return result + fmt.Sprintf(
+		"\n\n[mcpvessel] This server is being held on %s, which nobody has approved, "+
+			"so any part of this call that needed it did not happen. Whatever the server "+
+			"reported about that host came from the cage refusing it, not from the host itself.\n"+
+			"To allow it, choose one:\n"+
+			"  this run only:            mcpvessel egress allow %s %s --once\n"+
+			"  remember for future runs: mcpvessel egress allow %s %s",
+		strings.Join(hosts, ", "), runID, host, runID, host)
+}
+
 func enrichEgressError(err error, runID string, hosts []string) error {
 	if err == nil || len(hosts) == 0 {
 		return err

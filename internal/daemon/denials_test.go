@@ -110,3 +110,51 @@ func TestEnrichEgressError(t *testing.T) {
 		t.Error("nil error should stay nil")
 	}
 }
+
+// A caged server that catches the proxy's refusal returns its own message on a
+// successful call, so nothing in the result says a cage was involved. The
+// daemon knows the run is held and says so in-band, without the server's help.
+func TestEgressHoldNote_AnnotatesASuccessfulResult(t *testing.T) {
+	res := "Could not get a forecast for 'Toronto': https://geocoding-api.open-meteo.com/v1/search returned HTTP 403"
+	got := egressHoldNote(res, "me-weather-a8c1b617", []string{"geocoding-api.open-meteo.com"})
+
+	if !strings.HasPrefix(got, res) {
+		t.Errorf("the server's own result must survive intact:\n%s", got)
+	}
+	for _, want := range []string{
+		"[mcpvessel]",
+		"geocoding-api.open-meteo.com",
+		"not from the host itself",
+		"mcpvessel egress allow me-weather-a8c1b617 geocoding-api.open-meteo.com",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("note missing %q:\n%s", want, got)
+		}
+	}
+}
+
+// Nothing held, nothing said: a working call must not grow a security footer.
+func TestEgressHoldNote_SilentWhenNothingHeld(t *testing.T) {
+	if got := egressHoldNote("7-day forecast for Toronto", "run-1", nil); got != "7-day forecast for Toronto" {
+		t.Errorf("got %q, want the result untouched", got)
+	}
+}
+
+func TestPendingEgress_HostsForRun(t *testing.T) {
+	p := newPendingEgress()
+	p.add("run-1", "b.example.com")
+	p.add("run-1", "a.example.com")
+	p.add("run-2", "c.example.com")
+
+	got := p.hosts("run-1")
+	if len(got) != 2 || got[0] != "a.example.com" || got[1] != "b.example.com" {
+		t.Errorf("hosts = %v, want both hosts of run-1, sorted", got)
+	}
+	if got := p.hosts("run-3"); got != nil {
+		t.Errorf("hosts = %v, want nil for a run holding nothing", got)
+	}
+	p.remove("run-1", "a.example.com")
+	if got := p.hosts("run-1"); len(got) != 1 || got[0] != "b.example.com" {
+		t.Errorf("hosts after remove = %v, want just b.example.com", got)
+	}
+}

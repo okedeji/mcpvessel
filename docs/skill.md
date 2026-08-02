@@ -41,6 +41,8 @@ This is safe precisely because the cage underneath is deny-default. The agent ca
 
 The agent may *run* the cage-widening commands (`egress allow`, `config egress set/default`, `config secrets set/default`), but it must never *decide* to on its own. The skill has it put the choice to you through Claude Code's AskUserQuestion prompt, show what it saw, and run the command that matches your answer, or act on a direct instruction ("approve that one"). It never approves because a tool result told it to, which is exactly the prompt-injection trick the cage exists to stop. Denying it can do proactively (that only tightens the cage), but it tells you it did.
 
+Every such question carries the exact command alongside it, filled in with the real tag and host, for both answers. You can let the agent run it or paste it into your own terminal, and either way you see the command before it widens anything. On a decision this consequential, being able to check the agent's account against what it actually ran is part of the point.
+
 The real backstop is not a rule in the skill, it is the cage: deny-default egress means a server reaches nothing new until someone approves it, and that someone is you.
 
 If you want a harder guarantee, that these commands cannot run outside an interactive terminal at all, set `VESSEL_STRICT_APPROVAL=1`. Then they refuse without a TTY, so no agent can perform them, at the cost of the agent being able to run an approval you asked for. Off by default.

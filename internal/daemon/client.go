@@ -62,7 +62,11 @@ func (c *Client) checkStale(h http.Header) {
 			stale = statErr != nil || info.ModTime().Unix() != mtime
 		}
 		if stale {
-			_, _ = fmt.Fprintln(StaleWarnWriter, "warning: the daemon is running a stale mcpvessel build; restart it with 'mcpvessel daemon stop && mcpvessel init'")
+			// Phrased as advice about the daemon, not as a verdict on the command
+			// that triggered it. As "warning: ... stale build" it rode along on
+			// successful output and made every success read as half-failed, which
+			// during an agent-driven session trains the reader to ignore it.
+			_, _ = fmt.Fprintln(StaleWarnWriter, "note: the running daemon is an older build than this CLI. Commands still work; restart it when convenient with 'mcpvessel daemon stop && mcpvessel init'")
 		}
 	})
 }

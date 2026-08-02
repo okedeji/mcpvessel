@@ -1,0 +1,8 @@
+FROM python:3.12-slim
+# Pin to mcp 1.x: server.py imports mcp.server.fastmcp, which mcp 2.0 removed.
+RUN pip install --no-cache-dir "mcp<2" requests
+# No EGRESS: the server reaches Open-Meteo, and which hosts it may reach is the
+# operator's call to make at approval time, not the author's to preset.
+EXPOSE get_current_weather get_forecast find_place
+META description "weather forecasts from the Open-Meteo public API, no key needed"
+ENTRYPOINT ["./mcpvessel", "mcp-bridge", "--", "python3", "server.py"]

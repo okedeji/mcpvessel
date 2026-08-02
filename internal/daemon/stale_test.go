@@ -102,7 +102,13 @@ func TestCheckStale_WarnsOncePerClient(t *testing.T) {
 	c := &Client{}
 	c.checkStale(h)
 	c.checkStale(h)
-	if got := bytes.Count(buf.Bytes(), []byte("warning")); got != 1 {
-		t.Errorf("warning written %d times, want once", got)
+	if got := bytes.Count(buf.Bytes(), []byte("older build")); got != 1 {
+		t.Errorf("notice written %d times, want once", got)
+	}
+	// It reports on the daemon, not on the command that happened to reach it.
+	// As "warning: ... stale build" it rode along on successful output and made
+	// every success read as half-failed.
+	if bytes.Contains(buf.Bytes(), []byte("warning")) {
+		t.Errorf("the daemon notice must not read as a verdict on the command: %s", buf.String())
 	}
 }

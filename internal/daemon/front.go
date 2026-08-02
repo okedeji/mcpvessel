@@ -522,11 +522,20 @@ func (d *Daemon) registerExposed(services []exposedService, cfg config.Serve, sc
 				runID := session.RunID()
 				call := func(ctx context.Context, tool string, args map[string]any) (string, error) {
 					res, err := session.Call(ctx, tool, args)
-					return res, enrichEgressError(err, runID, d.denials.hosts(runID))
+					if err != nil {
+						return res, enrichEgressError(err, runID, d.denials.hosts(runID))
+					}
+					// A server that catches the proxy's refusal and returns its own
+					// message reports a successful call, so the note rides on the
+					// result: a held cage must not look like a working one.
+					return egressHoldNote(res, runID, d.pending.hosts(runID)), nil
 				}
 				callStream := func(ctx context.Context, tool string, args map[string]any, onProgress mcp.ProgressHandler) (string, error) {
 					res, err := session.CallStream(ctx, tool, args, onProgress)
-					return res, enrichEgressError(err, runID, d.denials.hosts(runID))
+					if err != nil {
+						return res, enrichEgressError(err, runID, d.denials.hosts(runID))
+					}
+					return egressHoldNote(res, runID, d.pending.hosts(runID)), nil
 				}
 				return serve.Target{Call: call, CallStream: callStream, BindElicit: session.BindElicit}, release, nil
 			},

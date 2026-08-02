@@ -94,3 +94,40 @@ func TestToolSummary_CapsLongLists(t *testing.T) {
 		t.Errorf("toolSummary singular = %q, want %q", got, "1 tool: solo")
 	}
 }
+
+// 'serve add' reports on a door that already holds agents this process knows
+// nothing about. Rendering their missing policy as "none preset" / "none
+// declared" told the operator a running cage had no allowed hosts and held no
+// secrets, when it may have had both. Understating a cage's reach is the
+// dangerous direction to be wrong in, so an unknown agent says so.
+func TestPrintServeReport_DoesNotInventPolicyForAgentsAlreadyServing(t *testing.T) {
+	res := daemon.ServeResult{
+		Listen: "127.0.0.1:8080",
+		Flat:   daemon.ServedFlat{Path: "/mcp", Tools: []string{"notes_save_note", "weather_get_forecast"}},
+		Agents: []daemon.ServedAgent{
+			{Address: "notes", Tools: []string{"save_note"}},      // already on the door
+			{Address: "weather", Tools: []string{"get_forecast"}}, // added by this command
+		},
+	}
+	policies := map[string]exposedPolicy{"weather": {}}
+	var buf bytes.Buffer
+	printServeReport(&buf, res, policies, nil, runtime.ScopedSecrets{}, false)
+	got := buf.String()
+
+	if strings.Count(got, "notes: "+unchangedByThisCommand) != 2 {
+		t.Errorf("want notes marked untouched under both Egress and Secrets:\n%s", got)
+	}
+	// The agent this command did serve is still reported in full.
+	if !strings.Contains(got, "weather: none preset") {
+		t.Errorf("want the newly served agent's egress reported:\n%s", got)
+	}
+	if !strings.Contains(got, "weather: none declared") {
+		t.Errorf("want the newly served agent's secrets reported:\n%s", got)
+	}
+	// The claim that caused the bug must not appear against the untouched agent.
+	for _, line := range strings.Split(got, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "notes:") && strings.Contains(line, "none") {
+			t.Errorf("asserted an absence for an agent whose policy was never loaded: %q", line)
+		}
+	}
+}

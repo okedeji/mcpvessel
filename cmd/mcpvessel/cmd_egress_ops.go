@@ -141,6 +141,12 @@ func decideEgress(cmd *cobra.Command, target, host, agent string, allow, once, a
 		} else {
 			msg += fmt.Sprintf(" for %d live run(s)", released)
 		}
+	} else if allow {
+		// Releasing nothing is normal when pre-approving a host before a run
+		// exists, and alarming when the operator was answering a live hold. Say
+		// which happened instead of burying it in a parenthetical.
+		msg += "\nnote: no live run was holding this host, so nothing was released." +
+			" If a server is held right now, name it as 'mcpvessel ps' shows it, or use its run id."
 	} else {
 		msg += " (no live run held this host)"
 	}
@@ -174,7 +180,34 @@ func resolveEgressTarget(ctx context.Context, client *daemon.Client, target stri
 			runIDs = append(runIDs, r.ID)
 		}
 	}
+	if len(runIDs) > 0 {
+		return runIDs, persistableRef(target)
+	}
+	// An untagged tag names the server without pinning a version. Exact-matching
+	// alone let `egress allow @me/weather <host>` report success while releasing
+	// nothing, because the live run's ref is @me/weather:0.1; the operator was
+	// told the host was allowed and the cage stayed held.
+	for _, r := range runs {
+		if egressLive(r.Status) && sameRepository(r.Ref, target) {
+			runIDs = append(runIDs, r.ID)
+		}
+	}
 	return runIDs, persistableRef(target)
+}
+
+// sameRepository reports whether ref names the same server as an untagged
+// target. Only an untagged target widens like this: given a version, the
+// operator meant that version.
+func sameRepository(ref, target string) bool {
+	want, err := reference.Parse(target)
+	if err != nil || want.Tag != "" || want.Digest != "" {
+		return false
+	}
+	got, err := reference.Parse(ref)
+	if err != nil {
+		return false
+	}
+	return got.Registry == want.Registry && got.Repository == want.Repository
 }
 
 // egressLive reports whether a run is still up enough to hold egress, so a
