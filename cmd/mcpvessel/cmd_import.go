@@ -14,6 +14,7 @@ import (
 
 	"github.com/okedeji/mcpvessel/internal/bundle"
 	"github.com/okedeji/mcpvessel/internal/egress"
+	"github.com/okedeji/mcpvessel/internal/env"
 	"github.com/okedeji/mcpvessel/internal/locate"
 	"github.com/okedeji/mcpvessel/internal/mcpregistry"
 	"github.com/okedeji/mcpvessel/internal/progress"
@@ -130,7 +131,7 @@ tools: a single brain reasoning across every server.`,
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&dir, "dir", "", "directory to write the generated Vesselfile into (default: ./<name>)")
+	cmd.Flags().StringVar(&dir, "dir", "", "directory to write the generated Vesselfile into (default: under VESSEL_HOME/imports/<name>, out of your working directory)")
 	cmd.Flags().StringVarP(&tag, "tag", "t", "", "reference to name the built bundle under (names the reasoning agent with --reasoning)")
 	cmd.Flags().StringVar(&entrypoint, "entrypoint", "", "override the launch command (required for an oci image)")
 	cmd.Flags().StringVar(&progressFlag, "progress", "auto", "set build progress output (auto, plain, tty)")
@@ -197,7 +198,11 @@ func importCollection(cmd *cobra.Command, arg, dir, tag, entrypoint string, mode
 	}
 	outDir := dir
 	if outDir == "" {
-		outDir = uniqueDir(defaultImportDir(src), usedDir)
+		def, err := defaultImportDir(src)
+		if err != nil {
+			return err
+		}
+		outDir = uniqueDir(def, usedDir)
 	}
 	src.Egress = egress.HostsFor(scoped, filepath.Base(outDir))
 	created := !dirExists(outDir)
@@ -290,7 +295,11 @@ func buildReasoningImport(cmd *cobra.Command, p reasoningParams) error {
 	}
 	parent := p.parentDir
 	if parent == "" {
-		parent = defaultReasoningDir(p.agentTag)
+		def, err := defaultReasoningDir(p.agentTag)
+		if err != nil {
+			return err
+		}
+		parent = def
 	}
 
 	usedSlug := map[string]bool{}
@@ -721,8 +730,10 @@ func writeBridgeBinary(dir string) error {
 	return nil
 }
 
-// defaultReasoningDir is ./<agent-name> from -t.
-func defaultReasoningDir(agentTag string) string {
+// defaultReasoningDir places a generated reasoning agent under
+// VESSEL_HOME/imports/<agent-name> from -t, so an agent-driven import never
+// writes into the user's working directory. --dir overrides it.
+func defaultReasoningDir(agentTag string) (string, error) {
 	name := agentTag
 	if i := strings.LastIndex(name, ":"); i >= 0 {
 		name = name[:i]
@@ -734,11 +745,13 @@ func defaultReasoningDir(agentTag string) string {
 	if name == "" {
 		name = "agent"
 	}
-	return "." + string(filepath.Separator) + name
+	return importsDir(name)
 }
 
-// defaultImportDir derives ./<name> from the package's last path segment.
-func defaultImportDir(src wrap.Source) string {
+// defaultImportDir places a generated import under VESSEL_HOME/imports/<name>,
+// derived from the package's last path segment, so an agent-driven import never
+// litters the user's working directory. --dir overrides it.
+func defaultImportDir(src wrap.Source) (string, error) {
 	name := src.Identifier
 	if i := strings.LastIndex(name, "/"); i >= 0 {
 		name = name[i+1:]
@@ -747,5 +760,17 @@ func defaultImportDir(src wrap.Source) string {
 	if name == "" {
 		name = "agent"
 	}
-	return "." + string(filepath.Separator) + name
+	return importsDir(name)
+}
+
+// importsDir is VESSEL_HOME/imports/<name>, the managed home for generated import
+// build contexts. They are kept there for inspection and rebuild, but out of the
+// user's project directory, which the caged, hands-off flow never touches. A
+// caller that wants the context local passes --dir instead.
+func importsDir(name string) (string, error) {
+	home, err := env.HomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, "imports", name), nil
 }

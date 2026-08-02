@@ -136,15 +136,26 @@ func TestWriteGeneratedVesselfile(t *testing.T) {
 }
 
 func TestDefaultImportDir(t *testing.T) {
+	// Pin VESSEL_HOME so the managed path is deterministic, then check the import
+	// lands under <home>/imports/<name>, never in the working directory.
+	home := t.TempDir()
+	t.Setenv("VESSEL_HOME", home)
 	cases := map[string]string{
 		"@modelcontextprotocol/server-filesystem": "server-filesystem",
 		"ghcr.io/acme/mcp-slack":                  "mcp-slack",
 		"mcp-server-fetch":                        "mcp-server-fetch",
 	}
+	wantParent := filepath.Join(home, "imports")
 	for id, want := range cases {
-		got := defaultImportDir(wrap.Source{Identifier: id})
+		got, err := defaultImportDir(wrap.Source{Identifier: id})
+		if err != nil {
+			t.Fatalf("defaultImportDir(%q): %v", id, err)
+		}
 		if filepath.Base(got) != want {
 			t.Errorf("defaultImportDir(%q) = %q, want basename %q", id, got, want)
+		}
+		if filepath.Dir(got) != wantParent {
+			t.Errorf("defaultImportDir(%q) = %q, want it under %q", id, got, wantParent)
 		}
 	}
 }

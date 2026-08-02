@@ -39,7 +39,7 @@ You can pass several SOURCEs at once. Each wraps into its own bundle, in its own
 For each SOURCE, `import`:
 
 1. **Resolves it** to a package coordinate (a registry name is looked up; a coordinate is used as is).
-2. **Generates a Vesselfile** in a directory (`./<name>` by default, or `--dir`). The Vesselfile depends on the ecosystem:
+2. **Generates a Vesselfile** in a directory (under `VESSEL_HOME/imports/<name>` by default, or wherever `--dir` points). It defaults into your mcpvessel state directory rather than the current working directory so a caged, hands-off flow never drops generated scaffolding into your project; pass `--dir .` (or any path) if you want it local to edit and commit. The Vesselfile depends on the ecosystem:
    - **npm**: `FROM node:22-slim`, `RUN npm install -g <pkg>`, and an offline launcher as the entrypoint. The launcher (`npm-entry.sh`, written beside the Vesselfile) resolves the package's bin from its own `package.json` and execs node on it. This replaces `npx`, which pings the registry on every start and would hang in a cage with no network.
    - **PyPI**: `FROM python:3.12-slim`, `RUN pip install --no-cache-dir <pkg>`, and the package as the entrypoint.
    - **OCI**: the image itself is the base. Its launch command is required, since wrap cannot infer it (see [Launch command](#launch-command-for-oci-images)).
@@ -95,7 +95,7 @@ When you compose with `--reasoning`, `import` avoids rebuilding a server you hav
 | Flag | Meaning |
 | --- | --- |
 | `-t`, `--tag REF` | Name the built bundle (`@org/name:version`). Required with `--reasoning`, where it names the reasoning agent. One bundle only, so not valid with multiple SOURCEs (except `--reasoning`, which composes them into one). |
-| `--dir PATH` | Directory to write the generated Vesselfile into. Default `./<name>`. Single SOURCE only. |
+| `--dir PATH` | Directory to write the generated Vesselfile into. Default `VESSEL_HOME/imports/<name>` (out of your working directory). Pass `--dir .` for a local, editable copy. Single SOURCE only. |
 | `--entrypoint "CMD"` | Launch command for an OCI image. Single SOURCE only; for a batch, use the inline `"oci:img -- cmd"` form. |
 | `--reasoning` | Compose every SOURCE under one reasoning agent instead of wrapping each on its own. |
 | `--model PROVIDER/MODEL` | With `--reasoning`, pin the agent's model. Default defers to your configured provider. |
@@ -114,9 +114,9 @@ When you compose with `--reasoning`, `import` avoids rebuilding a server you hav
 
 ## What lands on disk
 
-**A single import** writes `./<name>/` containing the `Vesselfile`, the `mcpvessel` bridge binary, and (for npm) the launcher script. The built bundle goes into your store, tagged if you passed `-t`.
+**A single import** writes `VESSEL_HOME/imports/<name>/` (or `--dir`) containing the `Vesselfile`, the `mcpvessel` bridge binary, and (for npm) the launcher script. The built bundle goes into your store, tagged if you passed `-t`.
 
-**A `--reasoning` import** writes `./<agent>/` containing an `agent/` directory (the reasoning agent's Vesselfile, `reasoner.py`, and `system_prompt.txt` if you set a prompt) and one `<name>-tools/` directory per composed source. Each tool collection and the agent are built and tagged.
+**A `--reasoning` import** writes `VESSEL_HOME/imports/<agent>/` (or `--dir`) containing an `agent/` directory (the reasoning agent's Vesselfile, `reasoner.py`, and `system_prompt.txt` if you set a prompt) and one `<name>-tools/` directory per composed source. Each tool collection and the agent are built and tagged.
 
 If a generated directory already exists, `import` refuses rather than clobber it, unless you pass `--force`. A build that fails removes the directory it just created so a retry starts clean.
 
