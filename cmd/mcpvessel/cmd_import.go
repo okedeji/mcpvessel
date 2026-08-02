@@ -627,7 +627,7 @@ func sourceFromServer(s *mcpregistry.Server) (wrap.Source, error) {
 	}
 
 	if len(s.Packages) == 0 && len(s.Remotes) > 0 {
-		return wrap.Source{}, fmt.Errorf("%s is a remote MCP server (a hosted URL); mcpvessel runs agents in cages and cannot import a remote endpoint. Reach it from an agent that declares EGRESS allow:<host> and the SECRETS it needs", s.Name)
+		return wrap.Source{}, fmt.Errorf("%s is a remote MCP server (a hosted URL): its code runs on the publisher's machine, so there is nothing local for a cage to contain. Look for an entry whose SOURCE column in 'mcpvessel search' is npm, pypi, or oci, or name the package directly. To use this one as it is, reach it from an agent that declares EGRESS allow:<host> and the SECRETS it needs", s.Name)
 	}
 	return wrap.Source{}, fmt.Errorf("%s ships no package mcpvessel can wrap (import supports npm, pypi, and oci over stdio)", s.Name)
 }

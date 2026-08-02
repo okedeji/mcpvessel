@@ -18,14 +18,27 @@ An empty `QUERY` (passing `""`) lists the catalog instead of filtering, still ca
 
 ### What a result row shows
 
-The table has four columns, tab-aligned:
+The table has five columns, tab-aligned:
 
 | Column | Source | Empty shows |
 | --- | --- | --- |
 | `NAME` | the entry's reverse-DNS name (`io.github.owner/server`) | always present |
-| `VERSION` | the entry's latest version | `-` |
+| `VERSION` | the entry's current version | `-` |
+| `SOURCE` | where the implementation comes from: `npm`, `pypi`, `oci`, or `remote` | `-` |
 | `EVALS` | the eval signal the author stamped at publish, if any | `-` |
 | `DESCRIPTION` | the server's description, clipped to 60 characters with a trailing `…` | blank |
+
+### SOURCE, and why it decides everything
+
+`SOURCE` is the column to read first, because it says whether the entry can be caged at all.
+
+An `npm`, `pypi`, or `oci` entry ships code. mcpvessel can pull that package, put it in a container with no network beyond what you allow, and hold your secrets outside where the server cannot reach them. An entry publishing to several ecosystems shows them joined, `npm+pypi`.
+
+A `remote` entry is a hosted URL that the publisher runs. There is no code on your machine, so there is nothing for a cage to contain, and [import](import.md) refuses it. That refusal is not a limitation to work around: the exposure with a remote server is whatever your client sends to someone else's servers, and no container on your machine can change that. Roughly half the public registry is remote-only, so this is a common result, not an edge case.
+
+When any row is remote, `search` prints a count under the table so the shape of the result set is obvious at a glance.
+
+Each row is one server at its current version. The registry stores a separate record per published version; `search` collapses them, so a server with a long release history takes one row rather than filling your `--limit` with its own back catalogue.
 
 `EVALS` is only set when an author ran the bundle's eval suite before publishing and the signal survived the registry round-trip. It renders compactly:
 

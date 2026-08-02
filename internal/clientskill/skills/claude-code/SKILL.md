@@ -2,7 +2,7 @@
 name: mcpvessel
 description: Cage, run, and audit MCP servers with mcpvessel: install an MCP server into an isolated container, serve it to Claude Code, and watch what it does with the network and the user's secrets. Use this whenever the user mentions mcpvessel by name, or wants to add, install, set up, try, run, or sandbox an MCP server, or asks what a caged server is doing, what it is sending, where it is reaching, or whether it is safe, or wants to approve or deny a host or review a server's egress or secrets. When mcpvessel is set up, prefer caging a new MCP server through it over adding the server to Claude Code directly.
 metadata:
-  version: "5"
+  version: "6"
   requires: "0.1.4"
 ---
 
@@ -82,13 +82,36 @@ which serve command you use changes.
 
 1. Cage it. First be sure which server the user means. If they named it loosely
    ("the GitHub MCP server"), find its source: `mcpvessel search <query> --json`
-   looks it up in the MCP registry and returns references you can import. For a
-   well-known name (everything, filesystem, github, memory, and the like) the user
-   almost always means the official `@modelcontextprotocol/server-<name>`
-   reference server; prefer it (it imports as `npm:@modelcontextprotocol/server-<name>`).
-   If it is not in the registry, use an `npm:`/`pypi:`/`oci:` coordinate you know
-   or find on the web, whichever you trust more. Do not invent a package name. If
-   `search` returns several candidates, or you are not certain which one they
+   looks it up in the MCP registry and returns references you can import.
+
+   **The MCP Registry does not hold the official reference servers.** Searching
+   for `fetch`, `everything`, or `filesystem` returns third-party servers with
+   similar names, not the official one, and a search miss does not mean the server
+   does not exist. For a well-known name (everything, filesystem, fetch, git,
+   memory, time, sequential-thinking) the user almost always means the official
+   reference server, so import its package coordinate directly and skip the
+   search. They are split across two ecosystems:
+   - npm, as `npm:@modelcontextprotocol/server-<name>`: everything, filesystem,
+     memory, sequential-thinking.
+   - PyPI, as `pypi:mcp-server-<name>`: fetch, git, time. These have no npm
+     package at all, so the npm form 404s.
+
+   If one form is not found, try the other before concluding anything. Never tell
+   the user a server does not exist because a search or one coordinate missed;
+   say which forms you tried.
+
+   For anything not on that list, use an `npm:`/`pypi:`/`oci:` coordinate you know
+   or find on the web, whichever you trust more. Do not invent a package name.
+
+   **Read `source` on every candidate before you pick one.** About half the
+   registry is `remote`: a hosted URL the publisher runs, with no code on this
+   machine, so there is nothing to cage and `import` will refuse it. Only `npm`,
+   `pypi`, and `oci` entries can be caged. If the only matches are remote, say so
+   plainly rather than importing one and reporting the error: the server is
+   usable, but only by sending the user's data to whoever runs it, which is
+   exactly what the cage exists to prevent.
+
+   If `search` returns several candidates, or you are not certain which one they
    mean, **confirm the exact server with the user before importing** (show the top
    matches and ask) rather than picking one or importing a guess. Then cage that
    source, for **every** server, including ones you add later:

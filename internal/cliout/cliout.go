@@ -36,3 +36,10 @@ func Table(w io.Writer, headers []string, rows [][]string) {
 func Empty(w io.Writer, msg string) {
 	_, _ = fmt.Fprintln(w, msg)
 }
+
+// Note prints a short line under a table: what the rows do not say on their own,
+// and what to do about it. Kept blank-line separated so it reads as commentary
+// on the table rather than another row.
+func Note(w io.Writer, msg string) {
+	_, _ = fmt.Fprintf(w, "\nnote: %s\n", msg)
+}

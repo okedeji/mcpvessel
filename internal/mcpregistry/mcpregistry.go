@@ -54,7 +54,19 @@ func baseURL() string {
 // Search returns servers matching query, one entry per published version, up
 // to limit. An empty query lists the catalog; only the first page is returned.
 func (c *Client) Search(ctx context.Context, query string, limit int) ([]Server, error) {
-	entries, err := c.search(ctx, query, limit, false)
+	return c.searchServers(ctx, query, limit, false)
+}
+
+// SearchLatest is Search with each name collapsed to its current version. It is
+// what a discovery command wants: the registry stores one entry per version, so
+// an unfiltered search spends its limit listing the same server five times and
+// crowds out the servers the caller has not seen yet.
+func (c *Client) SearchLatest(ctx context.Context, query string, limit int) ([]Server, error) {
+	return c.searchServers(ctx, query, limit, true)
+}
+
+func (c *Client) searchServers(ctx context.Context, query string, limit int, latestOnly bool) ([]Server, error) {
+	entries, err := c.search(ctx, query, limit, latestOnly)
 	if err != nil {
 		return nil, err
 	}

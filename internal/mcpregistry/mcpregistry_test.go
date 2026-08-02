@@ -289,3 +289,77 @@ func TestServerJSONFromManifest_DescriptionFallbackAndClamp(t *testing.T) {
 		t.Error("description empty, want a name-derived fallback")
 	}
 }
+
+// SOURCE is what tells a caller whether an entry can be caged at all. Roughly
+// half the public registry is remote-only, so getting this wrong sends people
+// straight into an import that cannot succeed.
+func TestServerSource_NamesWhereTheCodeLives(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		server   Server
+		want     string
+		cageable bool
+	}{
+		{
+			name:     "a package entry names its ecosystem",
+			server:   Server{Packages: []Package{{RegistryType: "pypi", Identifier: "mcp-server-fetch"}}},
+			want:     "pypi",
+			cageable: true,
+		},
+		{
+			name:     "several ecosystems are joined, not truncated",
+			server:   Server{Packages: []Package{{RegistryType: "npm"}, {RegistryType: "pypi"}}},
+			want:     "npm+pypi",
+			cageable: true,
+		},
+		{
+			name:     "a duplicate ecosystem is listed once",
+			server:   Server{Packages: []Package{{RegistryType: "npm"}, {RegistryType: "npm"}}},
+			want:     "npm",
+			cageable: true,
+		},
+		{
+			name:     "a hosted URL has no code to cage",
+			server:   Server{Remotes: []Remote{{Type: "streamable-http", URL: "https://example.com/mcp"}}},
+			want:     remoteSource,
+			cageable: false,
+		},
+		{
+			// A package entry that also offers a hosted URL is still cageable;
+			// the local code is what matters.
+			name:     "packages win over remotes",
+			server:   Server{Packages: []Package{{RegistryType: "npm"}}, Remotes: []Remote{{Type: "streamable-http"}}},
+			want:     "npm",
+			cageable: true,
+		},
+		{name: "neither declared", server: Server{}, want: "", cageable: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.server.Source(); got != tc.want {
+				t.Errorf("Source() = %q, want %q", got, tc.want)
+			}
+			if got := tc.server.Cageable(); got != tc.cageable {
+				t.Errorf("Cageable() = %v, want %v", got, tc.cageable)
+			}
+		})
+	}
+}
+
+// Discovery collapses a name to its current version. The registry stores one
+// entry per version, and without this a search for a popular server spends its
+// whole limit listing that one server's history.
+func TestSearchLatest_CollapsesVersions(t *testing.T) {
+	stub := &stubRegistry{latestVersion: "1.1.2", servers: []Server{
+		{Name: "cloud.fetcher/fetcher", Version: "1.0.0"},
+		{Name: "cloud.fetcher/fetcher", Version: "1.1.0"},
+		{Name: "cloud.fetcher/fetcher", Version: "1.1.2"},
+	}}
+	c := newStub(t, stub)
+	got, err := c.SearchLatest(context.Background(), "fetcher", 0)
+	if err != nil {
+		t.Fatalf("SearchLatest: %v", err)
+	}
+	if len(got) != 1 || got[0].Version != "1.1.2" {
+		t.Fatalf("SearchLatest = %+v, want the one current version", got)
+	}
+}

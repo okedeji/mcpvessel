@@ -134,7 +134,7 @@ func printRegistryEntry(w io.Writer, s *mcpregistry.Server) {
 	case len(s.Packages) > 0:
 		_, _ = fmt.Fprintf(w, "\nImport it with: mcpvessel import %s\n", s.Name)
 	case len(s.Remotes) > 0:
-		_, _ = fmt.Fprintln(w, "\nThis is a remote MCP server; it cannot be imported into a cage. Reach it from an agent that declares EGRESS allow:<host> and its SECRETS.")
+		_, _ = fmt.Fprintln(w, "\nThis is a remote MCP server (a hosted URL): its code runs on the publisher's machine, so there is nothing local for a cage to contain. Look for an entry whose SOURCE is npm, pypi, or oci, or reach this one from an agent that declares EGRESS allow:<host> and its SECRETS.")
 	}
 }
 

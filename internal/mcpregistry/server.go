@@ -2,6 +2,8 @@ package mcpregistry
 
 import (
 	"fmt"
+	"slices"
+	"strings"
 
 	"github.com/okedeji/mcpvessel/internal/bundle"
 )
@@ -171,6 +173,37 @@ func (s *Server) OCIReference() (ref, version string, ok bool) {
 		}
 	}
 	return "", "", false
+}
+
+// remoteSource is what Source reports for an entry that is only a hosted URL.
+const remoteSource = "remote"
+
+// Cageable reports whether the entry ships code mcpvessel could run in a cage.
+// An entry with only remotes does not: its code runs on the publisher's machine,
+// so there is nothing local to contain.
+func (s *Server) Cageable() bool {
+	return len(s.Packages) > 0
+}
+
+// Source names where an entry's implementation comes from: the package
+// ecosystems it publishes to ("npm", "pypi", "oci"), or "remote" for a hosted
+// URL. Half the registry is remote-only, and without this a caller choosing from
+// search results cannot tell which entries can be caged until import refuses
+// them.
+func (s *Server) Source() string {
+	var kinds []string
+	for _, p := range s.Packages {
+		if p.RegistryType != "" && !slices.Contains(kinds, p.RegistryType) {
+			kinds = append(kinds, p.RegistryType)
+		}
+	}
+	if len(kinds) > 0 {
+		return strings.Join(kinds, "+")
+	}
+	if len(s.Remotes) > 0 {
+		return remoteSource
+	}
+	return ""
 }
 
 // EvalSummary renders the stamped eval signal as a compact "47/50 j0.83",

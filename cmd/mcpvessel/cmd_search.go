@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"strings"
 
@@ -21,10 +22,17 @@ func newSearchCmd() *cobra.Command {
 		Short: "Search the MCP Registry for agents",
 		Long: `Search the public MCP Registry by name and print matching agents.
 
-Each row is one agent: its reverse-DNS name, latest version, eval signal (when
-the author stamped one), and description. Pull a hit with 'mcpvessel pull <name>'
-or wrap and build it with 'mcpvessel import <name>'. With --local, search the
-bundles already in your local store instead of the registry.`,
+Each row is one agent at its current version: reverse-DNS name, version, where
+its implementation comes from, eval signal (when the author stamped one), and
+description.
+
+SOURCE is the one to read first. An npm, pypi, or oci entry ships code, so
+mcpvessel can cage it. A remote entry is a hosted URL the publisher runs; there
+is no local code to contain, and import will refuse it.
+
+Pull a hit with 'mcpvessel pull <name>' or wrap and build it with
+'mcpvessel import <name>'. With --local, search the bundles already in your
+local store instead of the registry.`,
 		Example: `  mcpvessel search "web search"
   mcpvessel search filesystem --limit 5
   mcpvessel search fs --local`,
@@ -43,7 +51,7 @@ bundles already in your local store instead of the registry.`,
 }
 
 func searchRegistry(ctx context.Context, w io.Writer, query string, limit int, jsonOut bool) error {
-	servers, err := mcpregistry.New().Search(ctx, query, limit)
+	servers, err := mcpregistry.New().SearchLatest(ctx, query, limit)
 	if err != nil {
 		return err
 	}
@@ -74,16 +82,31 @@ func searchLocal(w io.Writer, query string, jsonOut bool) error {
 
 // printSearchResults clips descriptions so one long entry cannot wreck the
 // column alignment.
+//
+// SOURCE carries its weight: roughly half the registry is remote-only, and an
+// entry that is only a hosted URL cannot be caged at all. Without the column, a
+// caller picks one at random and finds out when import refuses it.
 func printSearchResults(w io.Writer, servers []mcpregistry.Server) {
 	if len(servers) == 0 {
-		cliout.Empty(w, "No matches in the MCP Registry.")
+		// A miss here is not "no such server". Plenty of servers are never
+		// published to the registry, the official reference ones among them, and
+		// import takes a package coordinate directly. Saying so turns a dead end
+		// into the next command to run.
+		cliout.Empty(w, "No matches in the MCP Registry. Plenty of servers are not published there, including the official reference servers, so this does not mean it does not exist. If you know the package, cage it directly:\n  mcpvessel import npm:<package>\n  mcpvessel import pypi:<package>")
 		return
 	}
 	rows := make([][]string, 0, len(servers))
+	remotes := 0
 	for _, s := range servers {
-		rows = append(rows, []string{s.Name, s.Version, s.EvalSummary(), clip(s.Description, 60)})
+		if !s.Cageable() {
+			remotes++
+		}
+		rows = append(rows, []string{s.Name, s.Version, s.Source(), s.EvalSummary(), clip(s.Description, 60)})
 	}
-	cliout.Table(w, []string{"NAME", "VERSION", "EVALS", "DESCRIPTION"}, rows)
+	cliout.Table(w, []string{"NAME", "VERSION", "SOURCE", "EVALS", "DESCRIPTION"}, rows)
+	if remotes > 0 {
+		cliout.Note(w, fmt.Sprintf("%d of these are remote (a hosted URL someone else runs), so there is no code to cage. Pick an npm, pypi, or oci source to import.", remotes))
+	}
 }
 
 func writeJSON(w io.Writer, v any) error {
