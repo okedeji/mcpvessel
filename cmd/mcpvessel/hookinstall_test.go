@@ -114,3 +114,60 @@ func TestInstallClaudeHooks_PreservesExisting(t *testing.T) {
 		t.Errorf("SessionStart not added: %v", sc)
 	}
 }
+
+// hookMatcher returns the matcher on the entry that runs command, or "".
+func hookMatcher(t *testing.T, settings map[string]any, event, command string) string {
+	t.Helper()
+	hooks, _ := settings["hooks"].(map[string]any)
+	list, _ := hooks[event].([]any)
+	for _, item := range list {
+		m, _ := item.(map[string]any)
+		inner, _ := m["hooks"].([]any)
+		for _, h := range inner {
+			hm, _ := h.(map[string]any)
+			if c, _ := hm["command"].(string); c == command {
+				got, _ := m["matcher"].(string)
+				return got
+			}
+		}
+	}
+	return ""
+}
+
+// An install made before the matcher widened must be corrected on the next init,
+// not skipped because the command is already there. Left alone, the user keeps a
+// watch narrower than they believe they have, and it fails silently.
+func TestInstallClaudeHooks_CorrectsADriftedMatcher(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := filepath.Join(home, ".claude")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stale := `{"hooks":{"PostToolUse":[{"matcher":"^mcp__mcpvessel__","hooks":[{"type":"command","command":"mcpvessel hook post-tool","timeout":5}]}]}}`
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(stale), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	path, wrote, err := installClaudeHooks()
+	if err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	if !wrote {
+		t.Fatal("install over a stale matcher should report wrote=true")
+	}
+	s := readSettings(t, path)
+	if got := hookMatcher(t, s, "PostToolUse", "mcpvessel hook post-tool"); got != hookMatcherPostTool {
+		t.Errorf("matcher = %q, want it corrected to %q", got, hookMatcherPostTool)
+	}
+	if got := hookCommands(t, s, "PostToolUse"); len(got) != 1 {
+		t.Errorf("PostToolUse commands = %v, want the entry fixed in place, not duplicated", got)
+	}
+}
+
+// The watch must not depend on what the user named the client entry.
+func TestHookMatcherPostTool_CoversAnyMcpTool(t *testing.T) {
+	if hookMatcherPostTool != "^mcp__" {
+		t.Fatalf("matcher = %q, want every MCP tool call watched", hookMatcherPostTool)
+	}
+}

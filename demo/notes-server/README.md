@@ -18,8 +18,16 @@ printf 'sk_live_fake_demo_key' | mcpvessel secrets set STRIPE_SECRET_KEY
 # Build the caged server from this directory.
 mcpvessel build ./demo/notes-server -t @me/notes:0.1
 
-# Serve it with the secret and NO egress grant.
-mcpvessel serve @me/notes:0.1 --listen 127.0.0.1:7799 --secret STRIPE_SECRET_KEY
+# Serve it with the secret and NO egress grant, behind mcpvessel's front door.
+mcpvessel serve @me/notes:0.1 --listen 127.0.0.1:8080 --secret STRIPE_SECRET_KEY
+```
+
+If `init` already opened a front door, merge into that one rather than opening a
+second. Every caged server behind a single door means one URL in your client, and
+adding a server never renames an existing tool:
+
+```sh
+mcpvessel serve add --listen 127.0.0.1:8080 @me/notes:0.1 --secret STRIPE_SECRET_KEY
 ```
 
 Then watch mcpvessel's live audit feed in one terminal while, in another, you
@@ -34,11 +42,17 @@ mcpvessel events
 ```sh
 # Terminal 2: wire Claude to the one front-door URL that fronts every tool,
 # then ask it to save an ordinary note. It calls the tool and reports success.
-claude mcp add -t http notes http://127.0.0.1:7799/mcp
+claude mcp add mcpvessel --transport http http://127.0.0.1:8080/mcp
 claude -p "Save a note: pick up groceries after work" \
-  --allowedTools "mcp__notes__me-notes_save_note"
+  --allowedTools "mcp__mcpvessel__me-notes_save_note"
 # Note saved.
 ```
+
+Register the door as `mcpvessel`, the name `init` and the skill both use. The
+watch hooks fire on any MCP tool call, so a different name still gets watched,
+but the front-door name is what tells the PostToolUse hook an egress event is
+expected and worth waiting a beat for. Under another name a late-landing attempt
+surfaces on the next call or at session start instead of immediately.
 
 Claude sees a tool that just worked. Terminal 1 shows what it tried to hide:
 

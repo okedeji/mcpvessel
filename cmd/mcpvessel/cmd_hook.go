@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -15,7 +16,7 @@ import (
 
 // The hook subcommands are Claude Code's entrypoints into mcpvessel's watch.
 // `init` wires them into ~/.claude/settings.json: a SessionStart hook and a
-// PostToolUse hook scoped to the caged front door (matcher ^mcp__mcpvessel__).
+// PostToolUse hook over every MCP tool call (matcher ^mcp__).
 // They read the hook event JSON on stdin and, when a caged server has done
 // something worth surfacing, print a hookSpecificOutput block whose
 // additionalContext Claude reads as plain text.
@@ -101,10 +102,25 @@ func auditRead(parent context.Context, hook bool) ([]daemon.AuditServer, bool) {
 	return servers, true
 }
 
+// mcpvesselFrontDoorPrefix is what a tool is called when it arrives through a
+// client entry named "mcpvessel", the name init and the skill both register. It
+// is a hint about latency only, never a filter: the user names that entry, can
+// rename it, and may add a caged server under some other name entirely. Watching
+// that stops when a user picks a different name is worse than useless, because
+// it stops silently.
+const mcpvesselFrontDoorPrefix = "mcp__mcpvessel__"
+
+// frontedByMcpvessel reports whether a call came through the caged front door, so
+// the hook knows an event is expected and is worth waiting a moment for. Any
+// other tool gets one read and no wait.
+func frontedByMcpvessel(tool string) bool {
+	return strings.HasPrefix(tool, mcpvesselFrontDoorPrefix)
+}
+
 // newHookPostToolCmd surfaces any new egress a caged server produced under cover
-// of the tool call that just ran. Claude Code fires it after every tool matching
-// ^mcp__mcpvessel__, so it need not read the tool name: it reports whatever the
-// feed shows as new across the serving cages.
+// of the tool call that just ran. Claude Code fires it after every MCP tool call;
+// it reports whatever the feed shows as new across the serving cages, whichever
+// client entry the call actually came through.
 func newHookPostToolCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:    "post-tool",
@@ -112,11 +128,19 @@ func newHookPostToolCmd() *cobra.Command {
 		Hidden: true,
 		Args:   cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			// Drain stdin so Claude Code's writer never blocks; the tool name is
-			// not needed (the matcher already scoped us to the caged door).
-			_ = json.NewDecoder(cmd.InOrStdin()).Decode(&struct{}{})
+			// Read the tool name, and drain stdin either way so Claude Code's
+			// writer never blocks. The name decides how long to wait, not whether
+			// to look: a caged server is watched no matter which client entry the
+			// call came through.
+			var in struct {
+				ToolName string `json:"tool_name"`
+			}
+			_ = json.NewDecoder(cmd.InOrStdin()).Decode(&in)
 
-			deadline := time.Now().Add(hookPostToolPoll)
+			deadline := time.Now()
+			if frontedByMcpvessel(in.ToolName) {
+				deadline = deadline.Add(hookPostToolPoll)
+			}
 			for {
 				servers, ok := auditRead(cmd.Context(), true)
 				if !ok {
@@ -184,79 +208,179 @@ func newHookSessionStartCmd() *cobra.Command {
 	}
 }
 
-// postToolContext renders an alert for every serving cage that has new events,
-// or "" when nothing is new. It carries the facts and the redacted request so
-// Claude can judge, plus the directive to surface it, so it works even if the
-// skill never loaded.
-func postToolContext(servers []daemon.AuditServer) string {
-	var b strings.Builder
-	for _, s := range servers {
-		// The daemon's hook feed already scopes this to servers with fresh,
-		// not-yet-surfaced events, so anything here is worth reporting.
-		if len(s.Events) == 0 {
-			continue
-		}
-		if b.Len() == 0 {
-			b.WriteString("SECURITY, mcpvessel watch: a caged server just tried to send something the cage handled while a tool ran. Judge whether it is malicious and tell the user now; do not bury it under the tool result.\n")
-		}
-		fmt.Fprintf(&b, "\n%s:\n", s.Ref)
-		for _, e := range s.Events {
-			b.WriteString("  - ")
-			b.WriteString(hookEventLine(e))
-			b.WriteString("\n")
-		}
-	}
-	return b.String()
+// Ledger kinds split into what a user must hear about and what is routine. An
+// approved host is not an alert: if it was approved, the user approved it. A
+// hold, a block, a re-refusal, or a granted secret on its way out all are.
+var alertKinds = map[string]bool{
+	"held":    true,
+	"blocked": true,
+	"dropped": true,
+	"secret":  true,
 }
 
-// sessionStartContext renders a lean catch-up over every caged server with
-// anything on record, or "" when all are quiet.
-func sessionStartContext(servers []daemon.AuditServer) string {
-	var b strings.Builder
-	for _, s := range servers {
-		if s.Summary == "" && len(s.Events) == 0 {
-			continue
-		}
-		if b.Len() == 0 {
-			b.WriteString("mcpvessel watch (session start): what your caged servers did, including while you were away. Tell the user anything that looks wrong; otherwise carry on.\n")
-		}
-		state := "seen before"
-		if s.Serving {
-			state = "serving now"
-		}
-		fmt.Fprintf(&b, "\n%s (%s):\n", s.Ref, state)
-		if s.Summary != "" {
-			fmt.Fprintf(&b, "  summary: %s\n", s.Summary)
-		}
-		for _, e := range s.Events {
-			b.WriteString("  - ")
-			b.WriteString(hookEventLine(e))
-			b.WriteString("\n")
-		}
-	}
-	return b.String()
+// hostAlert collapses one host's events into one incident. The ledger records a
+// single attempt as both a hold and a block, and rendering those as two bullets
+// spends two lines saying one thing and reads like two separate incidents.
+type hostAlert struct {
+	host     string
+	kinds    map[string]bool
+	secrets  []string
+	attempts int
+	// sample is the first event that captured a redacted request, kept so Claude
+	// can judge the payload rather than the verb alone.
+	sample daemon.AuditEvent
 }
 
-// hookEventLine renders one feed event for injection: the deterministic flag
-// plus, when a request was captured, a compact one-line of the redacted sample
-// so Claude can read the actual payload (secrets already «NAME»).
-func hookEventLine(e daemon.AuditEvent) string {
-	line := e.Kind + " " + e.Host
-	if e.Detail != "" {
-		line += " (" + e.Detail + ")"
+// collectAlerts groups a server's must-report events by host, in the order the
+// hosts first appear. Routine events drop out here, so every caller downstream
+// is dealing only with things worth interrupting a user for.
+func collectAlerts(events []daemon.AuditEvent) []hostAlert {
+	var order []string
+	by := map[string]*hostAlert{}
+	for _, e := range events {
+		if !alertKinds[e.Kind] {
+			continue
+		}
+		a := by[e.Host]
+		if a == nil {
+			a = &hostAlert{host: e.Host, kinds: map[string]bool{}}
+			by[e.Host] = a
+			order = append(order, e.Host)
+		}
+		a.kinds[e.Kind] = true
+		if e.Kind == "secret" && e.Detail != "" && !slices.Contains(a.secrets, e.Detail) {
+			a.secrets = append(a.secrets, e.Detail)
+		}
+		// Max, not sum: one attempt lands under several kinds, and summing would
+		// inflate a single theft into a handful.
+		if e.Count > a.attempts {
+			a.attempts = e.Count
+		}
+		if a.sample.Sample == nil && e.Sample != nil {
+			a.sample = e
+		}
 	}
-	if e.Count > 1 {
-		line += fmt.Sprintf(" x%d", e.Count)
+	out := make([]hostAlert, 0, len(order))
+	for _, h := range order {
+		out = append(out, *by[h])
 	}
-	if e.Sample != nil {
-		body := string(e.Sample.Body)
+	return out
+}
+
+// line states what happened in terms of what it means for the user, not the
+// ledger's verb. "blocked exfil.attacker.net" reads as handled, nothing to do;
+// naming it as an attempt on a host they never approved does not.
+func (a hostAlert) line() string {
+	outcome := "the cage is holding it, waiting on your approval"
+	switch {
+	case a.kinds["dropped"]:
+		outcome = "the cage refused it, as it has before"
+	case a.kinds["blocked"]:
+		outcome = "the cage refused it"
+	}
+	line := fmt.Sprintf("tried to reach %s, a host you never approved; %s", a.host, outcome)
+	if len(a.secrets) > 0 {
+		line += fmt.Sprintf(". Your %s was in what it tried to send", strings.Join(a.secrets, ", "))
+	}
+	if a.attempts > 1 {
+		line += fmt.Sprintf(" (%d attempts)", a.attempts)
+	}
+	if s := a.sample.Sample; s != nil {
+		body := string(s.Body)
 		if len(body) > 300 {
-			body = body[:300] + "…"
+			body = body[:300] + "\u2026"
 		}
-		line += fmt.Sprintf("\n      request: %s %s", e.Sample.Method, e.Sample.URL)
+		line += fmt.Sprintf("\n      request: %s %s", s.Method, s.URL)
 		if body != "" {
 			line += "\n      body: " + body
 		}
 	}
 	return line
+}
+
+// serverHeading names the server and, when it holds secrets, what is at stake in
+// the same breath. A reader deciding how alarmed to be needs both.
+func serverHeading(s daemon.AuditServer, state string) string {
+	head := s.Ref
+	if state != "" {
+		head += " (" + state + ")"
+	}
+	if len(s.Secrets) > 0 {
+		head += ", holding your " + strings.Join(s.Secrets, ", ")
+	}
+	return head + ":"
+}
+
+// postToolDirective is the standing instruction for an attempt caught under a
+// tool call. It is deliberately blunt: the tool returned success, so nothing else
+// in the transcript hints that anything happened.
+const postToolDirective = "SECURITY, mcpvessel watch: a caged server just tried to reach a host you never approved, under cover of the tool call that only just returned. The tool reported success; this is what it did not report. You MUST tell the user now, in this reply, before anything else. Say which server, which host, and what it tried to send.\n"
+
+// sessionStartAlertDirective is the same duty at the top of a session, where the
+// user has not asked anything yet. The explicit "even if they only greeted you"
+// is there because a greeting is exactly where this was dropped.
+const sessionStartAlertDirective = "SECURITY, mcpvessel watch: while nothing was watching, a caged server tried to reach a host the user never approved. You MUST tell the user about this in your very first reply, before answering whatever they asked, even if they only greeted you. Do not wait to be asked and do not soften it: the cage stopped the attempt, but the server tried, and that is what they need to know.\n"
+
+// postToolContext renders an alert for every serving cage with new must-report
+// events, or "" when there is nothing worth interrupting for.
+func postToolContext(servers []daemon.AuditServer) string {
+	var b strings.Builder
+	for _, s := range servers {
+		alerts := collectAlerts(s.Events)
+		if len(alerts) == 0 {
+			continue
+		}
+		if b.Len() == 0 {
+			b.WriteString(postToolDirective)
+		}
+		fmt.Fprintf(&b, "\n%s\n", serverHeading(s, ""))
+		for _, a := range alerts {
+			fmt.Fprintf(&b, "  - %s\n", a.line())
+		}
+	}
+	return b.String()
+}
+
+// sessionStartContext renders the catch-up: every server with a must-report
+// event under a directive to surface it, then, quietly, what a previous session
+// already concluded about servers serving now. Returns "" when all are quiet, so
+// a clean machine injects the standing directive alone and nothing else.
+func sessionStartContext(servers []daemon.AuditServer) string {
+	var alerts, notes strings.Builder
+	for _, s := range servers {
+		state := "seen before"
+		if s.Serving {
+			state = "serving now"
+		}
+		found := collectAlerts(s.Events)
+		if len(found) > 0 {
+			if alerts.Len() == 0 {
+				alerts.WriteString(sessionStartAlertDirective)
+			}
+			fmt.Fprintf(&alerts, "\n%s\n", serverHeading(s, state))
+			if s.Summary != "" {
+				fmt.Fprintf(&alerts, "  what you concluded before: %s\n", s.Summary)
+			}
+			for _, a := range found {
+				fmt.Fprintf(&alerts, "  - %s\n", a.line())
+			}
+			continue
+		}
+		// No new alert, but a prior judgement on something serving right now is
+		// worth carrying forward; it is why the summary is written down at all.
+		if s.Summary != "" && s.Serving {
+			if notes.Len() == 0 {
+				notes.WriteString("mcpvessel watch: nothing new from your caged servers. What earlier sessions concluded, in case it bears on what the user asks:\n")
+			}
+			fmt.Fprintf(&notes, "  - %s: %s\n", s.Ref, s.Summary)
+		}
+	}
+	switch {
+	case alerts.Len() > 0 && notes.Len() > 0:
+		return alerts.String() + "\n" + notes.String()
+	case alerts.Len() > 0:
+		return alerts.String()
+	default:
+		return notes.String()
+	}
 }
