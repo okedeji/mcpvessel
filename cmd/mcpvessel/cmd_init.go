@@ -176,10 +176,34 @@ func bootstrapDocs(cmd *cobra.Command, dae *daemon.Client, clientID string) {
 	stderr := cmd.ErrOrStderr()
 	res, err := dae.EnsureDocs(cmd.Context())
 	if err != nil {
-		_, _ = fmt.Fprintf(stderr, "note: could not set up the mcpvessel-docs server (it may not be published yet); the agent can still use the open-source repo. %v\n", err)
+		// Naming the wrong cause sends the reader to fix the wrong thing. An
+		// unreachable registry is a network problem that a re-run clears; only a
+		// genuine miss means the bundle is not there. Either way the note ends
+		// with the command that retries, because without one the docs server
+		// stays missing and nothing ever says how to get it back.
+		_, _ = fmt.Fprintf(stderr, "note: could not set up the mcpvessel-docs server, so the agent will fall back to the open-source repo.\n  %s\n  Try again with: mcpvessel init --client %s\n", docsFailureReason(err), clientID)
 		return
 	}
 	registerDocsWithClient(cmd, clientID, res.URL)
+}
+
+// docsFailureReason turns the ensure error into a sentence naming what actually
+// went wrong. The old text said the bundle "may not be published yet" whatever
+// happened, which is a confident diagnosis of the least likely cause: the docs
+// server is published, and the failure seen in practice is the MCP Registry
+// stalling for tens of seconds before answering.
+func docsFailureReason(err error) string {
+	text := err.Error()
+	switch {
+	case strings.Contains(text, "context deadline exceeded"), strings.Contains(text, "timeout"):
+		return "The MCP Registry did not answer in time (it stalls intermittently). Nothing is wrong with your install."
+	case strings.Contains(text, "no such server"):
+		return "The MCP Registry has no entry for the docs server. " + text
+	case strings.Contains(text, "connection refused"), strings.Contains(text, "no such host"), strings.Contains(text, "network is unreachable"):
+		return "The MCP Registry could not be reached, so this looks like a network problem. " + text
+	default:
+		return text
+	}
 }
 
 // registerDocsWithClient adds the caged docs server to the MCP client. Only

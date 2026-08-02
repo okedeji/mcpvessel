@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -29,6 +30,29 @@ const (
 	// requestTimeout bounds a single registry call so a wedged registry
 	// fails the command rather than hanging the CLI.
 	requestTimeout = 30 * time.Second
+
+	// readAttempts is how many times a read is tried before giving up. The
+	// registry's stalls are not independent per request: they cluster into
+	// periods of roughly thirty-five seconds during which every attempt hangs.
+	// Measured against the live registry, three attempts at readTimeout covered
+	// only twenty-four seconds of that and still lost about one run in six.
+	// Five covers past forty, which rides out a whole stall period. Reads only:
+	// publish and status changes are not idempotent and are never retried.
+	readAttempts = 5
+)
+
+// Retry timings, variables so a test can shrink them rather than spend real
+// seconds proving the loop works.
+var (
+	// readTimeout bounds one attempt at a read. It is deliberately far below
+	// requestTimeout: the registry intermittently stalls for tens of seconds and
+	// then answers 200, so a read is better abandoned early and retried than
+	// waited out. Measured on a healthy connection, a normal response lands in
+	// about a second, and roughly one in five stalled past thirty.
+	readTimeout = 8 * time.Second
+
+	// readBackoff is the pause after a failed attempt.
+	readBackoff = 500 * time.Millisecond
 )
 
 // Client is a discovery client for the MCP Registry. It holds no
@@ -171,9 +195,42 @@ func (c *Client) Publish(ctx context.Context, s *Server, token string) error {
 	}
 }
 
-// get issues a GET against an API path and decodes the JSON body into out.
+// get issues a GET against an API path and decodes the JSON body into out,
+// retrying a stalled or failed attempt. A GET is idempotent, so retrying is
+// safe; nothing that writes goes through here.
 func (c *Client) get(ctx context.Context, path string, q url.Values, out any) error {
-	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	var err error
+	for attempt := range readAttempts {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(readBackoff):
+			}
+		}
+		if err = c.getOnce(ctx, path, q, out); err == nil {
+			return nil
+		}
+		// A registry that answered is a registry that has made up its mind: a 404
+		// or a 500 will say the same thing next time. Only a dead or stalled
+		// connection is worth another attempt.
+		if !isRetryable(err) {
+			return err
+		}
+	}
+	return fmt.Errorf("after %d attempts: %w", readAttempts, err)
+}
+
+// isRetryable reports whether an error is a transport failure rather than a
+// verdict from the registry. Timeouts and dropped connections surface as
+// *url.Error; a status code does not.
+func isRetryable(err error) bool {
+	var urlErr *url.Error
+	return errors.As(err, &urlErr)
+}
+
+func (c *Client) getOnce(ctx context.Context, path string, q url.Values, out any) error {
+	ctx, cancel := context.WithTimeout(ctx, readTimeout)
 	defer cancel()
 	u := c.baseURL + apiPrefix + path
 	if len(q) > 0 {

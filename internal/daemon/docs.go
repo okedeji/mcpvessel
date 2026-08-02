@@ -67,21 +67,23 @@ type ensureDocsResult struct {
 func (d *Daemon) handleEnsureDocs(w http.ResponseWriter, r *http.Request) {
 	already := d.frontByListen(DocsListen) != nil
 
-	// Serve first, persist only on success. If the bundle is not published or the
-	// pull fails, leave the flag off so the daemon does not retry-and-warn every
-	// startup; re-running init once docs is reachable makes it stick.
-	if err := d.ensureDocsServed(r.Context()); err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
-		return
-	}
-
-	// A save failure is not fatal: docs is already serving this session, the
-	// operator just loses the auto-reserve on the next startup.
+	// Persist the opt-in before serving, not after. Reaching this handler means
+	// the operator chose the docs server; whether the pull happens to succeed
+	// right now is a separate question. Persisting only on success made one
+	// stalled registry read during first-run setup permanent: the flag stayed
+	// off, so every later startup skipped docs too, silently, and nothing told
+	// the operator their choice had been dropped. A startup that cannot reach
+	// the registry warns and carries on, which is the lesser cost.
 	if cfg, err := config.Load(); err == nil && !cfg.Docs.Enabled {
 		cfg.Docs.Enabled = true
 		if serr := cfg.Save(); serr != nil {
 			fmt.Fprintf(os.Stderr, "warning: persisting docs opt-in: %v\n", serr)
 		}
+	}
+
+	if err := d.ensureDocsServed(r.Context()); err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
 	}
 
 	writeJSON(w, http.StatusOK, ensureDocsResult{URL: DocsURL(), AlreadyServing: already})

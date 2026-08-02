@@ -66,6 +66,8 @@ After the runtime is up, `init` sets up the MCP client you pick so its agent can
 
 At a terminal `init` prints a short menu of clients and sets up the one you pick. Selecting Claude Code writes the skill to `~/.claude/skills/mcpvessel/SKILL.md`, its personal skills directory picked up across every project, and runs `claude mcp add --scope user mcpvessel-docs --transport http http://127.0.0.1:7333/mcp` to register the docs server. Pressing Enter skips it, and you can set it up later with `mcpvessel init --client claude-code`.
 
+If the docs server cannot be set up right then, `init` says so, names the reason, and carries on: the skill is still installed and the runtime is still ready. The usual cause is the MCP Registry stalling, which it does intermittently, and it is not a problem with your install. Your choice is remembered either way, so the daemon tries again on its next startup, and `mcpvessel init --client claude-code` retries immediately.
+
 Each client has its own skill, written for that client's tools and register command, kept under `skills/<client>/SKILL.md` in the source. `init` installs the one matching the client you pick, so the instructions are accurate for it, not a generic copy. Only clients with a packaged skill appear in the menu (Claude Code today); if yours is not listed, its skill is not packaged yet, and the flow is documented in the [repository](https://github.com/okedeji/mcpvessel).
 
 Every part of this step is best-effort and never fails an otherwise-ready runtime. If the docs bundle is not published to the registry yet, or the `claude` CLI is not on your `PATH`, `init` prints a note with the URL to register by hand and moves on; the skill install is unaffected.
