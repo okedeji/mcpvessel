@@ -1,9 +1,12 @@
 .PHONY: all build build-linux build-linux-all setup clean test vet lint vuln fmt-check ci tidy lima-deps lima-deps-all completions release-deps
 
 GO := go
+# --match 'v*' keeps this on the CLI's own tag series: the repo also carries
+# docs-mcp-v* tags for the docs server, and an unfiltered describe stamps the
+# binary with whichever series was tagged last.
 # git describe fails with no tags; the trailing sed still exits 0, so fall back
 # to "dev" explicitly rather than shipping an empty version.
-VERSION := $(shell git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')
+VERSION := $(shell git describe --tags --abbrev=0 --match 'v*' 2>/dev/null | sed 's/^v//')
 VERSION := $(if $(VERSION),$(VERSION),dev)
 LDFLAGS := -X github.com/okedeji/mcpvessel/internal/identity.Version=$(VERSION:v%=%)
 GOFLAGS := -trimpath -ldflags '$(LDFLAGS)'

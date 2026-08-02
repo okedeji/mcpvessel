@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 
@@ -20,6 +21,15 @@ func main() {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
+	// A bare --version also reports the docs server this machine is serving; see
+	// version.go for why that half cannot be compiled in. Appended only for a
+	// version request, so no other command pays for the daemon dial.
+	if versionRequested(os.Args) {
+		if line := docsServerVersion(context.Background()); line != "" {
+			root.Version += "\n" + line
+		}
+	}
+
 	// Groups shape --help by purpose; every command stays a top-level verb, Docker-style.
 	root.AddGroup(
 		&cobra.Group{ID: "setup", Title: "Setup:"},
