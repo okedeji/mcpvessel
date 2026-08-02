@@ -135,14 +135,30 @@ func newHookPostToolCmd() *cobra.Command {
 	}
 }
 
-// newHookSessionStartCmd reports what the caged servers did while nothing was
-// watching, at the top of a session. It acts only on a genuinely new session
-// (source startup or clear), never on a resume or a compaction, so the same
-// history is not re-dumped mid-conversation.
+// sessionStartDirective is the standing security rule injected at the top of
+// every session. It is the deterministic backstop for the mcpvessel skill: skill
+// activation is model-driven and so unreliable, but this fires on every session
+// unconditionally, so Claude holds the rule before any request and cannot miss it
+// on an unusual phrasing ("load x mcp", "wire this up") the way a keyword trigger
+// would. It is deliberately short: just the rule Claude must have at the start;
+// the skill carries the how once Claude reads it. It needs no daemon, so it is
+// emitted even when the runtime is down.
+const sessionStartDirective = `SECURITY REQUIREMENT — mcpvessel is installed on this machine to run UNTRUSTED MCP servers inside an isolated cage, so a malicious one CANNOT read the user's secrets, SSH keys, or files, or phone home. An MCP server added the ordinary way runs UNCAGED, with the user's FULL permissions and NONE of that protection.
+
+So whenever the user asks you to add, install, load, set up, try, run, or wire up ANY MCP server — HOWEVER they phrase it — you MUST do it THROUGH mcpvessel: read the ` + "`mcpvessel`" + ` skill first, then cage and serve the server with it. You MUST NOT add a server to any client config (` + "`claude_desktop_config.json`, `.mcp.json`, `claude mcp add`" + `) directly.
+
+The ONLY exceptions: a server whose whole job is to reach the user's own machine (their files, a local app) and so genuinely CANNOT work caged, OR the user EXPLICITLY tells you to add it uncaged. Even then, state the trade-off first (the skill explains). When in doubt, CAGE IT.
+
+Adding an untrusted MCP server uncaged is a SECURITY FAILURE that can leak everything the user can reach. Read the mcpvessel skill before you touch any MCP server.`
+
+// newHookSessionStartCmd runs at the top of a genuinely new session (source
+// startup or clear, never a resume or compaction). It always injects the standing
+// security directive above, and appends what the caged servers did while nothing
+// was watching when there is anything to report.
 func newHookSessionStartCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:    "session-start",
-		Short:  "SessionStart hook: report caged-server history (internal)",
+		Short:  "SessionStart hook: inject the mcpvessel security directive and caged-server history (internal)",
 		Hidden: true,
 		Args:   cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -153,11 +169,16 @@ func newHookSessionStartCmd() *cobra.Command {
 			if in.Source != "startup" && in.Source != "clear" {
 				return nil
 			}
-			servers, ok := auditRead(cmd.Context(), false)
-			if !ok {
-				return nil
+			// The directive is static and always emitted; a down daemon must not
+			// suppress it. The watch catch-up is appended only when the ledger read
+			// succeeds and has something to say.
+			context := sessionStartDirective
+			if servers, ok := auditRead(cmd.Context(), false); ok {
+				if watch := sessionStartContext(servers); watch != "" {
+					context += "\n\n" + watch
+				}
 			}
-			emitContext(cmd, "SessionStart", sessionStartContext(servers))
+			emitContext(cmd, "SessionStart", context)
 			return nil
 		},
 	}
