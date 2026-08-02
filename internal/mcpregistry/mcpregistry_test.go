@@ -23,6 +23,13 @@ type stubRegistry struct {
 	gotGHToken string
 	regToken   string
 	regExpires int64
+
+	// latestVersion, when set, is the version the stub stamps isLatest on.
+	latestVersion string
+	// ignoreLatest makes the stub serve every version even when asked for
+	// version=latest, standing in for a registry that does not know the filter.
+	ignoreLatest bool
+	gotVersionQ  string
 }
 
 func newStub(t *testing.T, s *stubRegistry) *Client {
@@ -31,11 +38,24 @@ func newStub(t *testing.T, s *stubRegistry) *Client {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v0.1/servers":
 			match := r.URL.Query().Get("search")
+			s.gotVersionQ = r.URL.Query().Get("version")
+			// Only a stub told which version is current can collapse to it; a
+			// test that seeds one entry per name serves them all either way.
+			onlyLatest := s.gotVersionQ == "latest" && !s.ignoreLatest && s.latestVersion != ""
 			var out serverList
 			for _, srv := range s.servers {
-				if match == "" || strings.Contains(srv.Name, match) {
-					out.Servers = append(out.Servers, serverEnvelope{Server: srv})
+				if match != "" && !strings.Contains(srv.Name, match) {
+					continue
 				}
+				latest := s.latestVersion != "" && srv.Version == s.latestVersion
+				if onlyLatest && !latest {
+					continue
+				}
+				e := serverEnvelope{Server: srv}
+				if latest {
+					e.Meta = map[string]any{officialMetaKey: map[string]any{officialIsLatestKey: true}}
+				}
+				out.Servers = append(out.Servers, e)
 			}
 			out.Metadata.Count = len(out.Servers)
 			_ = json.NewEncoder(w).Encode(out)
@@ -90,6 +110,90 @@ func TestResolve_ExactMatchAndOCIReference(t *testing.T) {
 	ref, version, ok := got.OCIReference()
 	if !ok || ref != "ghcr.io/a/fs" || version != "0.1" {
 		t.Fatalf("OCIReference = %q %q %v, want the oci package", ref, version, ok)
+	}
+}
+
+// The registry holds one entry per version and returns them oldest first, so
+// resolving a bare name must not take the first match: that pinned every caller
+// to a publisher's earliest release. Regression for docs 0.1.0 being served
+// after 0.1.2 shipped.
+func TestResolve_PicksLatestNotFirst(t *testing.T) {
+	stub := &stubRegistry{
+		latestVersion: "0.1.2",
+		servers: []Server{
+			{Name: "io.github.a/fs", Version: "0.1.0"},
+			{Name: "io.github.a/fs", Version: "0.1.1"},
+			{Name: "io.github.a/fs", Version: "0.1.2"},
+		},
+	}
+	c := newStub(t, stub)
+	got, err := c.Resolve(context.Background(), "io.github.a/fs")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if got.Version != "0.1.2" {
+		t.Errorf("resolved version = %q, want the latest 0.1.2", got.Version)
+	}
+	if stub.gotVersionQ != "latest" {
+		t.Errorf("version query = %q, want the registry asked for the latest", stub.gotVersionQ)
+	}
+}
+
+// A registry that does not know the version filter serves every version anyway;
+// the ordering fallback still has to land on the newest, not the oldest.
+func TestResolve_FallsBackToLastWhenFilterIgnored(t *testing.T) {
+	c := newStub(t, &stubRegistry{
+		ignoreLatest: true,
+		servers: []Server{
+			{Name: "io.github.a/fs", Version: "0.1.0"},
+			{Name: "io.github.a/fs", Version: "0.1.2"},
+		},
+	})
+	got, err := c.Resolve(context.Background(), "io.github.a/fs")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if got.Version != "0.1.2" {
+		t.Errorf("resolved version = %q, want the newest by publish order", got.Version)
+	}
+}
+
+// The isLatest stamp wins over position, so a registry that returns versions in
+// any other order still resolves correctly.
+func TestResolve_PrefersIsLatestOverPosition(t *testing.T) {
+	c := newStub(t, &stubRegistry{
+		ignoreLatest:  true,
+		latestVersion: "0.1.1",
+		servers: []Server{
+			{Name: "io.github.a/fs", Version: "0.1.1"},
+			{Name: "io.github.a/fs", Version: "0.1.0"},
+		},
+	})
+	got, err := c.Resolve(context.Background(), "io.github.a/fs")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if got.Version != "0.1.1" {
+		t.Errorf("resolved version = %q, want the isLatest-stamped entry", got.Version)
+	}
+}
+
+// search lists every version; only Resolve collapses a name to one.
+func TestSearch_ListsEveryVersion(t *testing.T) {
+	stub := &stubRegistry{latestVersion: "0.1.2", servers: []Server{
+		{Name: "io.github.a/fs", Version: "0.1.0"},
+		{Name: "io.github.a/fs", Version: "0.1.2"},
+	}}
+	c := newStub(t, stub)
+	got, err := c.Search(context.Background(), "fs", 0)
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(got) != 2 {
+		t.Errorf("Search returned %d entries, want both versions listed", len(got))
+	}
+	if stub.gotVersionQ != "" {
+		t.Errorf("version query = %q, want search to not collapse versions", stub.gotVersionQ)
 	}
 }
 

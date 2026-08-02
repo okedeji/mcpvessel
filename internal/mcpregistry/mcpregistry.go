@@ -51,9 +51,24 @@ func baseURL() string {
 	return strings.TrimRight(config.LookupEnvOr(env.MCPRegistry, defaultBaseURL), "/")
 }
 
-// Search returns servers matching query, newest first, up to limit. An
-// empty query lists the catalog; only the first page is returned.
+// Search returns servers matching query, one entry per published version, up
+// to limit. An empty query lists the catalog; only the first page is returned.
 func (c *Client) Search(ctx context.Context, query string, limit int) ([]Server, error) {
+	entries, err := c.search(ctx, query, limit, false)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Server, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, e.Server)
+	}
+	return out, nil
+}
+
+// search is Search over the raw envelopes, so a caller that needs the
+// registry-assigned metadata (isLatest) can read it. latestOnly asks the
+// registry to collapse a name to its current version.
+func (c *Client) search(ctx context.Context, query string, limit int, latestOnly bool) ([]serverEnvelope, error) {
 	q := url.Values{}
 	if query != "" {
 		q.Set("search", query)
@@ -61,28 +76,42 @@ func (c *Client) Search(ctx context.Context, query string, limit int) ([]Server,
 	if limit > 0 {
 		q.Set("limit", strconv.Itoa(limit))
 	}
+	if latestOnly {
+		q.Set("version", "latest")
+	}
 	var list serverList
 	if err := c.get(ctx, "/servers", q, &list); err != nil {
 		return nil, fmt.Errorf("searching the MCP Registry for %q: %w", query, err)
 	}
-	out := make([]Server, 0, len(list.Servers))
-	for _, e := range list.Servers {
-		out = append(out, e.Server)
-	}
-	return out, nil
+	return list.Servers, nil
 }
 
-// Resolve returns the registry entry for an exact reverse-DNS name, or a
-// not-found error naming what was asked for.
+// Resolve returns the current registry entry for an exact reverse-DNS name, or
+// a not-found error naming what was asked for.
+//
+// Picking the right version is the whole job here. The registry holds one entry
+// per published version and returns them oldest first, so taking the first
+// match would pin every caller to a publisher's earliest release forever. The
+// query asks the registry for the latest; the isLatest scan and the trailing
+// fallback cover a registry that ignores the filter (a self-hosted one, or an
+// older API), where last-returned is the newest by publish order.
 func (c *Client) Resolve(ctx context.Context, name string) (*Server, error) {
-	servers, err := c.Search(ctx, name, 0)
+	entries, err := c.search(ctx, name, 0, true)
 	if err != nil {
 		return nil, err
 	}
-	for i := range servers {
-		if servers[i].Name == name {
-			return &servers[i], nil
+	var newest *Server
+	for i := range entries {
+		if entries[i].Server.Name != name {
+			continue
 		}
+		if entries[i].isLatest() {
+			return &entries[i].Server, nil
+		}
+		newest = &entries[i].Server
+	}
+	if newest != nil {
+		return newest, nil
 	}
 	return nil, fmt.Errorf("resolving %s: no such server in the MCP Registry", name)
 }

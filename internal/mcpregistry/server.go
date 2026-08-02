@@ -95,7 +95,25 @@ type serverEnvelope struct {
 	Meta   map[string]any `json:"_meta,omitempty"`
 }
 
+// isLatest reports whether the registry marks this entry as the name's current
+// version. False when the flag is missing, so a registry that does not stamp it
+// falls back to the caller's own ordering rather than claiming an old entry is
+// current.
+func (e serverEnvelope) isLatest() bool {
+	official, ok := e.Meta[officialMetaKey].(map[string]any)
+	if !ok {
+		return false
+	}
+	latest, _ := official[officialIsLatestKey].(bool)
+	return latest
+}
+
 const (
+	// officialMetaKey is the registry's own metadata namespace on a list entry,
+	// where it stamps which version of a name is current.
+	officialMetaKey     = "io.modelcontextprotocol.registry/official"
+	officialIsLatestKey = "isLatest"
+
 	// publisherMetaKey is the registry's one free-form publisher slot, and the
 	// only _meta namespace a publisher may set. Everything mcpvessel records
 	// rides inside it: a top-level _meta key outside the registry's own
