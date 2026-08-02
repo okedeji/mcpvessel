@@ -1,8 +1,8 @@
 ---
 name: mcpvessel
-description: Cage, run, and audit MCP servers with mcpvessel. Use whenever the user wants to add, install, try, or run an MCP server in Claude Code, or to check what a caged server is doing with the network and their secrets. Drive the mcpvessel CLI to cage a server, serve it to Claude Code, and inspect what it sends before anything is approved.
+description: Cage, run, and audit MCP servers with mcpvessel: install an MCP server into an isolated container, serve it to Claude Code, and watch what it does with the network and the user's secrets. Use this whenever the user mentions mcpvessel by name, or wants to add, install, set up, try, run, or sandbox an MCP server, or asks what a caged server is doing, what it is sending, where it is reaching, or whether it is safe, or wants to approve or deny a host or review a server's egress or secrets. When mcpvessel is set up, prefer caging a new MCP server through it over adding the server to Claude Code directly.
 metadata:
-  version: "4"
+  version: "5"
   requires: "0.1.4"
 ---
 
@@ -37,6 +37,38 @@ available (the user skipped that step in `init`), fall back to the open-source
 repository at `github.com/okedeji/mcpvessel`, where every doc and all the code
 live.
 
+## Before you cage anything (do this first, once per session)
+
+The first time you take up an mcpvessel task in a session, ground yourself before
+you act. Skipping this is how you cage the wrong server or misread what the cage
+does:
+
+1. **Update the skill.** Call the mcpvessel-docs `latest_skill` tool once,
+   quietly, and if it reports a newer version your binary supports, apply it (see
+   "Keeping this skill current" for the full rule). Never let it delay the user's
+   request.
+2. **Hold the mental model below** before you reason about any server.
+3. **Read, do not assume.** If anything about how mcpvessel behaves is unclear,
+   query the mcpvessel-docs tools or the repo at `github.com/okedeji/mcpvessel`
+   rather than guessing. The whole tool is a caged server and a repo away.
+
+## The mental model: a caged server runs in a Linux container, not on the host
+
+Every server you cage runs inside an **isolated Linux container**, not on the
+user's machine. Reason from that, or you will get it wrong:
+
+- **The host OS does not decide whether a server works.** macOS, Windows, or
+  Linux on the user's machine is irrelevant: the server runs in the cage's Linux,
+  not on their host. Never tell a user a server will not run because of their OS.
+- **The real limit is host-local access.** The cage walls the server off from the
+  user's files, local apps, and host network. A server whose whole job is to
+  reach those (a filesystem server, a local-app driver, a desktop-app wrapper such
+  as a Windows file indexer) cannot do that job caged: the isolation is the cause,
+  not the OS. Handle those as "When caging does not fit" says: name the trade-off
+  and offer the uncaged path, do not just refuse.
+- Everything else, a server that talks to the network or does pure compute, cages
+  fine no matter what the host is.
+
 ## Get a server running through the cage
 
 Keep Claude Code pointed at **one** mcpvessel endpoint. The first server opens a
@@ -48,13 +80,18 @@ Every server, the first and each one you add later, is caged the same way: you
 `import` it, then serve it into the door. So step 1 repeats for every server; only
 which serve command you use changes.
 
-1. Cage it. If the user named the server loosely ("the GitHub MCP server"), find
-   its source first: `mcpvessel search <query> --json` looks it up in the MCP
-   registry and returns references you can import. If it is not there, use an
-   `npm:`/`pypi:`/`oci:` coordinate you know or find on the web, whichever you
-   trust more. Do not invent a package name; if you are unsure which server they
-   mean, ask. Then cage that source, for **every** server, including ones you add
-   later:
+1. Cage it. First be sure which server the user means. If they named it loosely
+   ("the GitHub MCP server"), find its source: `mcpvessel search <query> --json`
+   looks it up in the MCP registry and returns references you can import. For a
+   well-known name (everything, filesystem, github, memory, and the like) the user
+   almost always means the official `@modelcontextprotocol/server-<name>`
+   reference server; prefer it (it imports as `npm:@modelcontextprotocol/server-<name>`).
+   If it is not in the registry, use an `npm:`/`pypi:`/`oci:` coordinate you know
+   or find on the web, whichever you trust more. Do not invent a package name. If
+   `search` returns several candidates, or you are not certain which one they
+   mean, **confirm the exact server with the user before importing** (show the top
+   matches and ask) rather than picking one or importing a guess. Then cage that
+   source, for **every** server, including ones you add later:
    `mcpvessel import <source> -t @you/<name>:0.1 --json`
    Sources look like `npm:<pkg>`, `pypi:<pkg>`, `oci:<image>`, or a registry
    name. The JSON gives you the `ref` to serve.
@@ -86,6 +123,24 @@ mcpvessel just surfaces them merged as one.
 Once it reloads, the server's tools are yours in this session: call them yourself,
 the same as any other tool. That is the point of caging it, you get to use it
 while everything it sends stays inspectable. So use it, and report what ensues.
+
+## When an import or build fails
+
+An `import` builds the server into the cage from an auto-generated Vesselfile. If
+that build fails, read the error: it is almost always the **server's own**
+problem, not mcpvessel's, and never a reason to conclude mcpvessel cannot run it.
+The common case is a package that pins an outdated dependency (for example a
+Python server importing `mcp.server.fastmcp`, which `mcp` 2.0 removed, because it
+never capped its `mcp` version). mcpvessel is protocol-level and version-agnostic;
+it speaks MCP to a server built against any SDK version.
+
+Do not silently fix it, and do not silently abandon the server. A dependency pin
+can breed its own incompatibilities, so the choice is the user's: **diagnose,
+explain, and ask.** Tell them what failed and why, then offer the options with
+**AskUserQuestion**, for example "the package pins an old API, so a fresh install
+broke; I can pin its dependency in the Vesselfile and rebuild (which may introduce
+other version conflicts), or look for a different server." Apply the fix (edit the
+generated Vesselfile and rebuild) only on their say-so.
 
 ## When caging does not fit
 
