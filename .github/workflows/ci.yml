@@ -42,7 +42,18 @@ jobs:
       - run: go install golang.org/x/vuln/cmd/govulncheck@latest
       - run: govulncheck ./...
 
-  # No golangci-lint release is built with Go 1.26 yet, and a binary built with
-  # an older Go refuses to lint a go1.26 module (exit 3). Lint runs locally via
-  # `make lint` / `make ci`; re-add a lint job here once a 1.26-built release
-  # ships. Building it from source in CI works but is slow and unsupported.
+  # golangci-lint has shipped 1.26-built releases since v2.11, so this no longer
+  # has to be a local-only step. CONTRIBUTING tells contributors to run
+  # `make ci` (which includes lint) before opening a PR; without this job that
+  # was on the honour system and a red lint could merge.
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: golangci/golangci-lint-action@v6
+        with:
+          version: v2.12.2

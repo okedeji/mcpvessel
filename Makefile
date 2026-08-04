@@ -63,8 +63,7 @@ lint:
 
 # vuln scans the module against the Go vulnerability database. It queries
 # vuln.go.dev, so it needs network and is kept out of the offline `ci` target;
-# CI runs it as its own job. govulncheck (unlike golangci-lint) builds against
-# go1.26, so it is safe to gate on.
+# CI runs it as its own job.
 vuln:
 	@command -v govulncheck >/dev/null 2>&1 || $(GO) install golang.org/x/vuln/cmd/govulncheck@latest
 	govulncheck ./...
