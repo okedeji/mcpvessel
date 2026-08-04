@@ -49,6 +49,13 @@ func Load() (*Store, error) {
 
 // Save writes the store back with 0600 permissions. It marshals the inner
 // map to bypass the redacting MarshalJSON.
+//
+// Write-then-rename, because Load fails closed on a malformed file: a crash
+// partway through an in-place write would leave a truncated secrets.json that
+// every later command refuses to read, and unlike a trust pin or a cache these
+// values cannot be re-derived from anywhere. The temp file is created 0600 so
+// the values are never briefly world-readable, and rename within the directory
+// is atomic.
 func (s *Store) Save() error {
 	path, err := secretsPath()
 	if err != nil {
@@ -61,8 +68,13 @@ func (s *Store) Save() error {
 	if err != nil {
 		return fmt.Errorf("encoding secret store: %w", err)
 	}
-	if err := os.WriteFile(path, raw, 0o600); err != nil {
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
 		return fmt.Errorf("writing secret store: %w", err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("finalizing secret store: %w", err)
 	}
 	return nil
 }
