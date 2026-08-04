@@ -28,6 +28,7 @@ type Config struct {
 	Serve     Serve             `json:"serve,omitempty"`
 	Telemetry Telemetry         `json:"telemetry,omitempty"`
 	Docs      Docs              `json:"docs,omitempty"`
+	Approvals Approvals         `json:"approvals,omitempty"`
 	Env       map[string]string `json:"env,omitempty"` // persisted VESSEL_* knobs; a real environment variable of the same name overrides one here
 }
 
@@ -36,6 +37,21 @@ type Config struct {
 // registered URL keeps working across restarts.
 type Docs struct {
 	Enabled bool `json:"enabled,omitempty"`
+}
+
+// Approvals is the operator's policy on the commands that widen a cage:
+// approving an egress host, binding a secret, persisting an allow-list.
+type Approvals struct {
+	// Strict restricts those commands to an interactive terminal, so an agent
+	// driving mcpvessel cannot run one at all.
+	//
+	// It lives here, in a 0600 file the operator owns, rather than only in
+	// VESSEL_STRICT_APPROVAL, because the thing it constrains is an agent that
+	// spawns the very process the setting governs. An agent asked not to widen a
+	// cage can clear an environment variable in the same command line it runs, so
+	// an env-only switch is a note to itself, not a control over it. Config wins:
+	// once this is set, the environment cannot turn it off.
+	Strict bool `json:"strict,omitempty"`
 }
 
 // DefaultMetricsAddr is the daemon's default Prometheus endpoint. Loopback:

@@ -135,7 +135,9 @@ Two honest limits:
 
 Approving an egress host widens the cage, so the decision is always the operator's, never the caged server's and never an agent's own. When an agent drives mcpvessel (see [skill](skill.md)), it may run `egress allow` for you, but only on your say-so: the skill has it put the choice to you (through Claude Code's AskUserQuestion prompt) and run the command you pick, rather than deciding by itself. The cage's deny-default egress is the real backstop: a server reaches nothing new until someone approves it.
 
-If you want a harder guarantee, that these commands cannot run outside an interactive terminal at all, set `VESSEL_STRICT_APPROVAL=1`. Then `egress allow` and the persistent wideners `config egress set/default` and `config secrets set/default` refuse without a TTY, so no agent can perform them. It is off by default. Denying is never gated, since it only tightens the cage.
+If you want a harder guarantee, that these commands cannot run outside an interactive terminal at all, run `mcpvessel config approvals set --strict`. Then `egress allow` and the persistent wideners `config egress set/default` and `config secrets set/default` refuse without a TTY, so no agent can perform them. It is off by default. Denying is never gated, since it only tightens the cage.
+
+Set it in the config, not only in `VESSEL_STRICT_APPROVAL`. The environment variable still turns it on for one process, but the restriction exists to bind an agent that runs mcpvessel, and that agent chooses the environment of every command it runs: it can clear the variable on the same command line. A config setting is outside what running a command can change, so once it is on, the environment cannot turn it off.
 
 ## Notes
 

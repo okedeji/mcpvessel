@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -33,7 +34,8 @@ and point an endpoint at it with --key-ref. The config file never holds a secret
 		newConfigProviderCmd(), newConfigResourcesCmd(), newConfigModelsCmd(),
 		newConfigEgressCmd(), newConfigSecretsCmd(),
 		newConfigCagesCmd(), newConfigMachineCmd(), newConfigServeCmd(),
-		newConfigMetricsCmd(), newConfigEnvCmd(), newConfigShowCmd(), newConfigPathCmd(),
+		newConfigMetricsCmd(), newConfigEnvCmd(), newConfigApprovalsCmd(),
+		newConfigShowCmd(), newConfigPathCmd(),
 	)
 	return cmd
 }
@@ -268,6 +270,83 @@ zero means the built-in default.`,
 	set.Flags().IntVar(&maxClients, "max-clients", 0, "concurrent client instances per served agent (0 = default)")
 	set.Flags().IntVar(&idleTTL, "client-idle-ttl", 0, "reap a client instance idle past this many seconds (0 = default)")
 	cmd.AddCommand(set)
+	return cmd
+}
+
+func newConfigApprovalsCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "approvals",
+		Short: "Restrict the commands that widen a cage to a human at a terminal",
+		Long: `Set whether the cage-widening commands require an interactive terminal.
+
+Those commands are 'egress allow', 'config egress set/default', and
+'config secrets set/default': each one lets a caged server reach a host or hold
+a secret it could not before. By default an agent driving mcpvessel may run
+them, but only to carry out a decision you made; the skill it follows requires
+it to ask you first.
+
+With --strict they refuse to run unless stdin is a terminal, so no agent can run
+one at all, whatever it was told. You give up the agent's ability to carry out an
+approval you asked for, and get a guarantee in exchange.
+
+This is stored in the config file rather than read only from
+VESSEL_STRICT_APPROVAL, because an agent chooses the environment of every command
+it runs and could clear that variable in the same line. Setting it here cannot be
+switched off from the environment. Denying a host is never restricted: it only
+tightens a cage.`,
+		Example: `  mcpvessel config approvals set --strict
+  mcpvessel config approvals set --strict=false
+  mcpvessel config approvals show`,
+	}
+	var strict bool
+	set := &cobra.Command{
+		Use:   "set",
+		Short: "Turn the strict approval policy on or off",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if !cmd.Flags().Changed("strict") {
+				return fmt.Errorf("pass --strict or --strict=false")
+			}
+			c, err := config.Load()
+			if err != nil {
+				return err
+			}
+			c.Approvals.Strict = strict
+			if err := c.Save(); err != nil {
+				return err
+			}
+			if strict {
+				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Strict approvals on: widening a cage now needs a terminal, so no agent can do it.")
+				return nil
+			}
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Strict approvals off: an agent may run a widening command on your decision.")
+			return nil
+		},
+	}
+	set.Flags().BoolVar(&strict, "strict", false, "require an interactive terminal for every cage-widening command")
+
+	show := &cobra.Command{
+		Use:   "show",
+		Short: "Report whether the strict approval policy is in force",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			c, err := config.Load()
+			if err != nil {
+				return err
+			}
+			out := cmd.OutOrStdout()
+			switch {
+			case c.Approvals.Strict:
+				_, _ = fmt.Fprintln(out, "strict: on (set in config; the environment cannot turn it off)")
+			case os.Getenv(strictApprovalEnv) == "1":
+				_, _ = fmt.Fprintf(out, "strict: on for this process only (%s=1); set it in config to make it stick\n", strictApprovalEnv)
+			default:
+				_, _ = fmt.Fprintln(out, "strict: off (an agent may run a widening command on your decision)")
+			}
+			return nil
+		},
+	}
+	cmd.AddCommand(set, show)
 	return cmd
 }
 

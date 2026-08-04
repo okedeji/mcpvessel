@@ -125,9 +125,21 @@ Persist a `VESSEL_*` setting in the config so it survives across shells without 
 
 **`env set NAME VALUE`** stores a knob. **`env ls`** lists stored knobs sorted by name. **`env rm NAME`** removes one and errors if it was not set.
 
+## approvals
+
+Decide whether the commands that widen a cage require a human at a terminal. Those commands are `egress allow`, `config egress set/default`, and `config secrets set/default`: each one lets a caged server reach a host or hold a secret it could not before.
+
+By default they are not restricted. An agent driving mcpvessel may run one, but only to carry out a decision you made, which the skill it follows requires it to put to you first. That is a policy, enforced by the agent's instructions rather than by the tool.
+
+**`approvals set --strict`** makes it a rule instead. Every widening command then refuses unless stdin is a terminal, so no agent can run one whatever it was told. You give up the agent's ability to carry out an approval you did ask for, and get a guarantee in exchange. **`approvals set --strict=false`** turns it off again, and **`approvals show`** reports which is in force.
+
+Set it here rather than only through `VESSEL_STRICT_APPROVAL=1`. The environment variable still turns it on for one process, and is a reasonable way to harden a single command, but the restriction exists to bind an agent that runs mcpvessel, and that agent chooses the environment of every command it runs: it can clear the variable on the same command line. The config file is under your home at `0600`, outside what running a command can change, so once this is set the environment cannot turn it off.
+
+Denying a host is never restricted, since it only tightens a cage.
+
 ## show
 
-Print the whole config as indented JSON. Since the file only ever holds key references and never secret values, `show` is safe to read: it exposes base URLs, key reference names, prices, caps, and policy, but no keys. The JSON keys mirror the on-disk schema (`providers`, `resources`, `models`, `cages`, `machine`, `serve`, `telemetry.metrics_addr`, `env`), and empty sections are omitted.
+Print the whole config as indented JSON. Since the file only ever holds key references and never secret values, `show` is safe to read: it exposes base URLs, key reference names, prices, caps, and policy, but no keys. The JSON keys mirror the on-disk schema (`providers`, `resources`, `models`, `cages`, `machine`, `serve`, `telemetry.metrics_addr`, `approvals`, `env`), and empty sections are omitted.
 
 ## path
 

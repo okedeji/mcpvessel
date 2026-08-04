@@ -77,7 +77,7 @@ You do not have to hand it to Claude. mcpvessel is a full CLI: `import` a server
 The cage constrains what a server can reach, not whether it behaves. Know the edges:
 
 - An allowed host receives whatever the server sends it. Egress control decides which hosts, not what goes to one you permitted; the watch is what surfaces the payload so you can catch it.
-- A prompt-injected agent could in principle run an approval you did not intend. The cage's deny-default and your own review are the backstop, and `VESSEL_STRICT_APPROVAL=1` keeps approvals to a human at a terminal if you want it airtight.
+- A prompt-injected agent could in principle run an approval you did not intend. The cage's deny-default and your own review are the backstop. `mcpvessel config approvals set --strict` goes further and refuses every cage-widening command outside an interactive terminal, so no agent can run one; the cost is that the agent can no longer carry out an approval you did ask for. Set it in config rather than only in `VESSEL_STRICT_APPROVAL`: an agent picks the environment of the commands it runs, so it can clear a variable, but not a setting in your config file.
 - A tool that returns a plausible lie is not detected, and a host compromised outside mcpvessel is out of scope.
 
 The complete list is in [ARCHITECTURE.md §14](docs/ARCHITECTURE.md#14-limitations-and-non-goals).

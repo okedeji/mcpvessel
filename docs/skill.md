@@ -45,7 +45,7 @@ Every such question carries the exact command alongside it, filled in with the r
 
 The real backstop is not a rule in the skill, it is the cage: deny-default egress means a server reaches nothing new until someone approves it, and that someone is you.
 
-If you want a harder guarantee, that these commands cannot run outside an interactive terminal at all, set `VESSEL_STRICT_APPROVAL=1`. Then they refuse without a TTY, so no agent can perform them, at the cost of the agent being able to run an approval you asked for. Off by default.
+If you want a harder guarantee, that these commands cannot run outside an interactive terminal at all, run `mcpvessel config approvals set --strict`. Then they refuse without a TTY, so no agent can perform them, at the cost of the agent being able to run an approval you asked for. Off by default. `VESSEL_STRICT_APPROVAL=1` turns it on for a single process, but the config setting is the one that holds: an agent chooses the environment of the commands it runs and can clear a variable, so an environment-only switch does not restrain the thing it is meant to restrain.
 
 ## What the agent reads
 
