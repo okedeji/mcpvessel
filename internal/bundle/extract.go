@@ -38,6 +38,7 @@ func Extract(bundlePath, destDir string) (*Manifest, error) {
 	}
 
 	var manifest *Manifest
+	var written int64
 	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
@@ -59,8 +60,17 @@ func Extract(bundlePath, destDir string) (*Manifest, error) {
 			if rel == "" {
 				continue
 			}
-			if err := extractFile(tr, hdr, destAbs, rel); err != nil {
+			n, err := extractFile(tr, hdr, destAbs, rel)
+			if err != nil {
 				return nil, err
+			}
+			// Bound the extracted total, not the archive. A bundle is untrusted
+			// input and gzip hides its expanded size, so a small .agent file can
+			// name a source tree big enough to fill the disk. The header's own
+			// size field is not the check: it is written by the same author.
+			written += n
+			if written > maxExtractedBytes {
+				return nil, fmt.Errorf("bundle %s expands past the %s extraction limit; it is not a source tree", bundlePath, extractLimitLabel)
 			}
 		default:
 			// Unknown top-level entries are ignored so older readers
@@ -178,27 +188,43 @@ func decodeManifest(r io.Reader) (*Manifest, error) {
 	return &m, nil
 }
 
+// maxExtractedBytes bounds the whole source tree an .agent may expand to, and
+// maxFileBytes bounds one entry so a single member cannot blow past the total
+// between checks. A bundle holds a server's source, not its dependencies or its
+// image, so real ones are a few hundred kilobytes: this sits far above any of
+// them and far below what would fill a disk. The label is spelled out beside the
+// value so an error can name the limit without this package growing its own byte
+// formatter (runtime has one, and it imports this package, so it cannot be
+// borrowed).
+// They are vars, not consts, so a test can shrink them instead of writing half
+// a gigabyte to prove the cap holds.
+var (
+	maxExtractedBytes int64 = 512 << 20 // 512 MiB
+	maxFileBytes            = maxExtractedBytes
+	extractLimitLabel       = "512 MiB"
+)
+
 // extractFile writes one bundle entry into destAbs/rel, refusing anything
-// that escapes destAbs.
-func extractFile(tr *tar.Reader, hdr *tar.Header, destAbs, rel string) error {
+// that escapes destAbs, and returns how many bytes it wrote.
+func extractFile(tr *tar.Reader, hdr *tar.Header, destAbs, rel string) (int64, error) {
 	// Covers "../", absolute paths, and symlink-shaped entries.
 	target := filepath.Join(destAbs, rel)
 	cleanTarget, err := filepath.Abs(target)
 	if err != nil {
-		return fmt.Errorf("absolute path for %s: %w", target, err)
+		return 0, fmt.Errorf("absolute path for %s: %w", target, err)
 	}
 	if cleanTarget != destAbs && !strings.HasPrefix(cleanTarget, destAbs+string(filepath.Separator)) {
-		return fmt.Errorf("bundle entry %q escapes destination directory", hdr.Name)
+		return 0, fmt.Errorf("bundle entry %q escapes destination directory", hdr.Name)
 	}
 
 	switch hdr.Typeflag {
 	case tar.TypeDir:
 		if err := os.MkdirAll(cleanTarget, 0o755); err != nil {
-			return fmt.Errorf("mkdir %s: %w", cleanTarget, err)
+			return 0, fmt.Errorf("mkdir %s: %w", cleanTarget, err)
 		}
 	case tar.TypeReg:
 		if err := os.MkdirAll(filepath.Dir(cleanTarget), 0o755); err != nil {
-			return fmt.Errorf("mkdir for %s: %w", cleanTarget, err)
+			return 0, fmt.Errorf("mkdir for %s: %w", cleanTarget, err)
 		}
 		mode := os.FileMode(hdr.Mode) & 0o777
 		if mode == 0 {
@@ -206,18 +232,26 @@ func extractFile(tr *tar.Reader, hdr *tar.Header, destAbs, rel string) error {
 		}
 		out, err := os.OpenFile(cleanTarget, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
 		if err != nil {
-			return fmt.Errorf("create %s: %w", cleanTarget, err)
+			return 0, fmt.Errorf("create %s: %w", cleanTarget, err)
 		}
-		if _, err := io.Copy(out, tr); err != nil {
+		// LimitReader, not the header's Size: the size field is written by the
+		// same author as the bytes, so a bomb can simply understate it. Reading
+		// one byte past the cap is what detects the overrun.
+		n, err := io.Copy(out, io.LimitReader(tr, maxFileBytes+1))
+		if err != nil {
 			_ = out.Close()
-			return fmt.Errorf("write %s: %w", cleanTarget, err)
+			return n, fmt.Errorf("write %s: %w", cleanTarget, err)
 		}
 		if err := out.Close(); err != nil {
-			return fmt.Errorf("close %s: %w", cleanTarget, err)
+			return n, fmt.Errorf("close %s: %w", cleanTarget, err)
 		}
+		if n > maxFileBytes {
+			return n, fmt.Errorf("bundle entry %q is larger than the %s per-file limit", hdr.Name, extractLimitLabel)
+		}
+		return n, nil
 	default:
 		// Symlinks, devices, FIFOs: bundles are source trees, refuse to
 		// materialize anything else.
 	}
-	return nil
+	return 0, nil
 }
