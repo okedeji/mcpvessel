@@ -21,7 +21,7 @@ import (
 func newEgressCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "egress",
-		Short: "Approve or reject a host a running agent is held on",
+		Short: "Approve or reject a host a caged server is trying to reach",
 		Long: `Approve or reject an outbound host a caged server is trying to reach.
 
 A run is deny-default. The first time a server reaches a new host, the connection
@@ -82,6 +82,24 @@ func newEgressDenyCmd() *cobra.Command {
 	return cmd
 }
 
+// approvalFailedEverywhere reports whether an approval named live runs and none
+// of them took it, which is the one case where the decision must not be written
+// to config.
+//
+// Persisting it anyway turns a failed command into a permanent widening of the
+// cage: the host is baked in and silently allowed on the next run, off the back
+// of an approval that visibly errored. Two cases are deliberately not this:
+//
+//   - targeted is zero. No run was live, so nothing could fail; this is a
+//     pre-approval for future runs, which is a supported thing to do.
+//   - allow is false. A deny that could not reach a live run should still be
+//     remembered, because forgetting a grant only tightens the cage, and not
+//     recording it would leave the operator believing they revoked something
+//     they did not.
+func approvalFailedEverywhere(allow bool, targeted, released int) bool {
+	return allow && targeted > 0 && released == 0
+}
+
 func decideEgress(cmd *cobra.Command, target, host, agent string, allow, once, all bool) error {
 	// Approving a host widens the cage, so it stays a human decision; denying
 	// only tightens and needs no gate.
@@ -106,8 +124,10 @@ func decideEgress(cmd *cobra.Command, target, host, agent string, allow, once, a
 		released++
 	}
 
+	liveApprovalFailed := approvalFailedEverywhere(allow, len(runIDs), released)
+
 	persisted := false
-	if configKey != "" && (allow && !once || !allow) {
+	if configKey != "" && !liveApprovalFailed && (allow && !once || !allow) {
 		c, err := config.Load()
 		if err != nil {
 			return err
@@ -151,6 +171,11 @@ func decideEgress(cmd *cobra.Command, target, host, agent string, allow, once, a
 		msg += " (no live run held this host)"
 	}
 	switch {
+	case liveApprovalFailed:
+		// The errors from each run are already on stderr above; this says what
+		// was and was not changed, so the operator does not read the failure as
+		// partial success.
+		msg = fmt.Sprintf("Could not allow %s: every live run named here refused it (see the errors above). Nothing was changed, and it was not remembered for %s", host, configKey)
 	case persisted && allow:
 		msg += fmt.Sprintf("; remembered for %s", configKey)
 	case persisted && !allow:
@@ -159,6 +184,11 @@ func decideEgress(cmd *cobra.Command, target, host, agent string, allow, once, a
 		msg += "; not remembered (--once)"
 	}
 	_, _ = fmt.Fprintln(cmd.OutOrStdout(), msg)
+	if liveApprovalFailed {
+		// A command that changed nothing must not exit 0: a caller (an agent,
+		// a script) that only checks the status would report the host approved.
+		return fmt.Errorf("egress allow %s did not take effect", host)
+	}
 	return nil
 }
 
@@ -240,7 +270,7 @@ func newEgressLsCmd() *cobra.Command {
 	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "ls",
-		Short: "List hosts running agents are held on, awaiting approval",
+		Short: "List hosts caged servers are held on, awaiting approval",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			socket, err := daemon.SocketPath()

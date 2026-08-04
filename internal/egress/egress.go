@@ -124,7 +124,7 @@ type Proxy struct {
 	// send it, so the operator can see what is about to leave before deciding.
 	// Populated only under inspection; pulled over the loopback control surface,
 	// never written to stdout, so a body never reaches the durable log.
-	previews map[string]*PreviewRequest
+	previews map[previewKey]*PreviewRequest
 	// secretForms are the granted secret values, and their common encodings,
 	// paired with the «NAME» marker they are replaced by when a preview is
 	// surfaced. Precomputed once so serving a preview is a plain string sweep.
@@ -164,7 +164,7 @@ func New(cfg Config, events io.Writer) *Proxy {
 		deadline:    deadline,
 		maxPer:      maxPerSource,
 		noHold:      cfg.NoHold,
-		previews:    map[string]*PreviewRequest{},
+		previews:    map[previewKey]*PreviewRequest{},
 		secretForms: buildSecretForms(cfg.RedactSecrets),
 	}
 	if cfg.Inspect && cfg.InspectCACertPEM != "" && cfg.InspectCAKeyPEM != "" {
@@ -310,7 +310,7 @@ func (p *Proxy) previewConn(w http.ResponseWriter, target, host, src string) {
 	}
 	defer func() { _ = cage.Close() }()
 
-	p.storePreview(host, prev)
+	p.storePreview(src, host, prev)
 	p.writePreview(src, host, prev, "")
 
 	if p.noHold {
@@ -333,7 +333,7 @@ func (p *Proxy) previewConn(w http.ResponseWriter, target, host, src string) {
 	p.mu.Lock()
 	if p.held[src] >= p.maxPer || p.overCapLocked(src, host) {
 		p.mu.Unlock()
-		p.clearPreview(host)
+		p.clearPreview(src, host)
 		writeCageError(cage, "too many pending egress hosts for this agent")
 		p.mark("denied", src, host)
 		return
@@ -351,7 +351,7 @@ func (p *Proxy) previewConn(w http.ResponseWriter, target, host, src string) {
 	case <-time.After(p.deadline):
 		p.removeWaiter(host, wtr)
 	}
-	p.clearPreview(host)
+	p.clearPreview(src, host)
 	if allowed {
 		p.mark("allowed", src, host)
 		p.insp.forwardPreviewed(cage, cageR, req, target, host, p.label(src))
@@ -368,22 +368,57 @@ func writeCageError(cage net.Conn, msg string) {
 	_, _ = fmt.Fprintf(cage, "HTTP/1.1 403 Forbidden\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s", len(msg), msg)
 }
 
-func (p *Proxy) storePreview(host string, prev *PreviewRequest) {
+// previewKey identifies a pending preview by the cage that produced it as well
+// as the host it is aimed at.
+//
+// One proxy serves every cage in a run (a USES tree shares it), and two of them
+// can want the same host at the same time. Keyed by host alone, the second
+// cage's request overwrote the first's, so the operator could be shown one
+// cage's payload while approving the host for another. The decision is
+// per-source everywhere else; the evidence behind it has to be too.
+type previewKey struct {
+	src  string
+	host string
+}
+
+func (p *Proxy) storePreview(src, host string, prev *PreviewRequest) {
 	p.mu.Lock()
-	p.previews[host] = prev
+	p.previews[previewKey{src: src, host: host}] = prev
 	p.mu.Unlock()
 }
 
-func (p *Proxy) getPreview(host string) *PreviewRequest {
+// getPreview returns the pending request for one cage's attempt on host. src
+// may be empty on the control path, which carries only a host: then any one
+// cage's pending request for that host answers, which is what the single-cage
+// case (every serve, and most runs) always wants.
+func (p *Proxy) getPreview(src, host string) *PreviewRequest {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return p.previews[host]
+	if src != "" {
+		return p.previews[previewKey{src: src, host: host}]
+	}
+	for k, prev := range p.previews {
+		if k.host == host {
+			return prev
+		}
+	}
+	return nil
 }
 
-func (p *Proxy) clearPreview(host string) {
+func (p *Proxy) clearPreview(src, host string) {
 	p.mu.Lock()
-	delete(p.previews, host)
+	delete(p.previews, previewKey{src: src, host: host})
 	p.mu.Unlock()
+}
+
+// clearPreviewsForHost drops every cage's pending preview for host, used when a
+// decision resolves the host without naming a source.
+func (p *Proxy) clearPreviewsForHostLocked(host string) {
+	for k := range p.previews {
+		if k.host == host {
+			delete(p.previews, k)
+		}
+	}
 }
 
 // writePreview emits the secret-safe preview line to stdout: method, path with
@@ -606,7 +641,7 @@ func (p *Proxy) decide(src, host string, allow, all bool) {
 	// A decision resolves the host's pending preview: a held run/call clears its
 	// own after the waiter returns, but a served preview has no waiter, so drop
 	// it here so egress preview stops offering a stale request.
-	delete(p.previews, host)
+	p.clearPreviewsForHostLocked(host)
 	var released []*waiter
 	if all {
 		// Explicit run-wide grant: the operator chose to open this host for every
@@ -804,10 +839,25 @@ func (p *Proxy) Control() http.Handler {
 	// a shared log would capture. Granted secret values are redacted to «NAME»
 	// here, so a reader (including an agent driving mcpvessel) sees which secret
 	// is present without its value; the raw bytes live only in a replay artifact.
+	//
+	// src, or agent as its operator-facing name, narrows the pull to one cage's
+	// attempt. It matters when several cages share this proxy and want the same
+	// host: without it the reader could weigh one cage's payload while approving
+	// the host for another. With neither, any pending attempt on the host
+	// answers, which is what a single-cage run wants and always did.
 	mux.HandleFunc("GET /preview", func(w http.ResponseWriter, r *http.Request) {
 		host := normalizeHost(hostOnly(r.URL.Query().Get("host")))
+		src := r.URL.Query().Get("src")
+		if agent := r.URL.Query().Get("agent"); agent != "" {
+			resolved := p.srcForAgent(agent)
+			if resolved == "" {
+				http.Error(w, "unknown agent for this run", http.StatusBadRequest)
+				return
+			}
+			src = resolved
+		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(p.redactPreview(p.getPreview(host)))
+		_ = json.NewEncoder(w).Encode(p.redactPreview(p.getPreview(src, host)))
 	})
 	return mux
 }

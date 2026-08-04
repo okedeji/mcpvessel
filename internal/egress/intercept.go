@@ -301,8 +301,6 @@ func (in *inspector) intercept(clientConn net.Conn, target, host, agent string) 
 	}
 	defer func() { _ = upstream.Close() }()
 
-	defer func() { _ = upstream.Close() }()
-
 	server, err := in.terminateCageTLS(clientConn, host)
 	if err != nil {
 		in.note(host, agent, "not inspected: cage rejected the inspect certificate (certificate pinning?)")

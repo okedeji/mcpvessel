@@ -202,10 +202,10 @@ func TestPreview_HeldForwardsOnApproveDropsOnDeny(t *testing.T) {
 
 			// Wait for the request to be captured and held, then decide.
 			deadline := time.Now().Add(3 * time.Second)
-			for p.getPreview(host) == nil && time.Now().Before(deadline) {
+			for p.getPreview("", host) == nil && time.Now().Before(deadline) {
 				time.Sleep(5 * time.Millisecond)
 			}
-			if p.getPreview(host) == nil {
+			if p.getPreview("", host) == nil {
 				t.Fatal("request was not captured and held")
 			}
 			p.decide("127.0.0.1", host, tc.allow, false)
