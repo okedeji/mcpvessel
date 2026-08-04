@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/okedeji/mcpvessel/internal/bundle"
@@ -15,7 +16,11 @@ import (
 
 // stubRegistry stands in for the MCP Registry: search returns whatever servers
 // the test seeds, publish records the last request it saw.
+//
+// mu guards the recorded fields. One discovery search issues its probes
+// concurrently, so the handler runs on more than one goroutine at a time.
 type stubRegistry struct {
+	mu         sync.Mutex
 	servers    []Server
 	gotAuth    string
 	gotServer  Server
@@ -38,6 +43,7 @@ func newStub(t *testing.T, s *stubRegistry) *Client {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v0.1/servers":
 			match := r.URL.Query().Get("search")
+			s.mu.Lock()
 			s.gotVersionQ = r.URL.Query().Get("version")
 			// Only a stub told which version is current can collapse to it; a
 			// test that seeds one entry per name serves them all either way.
@@ -58,15 +64,19 @@ func newStub(t *testing.T, s *stubRegistry) *Client {
 				out.Servers = append(out.Servers, e)
 			}
 			out.Metadata.Count = len(out.Servers)
+			s.mu.Unlock()
 			_ = json.NewEncoder(w).Encode(out)
 		case r.Method == http.MethodPost && r.URL.Path == "/v0.1/publish":
+			s.mu.Lock()
 			s.gotAuth = r.Header.Get("Authorization")
 			body, _ := io.ReadAll(r.Body)
 			_ = json.Unmarshal(body, &s.gotServer)
 			if s.publishSt == 0 {
 				s.publishSt = http.StatusOK
 			}
-			w.WriteHeader(s.publishSt)
+			status := s.publishSt
+			s.mu.Unlock()
+			w.WriteHeader(status)
 		case r.Method == http.MethodPost && r.URL.Path == "/v0.1/auth/github-at":
 			var body struct {
 				GitHubToken string `json:"github_token"`
@@ -355,9 +365,12 @@ func TestSearchLatest_CollapsesVersions(t *testing.T) {
 		{Name: "cloud.fetcher/fetcher", Version: "1.1.2"},
 	}}
 	c := newStub(t, stub)
-	got, err := c.SearchLatest(context.Background(), "fetcher", 0)
+	got, complete, err := c.SearchLatest(context.Background(), "fetcher", 0)
 	if err != nil {
 		t.Fatalf("SearchLatest: %v", err)
+	}
+	if !complete {
+		t.Fatal("SearchLatest reported incomplete results though every probe answered")
 	}
 	if len(got) != 1 || got[0].Version != "1.1.2" {
 		t.Fatalf("SearchLatest = %+v, want the one current version", got)

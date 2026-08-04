@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/okedeji/mcpvessel/internal/config"
@@ -81,12 +82,64 @@ func (c *Client) Search(ctx context.Context, query string, limit int) ([]Server,
 	return c.searchServers(ctx, query, limit, false)
 }
 
-// SearchLatest is Search with each name collapsed to its current version. It is
-// what a discovery command wants: the registry stores one entry per version, so
-// an unfiltered search spends its limit listing the same server five times and
-// crowds out the servers the caller has not seen yet.
-func (c *Client) SearchLatest(ctx context.Context, query string, limit int) ([]Server, error) {
-	return c.searchServers(ctx, query, limit, true)
+// SearchLatest is the discovery search: each name collapsed to its current
+// version, and the results ordered by how well they match the query.
+//
+// Two things the raw registry does make it unusable head-on. It stores one
+// entry per version, so an unfiltered search spends its limit listing the same
+// server five times. And it matches the query as a substring of the whole
+// reverse-DNS name and returns hits in name order, so "github" matches every
+// server any GitHub user published and the page never reaches the one meant.
+// gatherCandidates probes around the second problem and rankSearch orders what
+// comes back; see rank.go.
+//
+// complete is false when one of those probes failed. The registry stalls often
+// enough that this is not hypothetical, and a search that lost its anchored
+// probe silently degrades to exactly the unusable ordering above, so the caller
+// is told rather than left to present a thinner list as the whole answer.
+func (c *Client) SearchLatest(ctx context.Context, query string, limit int) (servers []Server, complete bool, err error) {
+	candidates, complete, err := c.gatherCandidates(ctx, query)
+	if err != nil {
+		return nil, false, err
+	}
+	return rankSearch(candidates, query, limit), complete, nil
+}
+
+// gatherCandidates runs the query's probes and merges their hits, deduped by
+// name. The probes run concurrently because the registry intermittently stalls
+// for tens of seconds, and issuing them in series would expose a search to that
+// twice. A probe that fails is skipped and reported through complete; only an
+// all-probes failure is an error, so an anchored miss still falls back to the
+// broad page rather than failing the command.
+func (c *Client) gatherCandidates(ctx context.Context, query string) (servers []Server, complete bool, err error) {
+	probes := searchProbes(query)
+	results := make([][]serverEnvelope, len(probes))
+	errs := make([]error, len(probes))
+	var wg sync.WaitGroup
+	for i, probe := range probes {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			results[i], errs[i] = c.search(ctx, probe, searchPool, true)
+		}()
+	}
+	wg.Wait()
+
+	seen := make(map[string]bool)
+	var out []Server
+	for _, entries := range results {
+		for _, e := range entries {
+			if seen[e.Server.Name] {
+				continue
+			}
+			seen[e.Server.Name] = true
+			out = append(out, e.Server)
+		}
+	}
+	if len(out) == 0 {
+		return nil, false, errors.Join(errs...)
+	}
+	return out, errors.Join(errs...) == nil, nil
 }
 
 func (c *Client) searchServers(ctx context.Context, query string, limit int, latestOnly bool) ([]Server, error) {

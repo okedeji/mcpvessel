@@ -19,7 +19,7 @@ func newSearchCmd() *cobra.Command {
 	var limit int
 	cmd := &cobra.Command{
 		Use:   "search QUERY",
-		Short: "Search the MCP Registry for agents",
+		Short: "Search the MCP Registry for servers to cage",
 		Long: `Search the public MCP Registry by name and print matching agents.
 
 Each row is one agent at its current version: reverse-DNS name, version, where
@@ -41,7 +41,7 @@ local store instead of the registry.`,
 			if local {
 				return searchLocal(cmd.OutOrStdout(), args[0], jsonOut)
 			}
-			return searchRegistry(cmd.Context(), cmd.OutOrStdout(), args[0], limit, jsonOut)
+			return searchRegistry(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), args[0], limit, jsonOut)
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit machine-readable JSON")
@@ -64,10 +64,19 @@ type searchResult struct {
 	Cageable bool   `json:"cageable"`
 }
 
-func searchRegistry(ctx context.Context, w io.Writer, query string, limit int, jsonOut bool) error {
-	servers, err := mcpregistry.New().SearchLatest(ctx, query, limit)
+// searchRegistry writes results to w and any caveat about them to errw. The
+// split matters: --json is what an agent reads, so a note on stdout would land
+// inside the document it is parsing.
+func searchRegistry(ctx context.Context, w, errw io.Writer, query string, limit int, jsonOut bool) error {
+	servers, complete, err := mcpregistry.New().SearchLatest(ctx, query, limit)
 	if err != nil {
 		return err
+	}
+	if !complete {
+		// One of the registry reads did not come back, so these results are a
+		// subset of the real matches, and the one the caller wanted may be the
+		// missing one. Saying nothing would present a thin list as the answer.
+		cliout.Note(errw, "the registry did not answer every query for this search, so these results may be incomplete. Run the search again.")
 	}
 	if jsonOut {
 		out := make([]searchResult, 0, len(servers))

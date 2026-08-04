@@ -10,11 +10,22 @@ mcpvessel search QUERY [flags]
 
 ## Registry search (default)
 
-Without `--local`, `search` calls the official MCP Registry at `https://registry.modelcontextprotocol.io`, `GET /v0.1/servers?search=<QUERY>&limit=<limit>`, and prints the page it gets back. The registry holds metadata only, never an agent's bytes: each entry points at the OCI artifact it was built from, and `search` moves nothing but the listing. Results come back newest first.
+Without `--local`, `search` calls the official MCP Registry at `https://registry.modelcontextprotocol.io`, `GET /v0.1/servers`. The registry holds metadata only, never an agent's bytes: each entry points at the OCI artifact it was built from, and `search` moves nothing but the listing.
 
-Only the first page is returned. `search` does not follow the registry's pagination cursor, so `--limit` is the effective ceiling on how many rows you see (default 20). A single call is bounded by a 30 second timeout; a wedged registry fails the command with an error rather than hanging.
+### How the query is run, and why it is not passed through as typed
 
-An empty `QUERY` (passing `""`) lists the catalog instead of filtering, still capped at `--limit` and still just the first page.
+The registry matches a search as a substring of the whole reverse-DNS name and returns the hits in name order, with no relevance ranking of its own. Passed through as typed, that loses the server you meant. Nearly every entry published from GitHub is named `io.github.<user>/<package>`, so a search for `github` matches most of the catalogue, and the alphabetical page runs out long before it reaches `io.github.github/github-mcp-server`.
+
+So `search` does two things on top of the registry:
+
+- **It probes at the package-name boundary as well.** Alongside the query as typed, a single bare word is also searched as `/<word>`, which matches only servers actually named that rather than every server a GitHub user published. Both probes run at once and their results merge. A query that already contains a `/`, or spans several words, is precise enough already and gets only the one probe.
+- **It ranks what comes back.** A name is read as its two meaningful halves, the package (after the `/`) and the publisher (the last label before it). An exact package name beats a prefix, a prefix beats a substring, and a description-only hit comes last. A publisher whose own namespace is the query outranks an unrelated publisher with a similarly named package, which is what puts a project's official server above the lookalikes. A cageable entry edges out a remote one on an otherwise equal match. An entry that matches nothing but the `io.github.` prefix is dropped rather than listed.
+
+`--limit` (default 20) caps the ranked result, not the search: more candidates are fetched than are shown, so the ranking has something to choose from. A single call is bounded by a 30 second timeout; a wedged registry fails the command with an error rather than hanging.
+
+If one of the probes does not come back, `search` prints a note on stderr saying the results may be incomplete, because a search that lost its anchored probe silently degrades to the unranked ordering above. The note goes to stderr so it never lands inside `--json` output.
+
+An empty `QUERY` (passing `""`) lists the catalog instead of filtering, unranked and capped at `--limit`.
 
 ### What a result row shows
 
