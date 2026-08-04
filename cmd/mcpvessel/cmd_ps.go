@@ -21,7 +21,7 @@ func newPsCmd() *cobra.Command {
 	var all, jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "ps",
-		Short: "List running agents",
+		Short: "List running cages",
 		Long: `List the agents the daemon is currently running.
 
 ps talks to the daemon, so it needs one running. Each row is a run: its id,

@@ -100,7 +100,7 @@ homebrew_casks:
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     directory: Casks
     homepage: "https://github.com/okedeji/mcpvessel"
-    description: "Build, sign, and run MCP agents in isolated containers"
+    description: "Run untrusted MCP servers in isolated cages"
     # Wire up tab-completion at install time, from the scripts shipped in the
     # archive (paths are archive-relative).
     completions:

@@ -23,7 +23,7 @@ func newInspectCmd() *cobra.Command {
 	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "inspect BUNDLE|REF",
-		Short: "Show an agent's manifest and tool catalog",
+		Short: "Show a caged server's manifest and tool catalog",
 		Long: `Print the parsed Vesselfile, build metadata, and tool catalog of an agent.
 
 The argument is either a local .agent file, an OCI registry reference, or an MCP

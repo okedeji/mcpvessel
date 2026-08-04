@@ -30,7 +30,7 @@ func newServeCmd() *cobra.Command {
 	var save, inspectEgress bool
 	cmd := &cobra.Command{
 		Use:   "serve BUNDLE...",
-		Short: "Serve agents to external MCP clients over HTTP",
+		Short: "Serve caged servers to an MCP client on one endpoint",
 		Long: `Serve agents to external MCP clients over HTTP.
 
 Each BUNDLE is a reference (resolved store-first, then pulled), a content hash
@@ -48,10 +48,16 @@ A named agent is exposed; so is any USES PUBLIC sub-agent in its tree.
 Transitive private sub-agents stay unreachable. --expose and --no-expose
 override per agent, matched by repository, and --no-expose wins.
 
+The front door authenticates nobody and speaks plain HTTP, so the listen address
+is the whole access control. Bind 127.0.0.1 unless you have deliberately put TLS
+and authentication in front of it: an address like ":7000" binds every interface,
+and anyone who can reach it can call every exposed tool, with whatever secrets
+those cages were granted. serve warns when you bind off loopback.
+
 serve talks to the daemon, so it needs one running. It returns once the front
 door is open; the daemon keeps serving until you 'mcpvessel stop' the runs or it
 shuts down.`,
-		Example: `  mcpvessel serve --listen :7000 @me/researcher:0.1
+		Example: `  mcpvessel serve --listen 127.0.0.1:7000 @me/researcher:0.1
   mcpvessel serve --listen 127.0.0.1:7000 ./server-github ./mcp-server-time
   mcpvessel serve --listen 127.0.0.1:7000 --no-expose @me/creddb @me/researcher:0.1`,
 		Args: cobra.MinimumNArgs(1),

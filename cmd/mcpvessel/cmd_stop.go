@@ -14,7 +14,7 @@ import (
 func newStopCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "stop RUN...",
-		Short: "Stop running agents",
+		Short: "Stop running cages",
 		Long: `Stop running agents and release their containers and networks.
 
 Each RUN is a run id 'mcpvessel ps' lists. stop talks to the daemon, so it

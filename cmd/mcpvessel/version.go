@@ -6,7 +6,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	"github.com/okedeji/mcpvessel/internal/daemon"
+	"github.com/okedeji/mcpvessel/internal/identity"
 )
 
 // The version banner reports two independent things, because a bug report needs
@@ -30,15 +33,41 @@ import (
 // can and stays silent about the rest rather than hanging on a wedged daemon.
 const versionDaemonTimeout = time.Second
 
-// versionRequested reports whether argv is a bare version request. Only an exact
-// 'mcpvessel --version' or 'mcpvessel -v' counts: subcommands take -v for their
-// own --verbose, and looking for the flag anywhere in argv would fire the daemon
-// dial on 'mcpvessel init -v'.
+// versionRequested reports whether argv is a bare version-flag request, which is
+// what needs the docs line stitched onto cobra's built-in --version output. Only
+// an exact 'mcpvessel --version' or 'mcpvessel -v' counts: subcommands take -v
+// for their own --verbose, and looking for the flag anywhere in argv would fire
+// the daemon dial on 'mcpvessel init -v'.
+//
+// 'mcpvessel version' is deliberately not here. It is a real subcommand that
+// fetches the docs line itself; matching it here too would dial the daemon twice
+// for one command.
 func versionRequested(args []string) bool {
 	if len(args) != 2 {
 		return false
 	}
 	return args[1] == "--version" || args[1] == "-v"
+}
+
+// newVersionCmd is the subcommand form of --version. Cobra gives a --version
+// flag and nothing else, but `<tool> version` is what people type first, and
+// answering "unknown command" to it is a poor first impression from a tool whose
+// version someone is checking because something already went wrong.
+func newVersionCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:     "version",
+		Short:   "Print the mcpvessel version",
+		Args:    cobra.NoArgs,
+		GroupID: "setup",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			out := cmd.OutOrStdout()
+			_, _ = fmt.Fprintf(out, "%s version %s\n", identity.Name, identity.Version)
+			if line := docsServerVersion(cmd.Context()); line != "" {
+				_, _ = fmt.Fprintln(out, line)
+			}
+			return nil
+		},
+	}
 }
 
 // docsServerLine renders the served docs server's version, or "" when none is
