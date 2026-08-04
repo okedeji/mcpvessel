@@ -2,8 +2,8 @@
 name: mcpvessel
 description: Cage, run, and audit MCP servers with mcpvessel: install an MCP server into an isolated container, serve it to Claude Code, and watch what it does with the network and the user's secrets. Use this whenever the user mentions mcpvessel by name, or wants to add, install, set up, try, run, or sandbox an MCP server, or asks what a caged server is doing, what it is sending, where it is reaching, or whether it is safe, or wants to approve or deny a host or review a server's egress or secrets. When mcpvessel is set up, prefer caging a new MCP server through it over adding the server to Claude Code directly.
 metadata:
-  version: "9"
-  requires: "0.2.0"
+  version: "10"
+  requires: "0.2.2"
 ---
 
 # Driving mcpvessel
@@ -84,6 +84,11 @@ which serve command you use changes.
    ("the GitHub MCP server"), find its source: `mcpvessel search <query> --json`
    looks it up in the MCP registry and returns references you can import.
 
+   `search` ranks by how squarely a name matches, and puts a publisher who
+   owns the name first, so a well-known server's official entry comes out at or
+   near the top ("github" surfaces `io.github.github/github-mcp-server`). Trust
+   the top few and read their `source`; do not page through the tail.
+
    **The MCP Registry does not hold the official reference servers.** Searching
    for `fetch`, `everything`, or `filesystem` returns third-party servers with
    similar names, not the official one, and a search miss does not mean the server
@@ -95,6 +100,15 @@ which serve command you use changes.
      memory, sequential-thinking.
    - PyPI, as `pypi:mcp-server-<name>`: fetch, git, time. These have no npm
      package at all, so the npm form 404s.
+
+   **The PyPI three currently fail to build on a fresh install**, and it is not
+   mcpvessel's doing: fetch, git, and time all depend on the Python `mcp`
+   package without an upper bound, and `mcp` 2.0 renamed part of the API they
+   import, so a clean `pip install` gives them a version they crash on. Expect
+   it, and handle it as "When an import or build fails" says: the fix is pinning
+   `"mcp<2"` in the RUN line of the Vesselfile the import kept, then
+   `mcpvessel build <dir> -t <ref>`. Put that to the user before you apply it.
+   The npm four are unaffected.
 
    If one form is not found, try the other before concluding anything. Never tell
    the user a server does not exist because a search or one coordinate missed;
@@ -160,13 +174,22 @@ Python server importing `mcp.server.fastmcp`, which `mcp` 2.0 removed, because i
 never capped its `mcp` version). mcpvessel is protocol-level and version-agnostic;
 it speaks MCP to a server built against any SDK version.
 
+**Read the last lines of the error before you do anything else.** When mcpvessel
+recognizes the failure it names the cause and the exact remedy there, and it
+tells you where it kept the Vesselfile and the `mcpvessel build` command that
+retries from it. That is the whole fix; do not go looking for another one.
+
+A failed build keeps its generated directory on purpose, so the Vesselfile is
+still on disk and editable. Retry from it with `mcpvessel build <dir> -t <ref>`
+rather than re-running `import`, which would start over.
+
 Do not silently fix it, and do not silently abandon the server. A dependency pin
 can breed its own incompatibilities, so the choice is the user's: **diagnose,
 explain, and ask.** Tell them what failed and why, then offer the options with
 **AskUserQuestion**, for example "the package pins an old API, so a fresh install
 broke; I can pin its dependency in the Vesselfile and rebuild (which may introduce
 other version conflicts), or look for a different server." Apply the fix (edit the
-generated Vesselfile and rebuild) only on their say-so.
+kept Vesselfile and rebuild) only on their say-so.
 
 ## When caging does not fit
 
@@ -232,9 +255,9 @@ to you again. You can read the whole feed yourself any time with `mcpvessel audi
 
 These commands widen the cage, they let a server reach a host or hold a secret:
 
-- `mcpvessel egress allow <run> <host>` — approve a held host.
-- `mcpvessel config egress set|default ...` — persist an allow-list.
-- `mcpvessel config secrets set|default ...` — bind a secret to a server.
+- `mcpvessel egress allow <run> <host>`: approve a held host.
+- `mcpvessel config egress set|default ...`: persist an allow-list.
+- `mcpvessel config secrets set|default ...`: bind a secret to a server.
 
 You may run them, but you must never decide to on your own. The decision belongs
 to the user; you carry it out. So when a host needs a call, put it to the user
@@ -317,20 +340,20 @@ Two habits that keep a stall from becoming a mess:
   say so plainly; stopping and restarting servers to see what happens buries the
   message that was already on screen.
 
-- `mcpvessel search <query> --json` — find a server in the MCP registry (resolve a loose name to a source).
-- `mcpvessel import <source> -t <ref> --json` — cage a server.
-- `mcpvessel serve --listen 127.0.0.1:<port> --egress-inspect <ref>` — open the
+- `mcpvessel search <query> --json`: find a server in the MCP registry (resolve a loose name to a source).
+- `mcpvessel import <source> -t <ref> --json`: cage a server.
+- `mcpvessel serve --listen 127.0.0.1:<port> --egress-inspect <ref>`: open the
   front door for the first server (background; inspect to see payloads).
-- `mcpvessel serve add --listen 127.0.0.1:<port> --egress-inspect <ref>` — merge
+- `mcpvessel serve add --listen 127.0.0.1:<port> --egress-inspect <ref>`: merge
   another server into the door you opened, named by its port (start a new Claude
   Code session to pick it up).
-- `mcpvessel serve rm <ref>` — drop a server from the endpoint.
-- `mcpvessel ps --json` — run state; a `serving` run carries its `endpoint`.
-- `mcpvessel audit --json` — the durable per-server feed: summary + new events (with request samples) + cursor.
-- `mcpvessel audit ack` — fold surfaced events into a server's summary and prune them (JSON `{"acks":[...]}` on stdin).
-- `mcpvessel logs <run>` — the full durable log of one cage (run id from `ps`).
-- `mcpvessel egress ls --json` — hosts pending approval right now (live cages only).
-- `mcpvessel egress preview <run> <host> --json` — the live captured request for a pending host, secrets redacted.
-- `mcpvessel egress allow <run> <host>` — approve a host (only on the user's decision).
-- `mcpvessel egress deny <run> <host>` — reject a host.
-- `mcpvessel events --json` — live feed of egress attempts as they happen.
+- `mcpvessel serve rm <ref>`: drop a server from the endpoint.
+- `mcpvessel ps --json`: run state; a `serving` run carries its `endpoint`.
+- `mcpvessel audit --json`: the durable per-server feed: summary + new events (with request samples) + cursor.
+- `mcpvessel audit ack`: fold surfaced events into a server's summary and prune them (JSON `{"acks":[...]}` on stdin).
+- `mcpvessel logs <run>`: the full durable log of one cage (run id from `ps`).
+- `mcpvessel egress ls --json`: hosts pending approval right now (live cages only).
+- `mcpvessel egress preview <run> <host> --json`: the live captured request for a pending host, secrets redacted.
+- `mcpvessel egress allow <run> <host>`: approve a host (only on the user's decision).
+- `mcpvessel egress deny <run> <host>`: reject a host.
+- `mcpvessel events --json`: live feed of egress attempts as they happen.
