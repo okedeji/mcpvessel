@@ -54,6 +54,8 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - uses: golangci/golangci-lint-action@v6
+      # Action v9 for golangci-lint v2: v6 and earlier refuse a v2 version
+      # string outright ("golangci-lint v2 is not supported").
+      - uses: golangci/golangci-lint-action@v9
         with:
           version: v2.12.2
