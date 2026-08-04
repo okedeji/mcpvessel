@@ -35,7 +35,7 @@ func newImportCmd() *cobra.Command {
 	var force, jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "import SOURCE...",
-		Short: "Wrap existing MCP servers as agents",
+		Short: "Cage an MCP server from npm, PyPI, or a container image",
 		Long: `Turn existing MCP servers into mcpvessel agents: generate the Vesselfile
 that installs and launches each one, then build it into a normal .agent bundle
 you can run, serve, push, and depend on via USES.
@@ -220,7 +220,12 @@ func importCollection(cmd *cobra.Command, arg, dir, tag, entrypoint string, mode
 		secrets: secrets,
 		jsonOut: jsonOut,
 	}); err != nil {
-		removeGenerated(cmd.ErrOrStderr(), outDir, created)
+		// Keep the generated tree. The Vesselfile is what a caller edits to get
+		// past this: the usual cause is the server's own dependency pin, and the
+		// fix is one line in the RUN that installs it. Deleting the directory
+		// here left the documented remedy impossible to carry out and forced a
+		// whole re-import just to get the file back.
+		keepGenerated(cmd.ErrOrStderr(), outDir, tag)
 		return err
 	}
 	return nil
@@ -233,7 +238,9 @@ func dirExists(path string) bool {
 
 // removeGenerated deletes a directory this import itself created, so a failed
 // import does not block the retry with "Vesselfile already exists". A
-// pre-existing directory is never touched: it may hold hand edits.
+// pre-existing directory is never touched: it may hold hand edits. Used only
+// when the Vesselfile itself could not be written, where there is nothing in
+// the directory worth keeping; a failed build keeps it (see keepGenerated).
 func removeGenerated(stderr io.Writer, dir string, created bool) {
 	if !created {
 		return
@@ -242,6 +249,20 @@ func removeGenerated(stderr io.Writer, dir string, created bool) {
 		return
 	}
 	_, _ = fmt.Fprintf(stderr, "Removed generated %s so a retry starts fresh.\n", dir)
+}
+
+// keepGenerated points at the Vesselfile a failed build left behind and gives
+// the command that retries from it. A build failure is almost always the
+// server's own doing (a dependency it pinned too loosely, a missing runtime
+// input), and every one of those is fixed by editing this file, so it has to
+// still be there and the caller has to know where.
+func keepGenerated(stderr io.Writer, dir, tag string) {
+	retry := "mcpvessel build " + dir
+	if tag != "" {
+		retry += " -t " + tag
+	}
+	_, _ = fmt.Fprintf(stderr, "\nKept %s. The build failed, not the import: edit it (for example pin a dependency the server left loose) and retry with\n  %s\n",
+		filepath.Join(dir, bundle.VesselfileName), retry)
 }
 
 // uniqueDir keeps one batch's generated directories distinct when two SOURCEs

@@ -118,7 +118,19 @@ When you compose with `--reasoning`, `import` avoids rebuilding a server you hav
 
 **A `--reasoning` import** writes `VESSEL_HOME/imports/<agent>/` (or `--dir`) containing an `agent/` directory (the reasoning agent's Vesselfile, `reasoner.py`, and `system_prompt.txt` if you set a prompt) and one `<name>-tools/` directory per composed source. Each tool collection and the agent are built and tagged.
 
-If a generated directory already exists, `import` refuses rather than clobber it, unless you pass `--force`. A build that fails removes the directory it just created so a retry starts clean.
+If a generated directory already exists, `import` refuses rather than clobber it, unless you pass `--force`.
+
+## When the build fails
+
+A failed build **keeps** the generated directory, and prints the path to the Vesselfile with the `mcpvessel build <dir> -t <ref>` command that retries from it. That is deliberate: a build failure is almost always the server's own doing, and every one of those is fixed by editing that file, so it has to still be on disk. Retry from it rather than re-running `import`, which starts over. Only a failure to write the Vesselfile at all removes the directory, since there is then nothing in it worth keeping.
+
+When `import` recognizes why the server died, it says so and names the remedy instead of leaving you with the bare handshake error. The common one today: a Python server that depends on `mcp` without an upper bound crashes against `mcp` 2.0, which renamed part of the API it imports. This currently affects the official `mcp-server-fetch`, `mcp-server-git`, and `mcp-server-time`. The fix is to pin `"mcp<2"` in the Vesselfile's `RUN` line and build again:
+
+```
+RUN pip install --no-cache-dir "mcp<2" mcp-server-time
+```
+
+A pin can breed its own version conflicts, so it is a judgement call, not something `import` applies for you.
 
 ## Examples
 

@@ -355,6 +355,10 @@ func introspectionOption(ctx context.Context, stdout, stderr io.Writer, cfg buil
 		return nil, fmt.Errorf("hashing source for introspection: %w", err)
 	}
 
+	// Keep the tail of what the boot printed. When it fails, the error itself
+	// only says the MCP handshake got EOF; the reason the process died is in
+	// this output, which otherwise streams past and is gone.
+	tail := newTailWriter(stderr)
 	tools, err := runtime.Introspect(ctx, runtime.IntrospectInput{
 		Vesselfile: af,
 		SourceDir:  cfg.srcDir,
@@ -362,10 +366,13 @@ func introspectionOption(ctx context.Context, stdout, stderr io.Writer, cfg buil
 		NoCache:    cfg.noCache,
 		Env:        cfg.env,
 		Secrets:    cfg.secrets,
-		Stdout:     stderr,
-		Stderr:     stderr,
+		Stdout:     tail,
+		Stderr:     tail,
 	})
 	if err != nil {
+		if remedy := diagnoseStartup(tail.tail()); remedy != "" {
+			return nil, fmt.Errorf("introspecting agent tools: %w\n%s", err, remedy)
+		}
 		return nil, fmt.Errorf("introspecting agent tools: %w\nif the server needs a key or config to start, supply it with --secret NAME or --env KEY=VALUE (set a secret first with 'mcpvessel secrets set NAME')", err)
 	}
 
